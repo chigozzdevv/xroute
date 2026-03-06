@@ -108,7 +108,7 @@ xroute/
 - `packages/xroute-intents`
   - `transfer`, `swap`, `stake`, `call` schemas
 - `packages/xroute-precompile-interfaces`
-  - Solidity interfaces, concrete adapter contracts, published adapter specs, and deployment manifests for `local`, `testnet`, and `mainnet`
+  - Solidity interfaces, concrete adapter contracts, generated adapter specs from Foundry artifacts, and generated deployment manifests for `local`, `testnet`, and `mainnet`
 - `packages/xroute-sdk`
   - developer-facing client and route-engine bridge
 - `packages/xroute-types`

@@ -1,0 +1,30 @@
+{
+  "dispatch": {
+    "interfaceContract": "IDestinationTransactDispatcherV1",
+    "artifact": "contracts/polkadot-hub-router/out/IDestinationTransactDispatcherV1.sol/IDestinationTransactDispatcherV1.json",
+    "functionName": "dispatchEvmCall"
+  },
+  "adapters": [
+    {
+      "id": "hydration-call-v1",
+      "targetKind": "evm-contract",
+      "implementationContract": "HydrationCallAdapterV1",
+      "artifact": "contracts/polkadot-hub-router/out/HydrationCallAdapterV1.sol/HydrationCallAdapterV1.json",
+      "functionName": "executeCall"
+    },
+    {
+      "id": "hydration-stake-v1",
+      "targetKind": "evm-contract",
+      "implementationContract": "HydrationStakeAdapterV1",
+      "artifact": "contracts/polkadot-hub-router/out/HydrationStakeAdapterV1.sol/HydrationStakeAdapterV1.json",
+      "functionName": "executeStake"
+    },
+    {
+      "id": "hydration-swap-v1",
+      "targetKind": "evm-contract",
+      "implementationContract": "HydrationSwapAdapterV1",
+      "artifact": "contracts/polkadot-hub-router/out/HydrationSwapAdapterV1.sol/HydrationSwapAdapterV1.json",
+      "functionName": "executeSwap"
+    }
+  ]
+}

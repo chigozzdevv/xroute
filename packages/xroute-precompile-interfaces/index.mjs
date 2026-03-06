@@ -18,10 +18,6 @@ export const DEFAULT_DEPLOYMENT_PROFILE = DEPLOYMENT_PROFILES.LOCAL;
 export const DESTINATION_ADAPTER_TARGET_KINDS = Object.freeze({
   EVM_CONTRACT: "evm-contract",
 });
-export const DESTINATION_TRANSACT_DISPATCH = Object.freeze({
-  signature: "dispatchEvmCall(address,bytes)",
-  selector: "0x00986153",
-});
 
 export const PRECOMPILE_METADATA = Object.freeze({
   xcm: Object.freeze({
@@ -42,14 +38,26 @@ export const DISPATCH_MODE_TO_CONTRACT_ENUM = Object.freeze({
   [DISPATCH_MODES.SEND]: 1,
 });
 
-const RAW_DESTINATION_ADAPTER_SPECS = readFileSync(
-  new URL("./destination-adapter-specs.txt", import.meta.url),
+const GENERATED_DESTINATION_ADAPTER_SPECS = JSON.parse(readFileSync(
+  new URL("./generated/destination-adapter-specs.json", import.meta.url),
   "utf8",
-);
-const RAW_DESTINATION_ADAPTER_DEPLOYMENTS = readFileSync(
-  new URL("./destination-adapter-deployments.txt", import.meta.url),
+));
+const GENERATED_DESTINATION_ADAPTER_DEPLOYMENTS = JSON.parse(readFileSync(
+  new URL("./generated/destination-adapter-deployments.json", import.meta.url),
   "utf8",
-);
+));
+
+export const DESTINATION_TRANSACT_DISPATCH = Object.freeze({
+  interfaceContract: assertNonEmptyString(
+    "dispatch.interfaceContract",
+    GENERATED_DESTINATION_ADAPTER_SPECS.dispatch.interfaceContract,
+  ),
+  signature: assertNonEmptyString(
+    "dispatch.signature",
+    GENERATED_DESTINATION_ADAPTER_SPECS.dispatch.signature,
+  ),
+  selector: normalizeSelector(GENERATED_DESTINATION_ADAPTER_SPECS.dispatch.selector),
+});
 
 export const DESTINATION_ADAPTER_SPECS = Object.freeze(parseDestinationAdapterSpecs());
 export const DESTINATION_ADAPTER_DEPLOYMENTS = Object.freeze(parseDestinationAdapterDeployments());
@@ -95,62 +103,52 @@ export function getDestinationAdapterDeployment(
 }
 
 function parseDestinationAdapterSpecs() {
-  const entries = RAW_DESTINATION_ADAPTER_SPECS.split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith("#"))
-    .map((line) => {
-      const [adapterId, targetKind, implementationContract, signature, selector, extra] =
-        line.split("|");
-      if (!adapterId || !targetKind || !implementationContract || !signature || !selector || extra) {
-        throw new Error(`invalid destination adapter spec line: ${line}`);
-      }
-
-      return [
-        assertNonEmptyString("adapterId", adapterId),
-        Object.freeze({
-          id: assertNonEmptyString("adapterId", adapterId),
-          targetKind: assertIncluded(
-            "targetKind",
-            targetKind,
-            Object.values(DESTINATION_ADAPTER_TARGET_KINDS),
-          ),
-          implementationContract: assertNonEmptyString(
-            "implementationContract",
-            implementationContract,
-          ),
-          signature: assertNonEmptyString("signature", signature),
-          selector: normalizeSelector(selector),
-        }),
-      ];
-    });
+  const entries = GENERATED_DESTINATION_ADAPTER_SPECS.adapters.map((spec) => {
+    const adapterId = assertNonEmptyString("adapterId", spec.id);
+    return [
+      adapterId,
+      Object.freeze({
+        id: adapterId,
+        targetKind: assertIncluded(
+          "targetKind",
+          spec.targetKind,
+          Object.values(DESTINATION_ADAPTER_TARGET_KINDS),
+        ),
+        implementationContract: assertNonEmptyString(
+          "implementationContract",
+          spec.implementationContract,
+        ),
+        signature: assertNonEmptyString("signature", spec.signature),
+        selector: normalizeSelector(spec.selector),
+      }),
+    ];
+  });
 
   return Object.fromEntries(entries);
 }
 
 function parseDestinationAdapterDeployments() {
-  const entries = RAW_DESTINATION_ADAPTER_DEPLOYMENTS.split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith("#"))
-    .map((line) => {
-      const [adapterId, chainKey, deploymentProfile, address, extra] = line.split("|");
-      if (!adapterId || !chainKey || !deploymentProfile || !address || extra) {
-        throw new Error(`invalid destination adapter deployment line: ${line}`);
-      }
+  const entries = GENERATED_DESTINATION_ADAPTER_DEPLOYMENTS.deployments.map((deployment) => {
+    const normalizedAdapterId = assertNonEmptyString("adapterId", deployment.adapterId);
+    const normalizedChainKey = assertNonEmptyString("chainKey", deployment.chainKey);
+    const normalizedDeploymentProfile = normalizeDeploymentProfile(
+      deployment.deploymentProfile,
+    );
 
-      const normalizedAdapterId = assertNonEmptyString("adapterId", adapterId);
-      const normalizedChainKey = assertNonEmptyString("chainKey", chainKey);
-      const normalizedDeploymentProfile = normalizeDeploymentProfile(deploymentProfile);
-
-      return [
-        `${normalizedAdapterId}:${normalizedChainKey}:${normalizedDeploymentProfile}`,
-        Object.freeze({
-          adapterId: normalizedAdapterId,
-          chainKey: normalizedChainKey,
-          deploymentProfile: normalizedDeploymentProfile,
-          address: assertAddress("address", address),
-        }),
-      ];
-    });
+    return [
+      `${normalizedAdapterId}:${normalizedChainKey}:${normalizedDeploymentProfile}`,
+      Object.freeze({
+        adapterId: normalizedAdapterId,
+        chainKey: normalizedChainKey,
+        deploymentProfile: normalizedDeploymentProfile,
+        implementationContract: assertNonEmptyString(
+          "implementationContract",
+          deployment.implementationContract,
+        ),
+        address: assertAddress("address", deployment.address),
+      }),
+    ];
+  });
 
   return Object.fromEntries(entries);
 }

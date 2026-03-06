@@ -1,8 +1,16 @@
+use std::sync::OnceLock;
+
 use crate::error::RouteError;
+use crate::manifest_json::{find_array, parse_string_field, split_array_objects};
 use crate::model::DestinationAdapter;
 
-const DESTINATION_ADAPTER_SPECS: &str =
-    include_str!("../../../packages/xroute-precompile-interfaces/destination-adapter-specs.txt");
+const DESTINATION_ADAPTER_SPECS: &str = include_str!(
+    "../../../packages/xroute-precompile-interfaces/generated/destination-adapter-specs.json"
+);
+
+static DESTINATION_ADAPTER_SPECS_MANIFEST: OnceLock<
+    Result<DestinationAdapterSpecsManifest, String>,
+> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DestinationAdapterSpec<'a> {
@@ -13,62 +21,73 @@ pub struct DestinationAdapterSpec<'a> {
     pub selector: [u8; 4],
 }
 
+#[derive(Debug)]
+struct DestinationAdapterSpecsManifest {
+    adapters: Vec<GeneratedDestinationAdapterSpec>,
+}
+
+#[derive(Debug)]
+struct GeneratedDestinationAdapterSpec {
+    id: String,
+    target_kind: String,
+    implementation_contract: String,
+    signature: String,
+    selector: String,
+}
+
 pub fn lookup_destination_adapter_spec(
     adapter: DestinationAdapter,
 ) -> Result<DestinationAdapterSpec<'static>, RouteError> {
     let adapter_id = adapter.as_str();
+    let manifest = destination_adapter_specs_manifest(adapter_id)?;
 
-    for line in DESTINATION_ADAPTER_SPECS.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-
-        let mut fields = trimmed.split('|');
-        let id = fields.next();
-        let target_kind = fields.next();
-        let implementation_contract = fields.next();
-        let signature = fields.next();
-        let selector = fields.next();
-
-        if fields.next().is_some() {
-            return Err(RouteError::InvalidDestinationAdapterSpec {
-                adapter: adapter_id,
-            });
-        }
-
-        if let (
-            Some(id),
-            Some(target_kind),
-            Some(implementation_contract),
-            Some(signature),
-            Some(selector),
-        ) = (
-            id,
-            target_kind,
-            implementation_contract,
-            signature,
-            selector,
-        ) {
-            if id == adapter_id {
-                return Ok(DestinationAdapterSpec {
-                    id,
-                    target_kind,
-                    implementation_contract,
-                    signature,
-                    selector: parse_selector(adapter_id, selector)?,
-                });
-            }
-        } else {
-            return Err(RouteError::InvalidDestinationAdapterSpec {
-                adapter: adapter_id,
-            });
-        }
+    if let Some(spec) = manifest.adapters.iter().find(|spec| spec.id == adapter_id) {
+        return Ok(DestinationAdapterSpec {
+            id: spec.id.as_str(),
+            target_kind: spec.target_kind.as_str(),
+            implementation_contract: spec.implementation_contract.as_str(),
+            signature: spec.signature.as_str(),
+            selector: parse_selector(adapter_id, spec.selector.as_str())?,
+        });
     }
 
     Err(RouteError::MissingDestinationAdapterSpec {
         adapter: adapter_id,
     })
+}
+
+fn destination_adapter_specs_manifest(
+    adapter: &'static str,
+) -> Result<&'static DestinationAdapterSpecsManifest, RouteError> {
+    match DESTINATION_ADAPTER_SPECS_MANIFEST.get_or_init(parse_destination_adapter_specs_manifest) {
+        Ok(manifest) => Ok(manifest),
+        Err(_) => Err(RouteError::InvalidDestinationAdapterSpec { adapter }),
+    }
+}
+
+fn parse_destination_adapter_specs_manifest() -> Result<DestinationAdapterSpecsManifest, String> {
+    let adapters = find_array(DESTINATION_ADAPTER_SPECS, "adapters")
+        .ok_or_else(|| "missing adapters array".to_owned())?;
+    let adapters = split_array_objects(adapters)
+        .into_iter()
+        .map(parse_destination_adapter_spec)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(DestinationAdapterSpecsManifest { adapters })
+}
+
+fn parse_destination_adapter_spec(object: &str) -> Result<GeneratedDestinationAdapterSpec, String> {
+    Ok(GeneratedDestinationAdapterSpec {
+        id: parse_required_string(object, "id")?,
+        target_kind: parse_required_string(object, "targetKind")?,
+        implementation_contract: parse_required_string(object, "implementationContract")?,
+        signature: parse_required_string(object, "signature")?,
+        selector: parse_required_string(object, "selector")?,
+    })
+}
+
+fn parse_required_string(object: &str, key: &str) -> Result<String, String> {
+    parse_string_field(object, key).ok_or_else(|| format!("missing string field: {key}"))
 }
 
 fn parse_selector(adapter: &'static str, selector: &str) -> Result<[u8; 4], RouteError> {

@@ -1,0 +1,30 @@
+{
+  "dispatch": {
+    "interfaceContract": "IDestinationTransactDispatcherV1",
+    "signature": "dispatchEvmCall(address,bytes)",
+    "selector": "0x00986153"
+  },
+  "adapters": [
+    {
+      "id": "hydration-call-v1",
+      "targetKind": "evm-contract",
+      "implementationContract": "HydrationCallAdapterV1",
+      "signature": "executeCall(bytes32,uint256,address,bytes)",
+      "selector": "0x7db7dbf6"
+    },
+    {
+      "id": "hydration-stake-v1",
+      "targetKind": "evm-contract",
+      "implementationContract": "HydrationStakeAdapterV1",
+      "signature": "executeStake(bytes32,uint256,bytes,bytes)",
+      "selector": "0xdfabdde3"
+    },
+    {
+      "id": "hydration-swap-v1",
+      "targetKind": "evm-contract",
+      "implementationContract": "HydrationSwapAdapterV1",
+      "signature": "executeSwap(bytes32,bytes32,uint256,uint256,bytes)",
+      "selector": "0x670b1f29"
+    }
+  ]
+}

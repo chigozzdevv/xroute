@@ -1,0 +1,67 @@
+{
+  "deployments": [
+    {
+      "adapterId": "hydration-call-v1",
+      "chainKey": "hydration",
+      "deploymentProfile": "local",
+      "implementationContract": "HydrationCallAdapterV1",
+      "address": "0x0000000000000000000000000000000000001003"
+    },
+    {
+      "adapterId": "hydration-call-v1",
+      "chainKey": "hydration",
+      "deploymentProfile": "mainnet",
+      "implementationContract": "HydrationCallAdapterV1",
+      "address": "0x0000000000000000000000000000000000003003"
+    },
+    {
+      "adapterId": "hydration-call-v1",
+      "chainKey": "hydration",
+      "deploymentProfile": "testnet",
+      "implementationContract": "HydrationCallAdapterV1",
+      "address": "0x0000000000000000000000000000000000002003"
+    },
+    {
+      "adapterId": "hydration-stake-v1",
+      "chainKey": "hydration",
+      "deploymentProfile": "local",
+      "implementationContract": "HydrationStakeAdapterV1",
+      "address": "0x0000000000000000000000000000000000001002"
+    },
+    {
+      "adapterId": "hydration-stake-v1",
+      "chainKey": "hydration",
+      "deploymentProfile": "mainnet",
+      "implementationContract": "HydrationStakeAdapterV1",
+      "address": "0x0000000000000000000000000000000000003002"
+    },
+    {
+      "adapterId": "hydration-stake-v1",
+      "chainKey": "hydration",
+      "deploymentProfile": "testnet",
+      "implementationContract": "HydrationStakeAdapterV1",
+      "address": "0x0000000000000000000000000000000000002002"
+    },
+    {
+      "adapterId": "hydration-swap-v1",
+      "chainKey": "hydration",
+      "deploymentProfile": "local",
+      "implementationContract": "HydrationSwapAdapterV1",
+      "address": "0x0000000000000000000000000000000000001001"
+    },
+    {
+      "adapterId": "hydration-swap-v1",
+      "chainKey": "hydration",
+      "deploymentProfile": "mainnet",
+      "implementationContract": "HydrationSwapAdapterV1",
+      "address": "0x0000000000000000000000000000000000003001"
+    },
+    {
+      "adapterId": "hydration-swap-v1",
+      "chainKey": "hydration",
+      "deploymentProfile": "testnet",
+      "implementationContract": "HydrationSwapAdapterV1",
+      "address": "0x0000000000000000000000000000000000002001"
+    }
+  ]
+}

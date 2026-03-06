@@ -1,4 +1,0 @@
-# adapter-id|target-kind|implementation-contract|function-signature|selector
-hydration-swap-v1|evm-contract|HydrationSwapAdapterV1|executeSwap(bytes32,bytes32,uint256,uint256,bytes)|0x670b1f29
-hydration-stake-v1|evm-contract|HydrationStakeAdapterV1|executeStake(bytes32,uint256,bytes,bytes)|0xdfabdde3
-hydration-call-v1|evm-contract|HydrationCallAdapterV1|executeCall(bytes32,uint256,address,bytes)|0x7db7dbf6

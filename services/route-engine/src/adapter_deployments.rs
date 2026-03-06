@@ -1,9 +1,16 @@
+use std::sync::OnceLock;
+
 use crate::error::RouteError;
+use crate::manifest_json::{find_array, parse_string_field, split_array_objects};
 use crate::model::{ChainKey, DeploymentProfile, DestinationAdapter};
 
 const DESTINATION_ADAPTER_DEPLOYMENTS: &str = include_str!(
-    "../../../packages/xroute-precompile-interfaces/destination-adapter-deployments.txt"
+    "../../../packages/xroute-precompile-interfaces/generated/destination-adapter-deployments.json"
 );
+
+static DESTINATION_ADAPTER_DEPLOYMENTS_MANIFEST: OnceLock<
+    Result<DestinationAdapterDeploymentsManifest, String>,
+> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DestinationAdapterDeployment<'a> {
@@ -13,55 +20,39 @@ pub struct DestinationAdapterDeployment<'a> {
     pub address: &'a str,
 }
 
+#[derive(Debug)]
+struct DestinationAdapterDeploymentsManifest {
+    deployments: Vec<GeneratedDestinationAdapterDeployment>,
+}
+
+#[derive(Debug)]
+struct GeneratedDestinationAdapterDeployment {
+    adapter_id: String,
+    chain_key: String,
+    deployment_profile: String,
+    address: String,
+}
+
 pub fn lookup_destination_adapter_deployment(
     adapter: DestinationAdapter,
     chain: ChainKey,
     profile: DeploymentProfile,
 ) -> Result<DestinationAdapterDeployment<'static>, RouteError> {
     let adapter_id = adapter.as_str();
+    let manifest = destination_adapter_deployments_manifest(adapter_id, chain, profile)?;
 
-    for line in DESTINATION_ADAPTER_DEPLOYMENTS.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-
-        let mut fields = trimmed.split('|');
-        let id = fields.next();
-        let chain_key = fields.next();
-        let deployment_profile = fields.next();
-        let address = fields.next();
-
-        if fields.next().is_some() {
-            return Err(RouteError::InvalidDestinationAdapterDeployment {
-                adapter: adapter_id,
-                chain,
-                profile,
-            });
-        }
-
-        if let (Some(id), Some(chain_key), Some(deployment_profile), Some(address)) =
-            (id, chain_key, deployment_profile, address)
-        {
-            if id == adapter_id
-                && parse_chain(chain_key) == Some(chain)
-                && parse_profile(deployment_profile) == Some(profile)
-            {
-                validate_address(adapter_id, chain, profile, address)?;
-                return Ok(DestinationAdapterDeployment {
-                    adapter_id: id,
-                    chain,
-                    profile,
-                    address,
-                });
-            }
-        } else {
-            return Err(RouteError::InvalidDestinationAdapterDeployment {
-                adapter: adapter_id,
-                chain,
-                profile,
-            });
-        }
+    if let Some(deployment) = manifest.deployments.iter().find(|deployment| {
+        deployment.adapter_id == adapter_id
+            && parse_chain(deployment.chain_key.as_str()) == Some(chain)
+            && parse_profile(deployment.deployment_profile.as_str()) == Some(profile)
+    }) {
+        validate_address(adapter_id, chain, profile, deployment.address.as_str())?;
+        return Ok(DestinationAdapterDeployment {
+            adapter_id: deployment.adapter_id.as_str(),
+            chain,
+            profile,
+            address: deployment.address.as_str(),
+        });
     }
 
     Err(RouteError::MissingDestinationAdapterDeployment {
@@ -69,6 +60,50 @@ pub fn lookup_destination_adapter_deployment(
         chain,
         profile,
     })
+}
+
+fn destination_adapter_deployments_manifest(
+    adapter: &'static str,
+    chain: ChainKey,
+    profile: DeploymentProfile,
+) -> Result<&'static DestinationAdapterDeploymentsManifest, RouteError> {
+    match DESTINATION_ADAPTER_DEPLOYMENTS_MANIFEST
+        .get_or_init(parse_destination_adapter_deployments_manifest)
+    {
+        Ok(manifest) => Ok(manifest),
+        Err(_) => Err(RouteError::InvalidDestinationAdapterDeployment {
+            adapter,
+            chain,
+            profile,
+        }),
+    }
+}
+
+fn parse_destination_adapter_deployments_manifest(
+) -> Result<DestinationAdapterDeploymentsManifest, String> {
+    let deployments = find_array(DESTINATION_ADAPTER_DEPLOYMENTS, "deployments")
+        .ok_or_else(|| "missing deployments array".to_owned())?;
+    let deployments = split_array_objects(deployments)
+        .into_iter()
+        .map(parse_destination_adapter_deployment)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(DestinationAdapterDeploymentsManifest { deployments })
+}
+
+fn parse_destination_adapter_deployment(
+    object: &str,
+) -> Result<GeneratedDestinationAdapterDeployment, String> {
+    Ok(GeneratedDestinationAdapterDeployment {
+        adapter_id: parse_required_string(object, "adapterId")?,
+        chain_key: parse_required_string(object, "chainKey")?,
+        deployment_profile: parse_required_string(object, "deploymentProfile")?,
+        address: parse_required_string(object, "address")?,
+    })
+}
+
+fn parse_required_string(object: &str, key: &str) -> Result<String, String> {
+    parse_string_field(object, key).ok_or_else(|| format!("missing string field: {key}"))
 }
 
 fn parse_chain(value: &str) -> Option<ChainKey> {

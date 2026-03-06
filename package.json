@@ -3,9 +3,10 @@
   "private": true,
   "packageManager": "pnpm@10.6.0",
   "scripts": {
-    "build": "cargo build -p route-engine && forge build --root contracts/polkadot-hub-router && node --test packages/*/test/*.test.mjs services/status-indexer/test/*.test.mjs",
+    "build": "npm run generate:manifests && cargo build -p route-engine && node --test packages/*/test/*.test.mjs services/status-indexer/test/*.test.mjs",
     "check": "npm run test",
-    "test": "npm run test:rust && npm run test:solidity && npm run test:node",
+    "generate:manifests": "forge build --root contracts/polkadot-hub-router && node packages/xroute-precompile-interfaces/scripts/generate-manifests.mjs",
+    "test": "npm run generate:manifests && npm run test:rust && npm run test:solidity && npm run test:node",
     "test:node": "node --test packages/*/test/*.test.mjs services/status-indexer/test/*.test.mjs",
     "test:rust": "cargo test -p route-engine",
     "test:solidity": "forge test --root contracts/polkadot-hub-router"
