@@ -32,17 +32,23 @@ contract HydrationAdaptersTest is TestBase {
     function test_swap_adapter_forwards_to_executor() public {
         bytes32 assetInId = bytes32("DOT");
         bytes32 assetOutId = bytes32("USDT");
-        bytes memory recipient = bytes("5FswapRecipient");
+        bytes memory settlementPlan = abi.encode(uint8(2), bytes32("USDT"), uint256(1000), uint256(1000), uint256(35000), bytes("5FswapRecipient"));
 
         vm.prank(DISPATCHER);
-        swapAdapter.executeSwap(assetInId, assetOutId, 100 * 10 ** 10, 490 * 10 ** 6, recipient);
+        swapAdapter.executeSwap(
+            assetInId,
+            assetOutId,
+            100 * 10 ** 10,
+            490 * 10 ** 6,
+            settlementPlan
+        );
 
         assertEq(swapExecutor.callCount(), 1);
         assertEq(swapExecutor.lastAssetInId(), assetInId);
         assertEq(swapExecutor.lastAssetOutId(), assetOutId);
         assertEq(swapExecutor.lastAmountIn(), 100 * 10 ** 10);
         assertEq(swapExecutor.lastMinAmountOut(), 490 * 10 ** 6);
-        assertEq(swapExecutor.lastRecipient(), recipient);
+        assertEq(swapExecutor.lastSettlementPlan(), settlementPlan);
     }
 
     function test_swap_adapter_reverts_for_non_dispatcher() public {

@@ -134,7 +134,10 @@ function normalizeTransfer(sourceChain, destinationChain, params) {
 function normalizeSwap(sourceChain, destinationChain, params) {
   const assetIn = assertNonEmptyString("action.params.assetIn", params.assetIn).toUpperCase();
   const assetOut = assertNonEmptyString("action.params.assetOut", params.assetOut).toUpperCase();
-  assertSwapRoute(sourceChain, destinationChain, assetIn, assetOut);
+  const settlementChain = params.settlementChain
+    ? getChain(params.settlementChain).key
+    : destinationChain;
+  assertSwapRoute(sourceChain, destinationChain, assetIn, assetOut, settlementChain);
 
   const minAmountOut = assertPositiveBigInt(
     "action.params.minAmountOut",
@@ -148,6 +151,7 @@ function normalizeSwap(sourceChain, destinationChain, params) {
       assetOut,
       amountIn: assertPositiveBigInt("action.params.amountIn", params.amountIn),
       minAmountOut,
+      settlementChain,
       recipient: assertNonEmptyString("action.params.recipient", params.recipient),
     }),
   });

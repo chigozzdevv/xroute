@@ -70,6 +70,14 @@ impl AssetKey {
         }
     }
 
+    pub const fn reserve_chain(self) -> ChainKey {
+        match self {
+            Self::Dot => ChainKey::AssetHub,
+            Self::Usdt => ChainKey::AssetHub,
+            Self::Hdx => ChainKey::Hydration,
+        }
+    }
+
     pub fn one(self) -> u128 {
         pow10(self.decimals())
     }
@@ -114,13 +122,14 @@ impl Intent {
                 self.deadline
             ),
             IntentAction::Swap(swap) => format!(
-                "swap|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+                "swap|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
                 self.source_chain.as_str(),
                 self.destination_chain.as_str(),
                 swap.asset_in.symbol(),
                 swap.asset_out.symbol(),
                 swap.amount_in,
                 swap.min_amount_out,
+                swap.settlement_chain.as_str(),
                 swap.recipient,
                 self.refund_address,
                 self.deadline
@@ -183,6 +192,7 @@ pub struct SwapIntent {
     pub asset_out: AssetKey,
     pub amount_in: u128,
     pub min_amount_out: u128,
+    pub settlement_chain: ChainKey,
     pub recipient: String,
 }
 
@@ -208,6 +218,7 @@ pub struct Quote {
     pub deployment_profile: DeploymentProfile,
     pub route: Vec<ChainKey>,
     pub fees: FeeBreakdown,
+    pub estimated_settlement_fee: Option<AssetAmount>,
     pub expected_output: AssetAmount,
     pub min_output: Option<AssetAmount>,
     pub submission: SubmissionTerms,

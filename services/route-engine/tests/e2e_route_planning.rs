@@ -1,7 +1,7 @@
 use route_engine::{
-    AssetKey, CallIntent, ChainKey, DeploymentProfile, DestinationAdapter, EngineSettings, FeeType,
-    Intent, IntentAction, PlanStep, RouteEngine, RouteRegistry, StakeIntent, SubmissionAction,
-    SwapIntent, TransferIntent, XcmInstruction, XcmWeight,
+    AssetAmount, AssetKey, CallIntent, ChainKey, DeploymentProfile, DestinationAdapter,
+    EngineSettings, FeeType, Intent, IntentAction, PlanStep, RouteEngine, RouteRegistry,
+    StakeIntent, SubmissionAction, SwapIntent, TransferIntent, XcmInstruction, XcmWeight,
 };
 
 #[test]
@@ -15,6 +15,7 @@ fn quotes_hydration_swap_over_a_multihop_path() {
             asset_out: AssetKey::Usdt,
             amount_in: AssetKey::Dot.units(100),
             min_amount_out: AssetKey::Usdt.units(490),
+            settlement_chain: ChainKey::Hydration,
             recipient: "5FswapRecipient".to_owned(),
         }),
         refund_address: "5Frefund".to_owned(),
@@ -26,12 +27,17 @@ fn quotes_hydration_swap_over_a_multihop_path() {
     assert_eq!(quote.deployment_profile, DeploymentProfile::Local);
     assert_eq!(
         quote.route,
-        vec![ChainKey::PolkadotHub, ChainKey::AssetHub, ChainKey::Hydration]
+        vec![
+            ChainKey::PolkadotHub,
+            ChainKey::AssetHub,
+            ChainKey::Hydration
+        ]
     );
     assert_eq!(quote.fees.xcm_fee.amount, 180_000_000);
     assert_eq!(quote.fees.destination_fee.amount, 120_000_000);
     assert_eq!(quote.fees.platform_fee.amount, 1_000_000_000);
     assert_eq!(quote.fees.total_fee.amount, 1_300_000_000);
+    assert!(quote.estimated_settlement_fee.is_none());
     assert_eq!(quote.expected_output.asset, AssetKey::Usdt);
     assert_eq!(quote.expected_output.amount, 493_515_000);
     assert_eq!(quote.min_output.expect("min output").amount, 490_000_000);
@@ -99,13 +105,65 @@ fn quotes_hydration_swap_over_a_multihop_path() {
         .contract_call()
         .expect("swap contract call")
         .starts_with("0x670b1f29"));
+}
+
+#[test]
+fn quotes_hydration_swap_and_settles_on_asset_hub() {
+    let engine = RouteEngine::default();
+    let intent = Intent {
+        source_chain: ChainKey::PolkadotHub,
+        destination_chain: ChainKey::Hydration,
+        action: IntentAction::Swap(SwapIntent {
+            asset_in: AssetKey::Dot,
+            asset_out: AssetKey::Usdt,
+            amount_in: AssetKey::Dot.units(100),
+            min_amount_out: AssetKey::Usdt.units(493),
+            settlement_chain: ChainKey::AssetHub,
+            recipient: "5FassetHubRecipient".to_owned(),
+        }),
+        refund_address: "5Frefund".to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let quote = engine.quote(intent).expect("swap quote should build");
+
     assert_eq!(
-        inner_transfer.remote_instructions()[2],
-        XcmInstruction::DepositAsset {
+        quote.route,
+        vec![
+            ChainKey::PolkadotHub,
+            ChainKey::AssetHub,
+            ChainKey::Hydration,
+            ChainKey::AssetHub,
+        ]
+    );
+    assert_eq!(
+        quote.estimated_settlement_fee,
+        Some(AssetAmount::new(AssetKey::Usdt, 35_000))
+    );
+    assert_eq!(
+        quote.expected_output,
+        AssetAmount::new(AssetKey::Usdt, 493_480_000)
+    );
+    assert_eq!(quote.min_output.expect("min output").amount, 493_000_000);
+    assert_eq!(
+        quote.execution_plan.steps[5],
+        PlanStep::ExpectSettlement {
+            chain: ChainKey::AssetHub,
             asset: AssetKey::Usdt,
-            recipient: "5FswapRecipient".to_owned(),
+            recipient: "5FassetHubRecipient".to_owned(),
+            minimum_amount: Some(493_000_000),
         }
     );
+
+    let inner_transfer = nested_transfer_instruction(
+        first_transfer_instruction(&quote.execution_plan.steps[4]).remote_instructions(),
+        1,
+    );
+    assert_eq!(inner_transfer.remote_instructions().len(), 2);
+    assert!(inner_transfer.remote_instructions()[1]
+        .contract_call()
+        .expect("swap contract call")
+        .contains("00000000000000000000000000000000000000000000000000000000000003e8"));
 }
 
 #[test]
@@ -177,16 +235,23 @@ fn quotes_hydration_stake_over_a_multihop_path() {
     assert_eq!(quote.deployment_profile, DeploymentProfile::Local);
     assert_eq!(
         quote.route,
-        vec![ChainKey::PolkadotHub, ChainKey::AssetHub, ChainKey::Hydration]
+        vec![
+            ChainKey::PolkadotHub,
+            ChainKey::AssetHub,
+            ChainKey::Hydration
+        ]
     );
     assert_eq!(quote.submission.action, SubmissionAction::Stake);
+    assert!(quote.estimated_settlement_fee.is_none());
     assert_eq!(quote.submission.xcm_fee, 180_000_000);
     assert_eq!(quote.submission.destination_fee, 120_000_000);
     assert_eq!(quote.submission.min_output_amount, 0);
     assert!(quote.min_output.is_none());
 
-    let inner_transfer =
-        nested_transfer_instruction(first_transfer_instruction(&quote.execution_plan.steps[4]).remote_instructions(), 1);
+    let inner_transfer = nested_transfer_instruction(
+        first_transfer_instruction(&quote.execution_plan.steps[4]).remote_instructions(),
+        1,
+    );
     assert_eq!(inner_transfer.remote_instructions().len(), 2);
     assert_eq!(
         inner_transfer.remote_instructions()[1],
@@ -230,16 +295,23 @@ fn quotes_hydration_call_over_a_multihop_path() {
     assert_eq!(quote.deployment_profile, DeploymentProfile::Local);
     assert_eq!(
         quote.route,
-        vec![ChainKey::PolkadotHub, ChainKey::AssetHub, ChainKey::Hydration]
+        vec![
+            ChainKey::PolkadotHub,
+            ChainKey::AssetHub,
+            ChainKey::Hydration
+        ]
     );
     assert_eq!(quote.submission.action, SubmissionAction::Call);
+    assert!(quote.estimated_settlement_fee.is_none());
     assert_eq!(quote.submission.xcm_fee, 180_000_000);
     assert_eq!(quote.submission.destination_fee, 120_000_000);
     assert_eq!(quote.submission.min_output_amount, 0);
     assert_eq!(quote.expected_output.amount, 0);
 
-    let inner_transfer =
-        nested_transfer_instruction(first_transfer_instruction(&quote.execution_plan.steps[4]).remote_instructions(), 1);
+    let inner_transfer = nested_transfer_instruction(
+        first_transfer_instruction(&quote.execution_plan.steps[4]).remote_instructions(),
+        1,
+    );
     assert_eq!(inner_transfer.remote_instructions().len(), 2);
     assert_eq!(
         inner_transfer.remote_instructions()[1],
@@ -279,6 +351,7 @@ fn quotes_hydration_swap_against_testnet_deployments() {
             asset_out: AssetKey::Usdt,
             amount_in: AssetKey::Dot.units(10),
             min_amount_out: AssetKey::Usdt.units(49),
+            settlement_chain: ChainKey::Hydration,
             recipient: "5FswapRecipient".to_owned(),
         }),
         refund_address: "5Frefund".to_owned(),
@@ -291,8 +364,10 @@ fn quotes_hydration_swap_against_testnet_deployments() {
 
     assert_eq!(quote.deployment_profile, DeploymentProfile::Testnet);
 
-    let inner_transfer =
-        nested_transfer_instruction(first_transfer_instruction(&quote.execution_plan.steps[4]).remote_instructions(), 1);
+    let inner_transfer = nested_transfer_instruction(
+        first_transfer_instruction(&quote.execution_plan.steps[4]).remote_instructions(),
+        1,
+    );
     match &inner_transfer.remote_instructions()[1] {
         XcmInstruction::Transact { target_address, .. } => {
             assert_eq!(target_address, "0x0000000000000000000000000000000000002001");

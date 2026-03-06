@@ -7,6 +7,6 @@ interface IHydrationSwapAdapterV1 {
         bytes32 assetOutId,
         uint256 amountIn,
         uint256 minAmountOut,
-        bytes calldata recipient
+        bytes calldata settlementPlan
     ) external;
 }

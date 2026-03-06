@@ -8,7 +8,7 @@ contract MockHydrationSwapExecutor is IHydrationSwapExecutor {
     bytes32 public lastAssetOutId;
     uint256 public lastAmountIn;
     uint256 public lastMinAmountOut;
-    bytes public lastRecipient;
+    bytes public lastSettlementPlan;
     uint256 public callCount;
 
     function swap(
@@ -16,13 +16,13 @@ contract MockHydrationSwapExecutor is IHydrationSwapExecutor {
         bytes32 assetOutId,
         uint256 amountIn,
         uint256 minAmountOut,
-        bytes calldata recipient
+        bytes calldata settlementPlan
     ) external {
         lastAssetInId = assetInId;
         lastAssetOutId = assetOutId;
         lastAmountIn = amountIn;
         lastMinAmountOut = minAmountOut;
-        lastRecipient = recipient;
+        lastSettlementPlan = settlementPlan;
         callCount += 1;
     }
 }

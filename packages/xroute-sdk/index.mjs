@@ -270,6 +270,9 @@ export function normalizeQuote(quote) {
     ),
     route: quote.route.slice(),
     fees: normalizeFeeBreakdown(quote.fees),
+    estimatedSettlementFee: quote.estimatedSettlementFee
+      ? normalizeAssetAmount(quote.estimatedSettlementFee)
+      : null,
     expectedOutput: normalizeAssetAmount(quote.expectedOutput),
     minOutput: quote.minOutput ? normalizeAssetAmount(quote.minOutput) : null,
     submission: Object.freeze({
@@ -348,6 +351,8 @@ function buildRouteEngineQuoteArgs(
         intent.action.params.minAmountOut.toString(),
         "--recipient",
         intent.action.params.recipient,
+        "--settlement-chain",
+        intent.action.params.settlementChain,
       ]);
     case ACTION_TYPES.STAKE:
       return shared.concat([

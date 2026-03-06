@@ -2,8 +2,8 @@ use crate::adapter_deployments::lookup_destination_adapter_deployment;
 use crate::adapter_specs::lookup_destination_adapter_spec;
 use crate::error::RouteError;
 use crate::model::{
-    AssetAmount, AssetKey, DeploymentProfile, DestinationAdapter, FeeBreakdown, FeeType, Intent,
-    IntentAction, PlanStep, Quote, SubmissionAction, SubmissionTerms, XcmInstruction,
+    AssetAmount, AssetKey, ChainKey, DeploymentProfile, DestinationAdapter, FeeBreakdown, FeeType,
+    Intent, IntentAction, PlanStep, Quote, SubmissionAction, SubmissionTerms, XcmInstruction,
 };
 use crate::registry::{CallRoute, RouteRegistry, StakeRoute, SwapRoute, TransferPath};
 
@@ -40,7 +40,11 @@ impl RouteEngine {
             IntentAction::Transfer(transfer) => {
                 let path = self
                     .registry
-                    .best_transfer_path(intent.source_chain, intent.destination_chain, transfer.asset)
+                    .best_transfer_path(
+                        intent.source_chain,
+                        intent.destination_chain,
+                        transfer.asset,
+                    )
                     .ok_or(RouteError::UnsupportedTransferRoute {
                         source: intent.source_chain,
                         destination: intent.destination_chain,
@@ -59,6 +63,7 @@ impl RouteEngine {
                     deployment_profile: self.settings.deployment_profile,
                     route: execution_plan.route.clone(),
                     fees,
+                    estimated_settlement_fee: None,
                     expected_output: AssetAmount::new(transfer.asset, transfer.amount),
                     min_output: Some(AssetAmount::new(transfer.asset, transfer.amount)),
                     submission: SubmissionTerms {
@@ -73,9 +78,13 @@ impl RouteEngine {
                 })
             }
             IntentAction::Swap(swap) => {
-                let path = self
+                let execution_path = self
                     .registry
-                    .best_transfer_path(intent.source_chain, intent.destination_chain, swap.asset_in)
+                    .best_transfer_path(
+                        intent.source_chain,
+                        intent.destination_chain,
+                        swap.asset_in,
+                    )
                     .ok_or(RouteError::UnsupportedSwapRoute {
                         source: intent.source_chain,
                         destination: intent.destination_chain,
@@ -92,7 +101,15 @@ impl RouteEngine {
                         asset_out: swap.asset_out,
                     })?;
 
-                let expected_output = quote_swap_output(&route, swap.amount_in)?;
+                let settlement = build_swap_settlement(
+                    &self.registry,
+                    route.destination,
+                    swap.asset_out,
+                    swap.settlement_chain,
+                    &swap.recipient,
+                )?;
+                let gross_output = quote_swap_output(&route, swap.amount_in)?;
+                let expected_output = settlement.apply_to_output(gross_output)?;
                 if swap.min_amount_out > expected_output.amount {
                     return Err(RouteError::MinOutputTooHigh {
                         requested: swap.min_amount_out,
@@ -102,25 +119,32 @@ impl RouteEngine {
 
                 let fees = self.fee_breakdown(
                     intent.principal_amount().amount,
-                    path.xcm_fee,
-                    path.destination_fee,
+                    execution_path.xcm_fee,
+                    execution_path.destination_fee,
                 )?;
-                let execution_plan =
-                    build_swap_plan(&intent, &path, &route, &fees, self.settings.deployment_profile)?;
+                let execution_plan = build_swap_plan(
+                    &intent,
+                    &execution_path,
+                    &route,
+                    &settlement,
+                    &fees,
+                    self.settings.deployment_profile,
+                )?;
 
                 Ok(Quote {
                     quote_id,
                     deployment_profile: self.settings.deployment_profile,
                     route: execution_plan.route.clone(),
                     fees,
+                    estimated_settlement_fee: settlement.estimated_fee,
                     expected_output,
                     min_output: Some(AssetAmount::new(swap.asset_out, swap.min_amount_out)),
                     submission: SubmissionTerms {
                         action: SubmissionAction::Swap,
                         asset: swap.asset_in,
                         amount: swap.amount_in,
-                        xcm_fee: path.xcm_fee.amount,
-                        destination_fee: path.destination_fee.amount,
+                        xcm_fee: execution_path.xcm_fee.amount,
+                        destination_fee: execution_path.destination_fee.amount,
                         min_output_amount: swap.min_amount_out,
                     },
                     execution_plan,
@@ -149,14 +173,20 @@ impl RouteEngine {
                     path.xcm_fee,
                     path.destination_fee,
                 )?;
-                let execution_plan =
-                    build_stake_plan(&intent, &path, &route, &fees, self.settings.deployment_profile)?;
+                let execution_plan = build_stake_plan(
+                    &intent,
+                    &path,
+                    &route,
+                    &fees,
+                    self.settings.deployment_profile,
+                )?;
 
                 Ok(Quote {
                     quote_id,
                     deployment_profile: self.settings.deployment_profile,
                     route: execution_plan.route.clone(),
                     fees,
+                    estimated_settlement_fee: None,
                     expected_output: AssetAmount::new(stake.asset, stake.amount),
                     min_output: None,
                     submission: SubmissionTerms {
@@ -193,14 +223,20 @@ impl RouteEngine {
                     path.xcm_fee,
                     path.destination_fee,
                 )?;
-                let execution_plan =
-                    build_call_plan(&intent, &path, &route, &fees, self.settings.deployment_profile)?;
+                let execution_plan = build_call_plan(
+                    &intent,
+                    &path,
+                    &route,
+                    &fees,
+                    self.settings.deployment_profile,
+                )?;
 
                 Ok(Quote {
                     quote_id,
                     deployment_profile: self.settings.deployment_profile,
                     route: execution_plan.route.clone(),
                     fees,
+                    estimated_settlement_fee: None,
                     expected_output: AssetAmount::new(call.asset, 0),
                     min_output: None,
                     submission: SubmissionTerms {
@@ -239,6 +275,112 @@ impl RouteEngine {
             total_fee: AssetAmount::new(xcm_fee.asset, total_amount),
         })
     }
+}
+
+#[derive(Debug, Clone)]
+struct SwapSettlement {
+    asset: AssetKey,
+    mode: SwapSettlementMode,
+    settlement_chain: ChainKey,
+    reserve_chain: ChainKey,
+    recipient: String,
+    estimated_fee: Option<AssetAmount>,
+    settlement_path: Option<TransferPath>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SwapSettlementMode {
+    LocalAccount = 0,
+    DepositReserveAsset = 1,
+    InitiateReserveWithdraw = 2,
+}
+
+impl SwapSettlement {
+    fn apply_to_output(&self, gross_output: AssetAmount) -> Result<AssetAmount, RouteError> {
+        let Some(fee) = self.estimated_fee else {
+            return Ok(gross_output);
+        };
+
+        let amount = gross_output.amount.checked_sub(fee.amount).ok_or(
+            RouteError::SettlementFeeExceedsOutput {
+                gross_output: gross_output.amount,
+                settlement_fee: fee.amount,
+            },
+        )?;
+
+        Ok(AssetAmount::new(gross_output.asset, amount))
+    }
+}
+
+fn build_swap_settlement(
+    registry: &RouteRegistry,
+    execution_chain: ChainKey,
+    asset_out: AssetKey,
+    settlement_chain: ChainKey,
+    recipient: &str,
+) -> Result<SwapSettlement, RouteError> {
+    if settlement_chain == execution_chain {
+        return Ok(SwapSettlement {
+            asset: asset_out,
+            mode: SwapSettlementMode::LocalAccount,
+            settlement_chain,
+            reserve_chain: asset_out.reserve_chain(),
+            recipient: recipient.to_owned(),
+            estimated_fee: None,
+            settlement_path: None,
+        });
+    }
+
+    let settlement_path = registry
+        .best_transfer_path(execution_chain, settlement_chain, asset_out)
+        .ok_or(RouteError::UnsupportedSettlementRoute {
+            execution: execution_chain,
+            settlement: settlement_chain,
+            asset: asset_out,
+        })?;
+
+    let estimated_fee = AssetAmount::new(
+        asset_out,
+        settlement_path
+            .xcm_fee
+            .amount
+            .saturating_add(settlement_path.destination_fee.amount),
+    );
+    let reserve_chain = asset_out.reserve_chain();
+    let mode = if reserve_chain == execution_chain {
+        SwapSettlementMode::DepositReserveAsset
+    } else if reserve_chain == settlement_chain {
+        SwapSettlementMode::InitiateReserveWithdraw
+    } else {
+        return Err(RouteError::UnsupportedSettlementRoute {
+            execution: execution_chain,
+            settlement: settlement_chain,
+            asset: asset_out,
+        });
+    };
+
+    Ok(SwapSettlement {
+        asset: asset_out,
+        mode,
+        settlement_chain,
+        reserve_chain,
+        recipient: recipient.to_owned(),
+        estimated_fee: Some(estimated_fee),
+        settlement_path: Some(settlement_path),
+    })
+}
+
+fn composed_route(
+    execution_route: &[ChainKey],
+    settlement_path: Option<&TransferPath>,
+) -> Vec<ChainKey> {
+    let mut route = execution_route.to_vec();
+
+    if let Some(path) = settlement_path {
+        route.extend(path.route.iter().copied().skip(1));
+    }
+
+    route
 }
 
 fn build_transfer_plan(
@@ -286,10 +428,7 @@ fn build_transfer_plan(
             },
             PlanStep::SendXcm {
                 origin: intent.source_chain,
-                destination: *path
-                    .route
-                    .get(1)
-                    .ok_or(RouteError::ArithmeticOverflow)?,
+                destination: *path.route.get(1).ok_or(RouteError::ArithmeticOverflow)?,
                 instructions: vec![build_multihop_transfer_instruction(
                     &path.hops,
                     0,
@@ -309,8 +448,9 @@ fn build_transfer_plan(
 
 fn build_swap_plan(
     intent: &Intent,
-    path: &TransferPath,
+    execution_path: &TransferPath,
     route: &SwapRoute,
+    settlement: &SwapSettlement,
     fees: &FeeBreakdown,
     deployment_profile: DeploymentProfile,
 ) -> Result<crate::model::ExecutionPlan, RouteError> {
@@ -324,33 +464,27 @@ fn build_swap_plan(
         IntentAction::Swap(swap) => swap,
         _ => unreachable!(),
     };
-    let final_remote_instructions = vec![
-        XcmInstruction::Transact {
-            adapter: route.adapter,
-            target_address: destination_adapter_address(
-                route.adapter,
-                route.destination,
-                deployment_profile,
-            )?
-            .to_owned(),
-            contract_call: encode_swap_adapter_call(
-                route.adapter,
-                swap.asset_in,
-                swap.asset_out,
-                swap.amount_in,
-                swap.min_amount_out,
-                &swap.recipient,
-            )?,
-            fallback_weight: route.transact_weight,
-        },
-        XcmInstruction::DepositAsset {
-            asset: swap.asset_out,
-            recipient: swap.recipient.clone(),
-        },
-    ];
+    let final_remote_instructions = vec![XcmInstruction::Transact {
+        adapter: route.adapter,
+        target_address: destination_adapter_address(
+            route.adapter,
+            route.destination,
+            deployment_profile,
+        )?
+        .to_owned(),
+        contract_call: encode_swap_adapter_call(
+            route.adapter,
+            swap.asset_in,
+            swap.asset_out,
+            swap.amount_in,
+            swap.min_amount_out,
+            settlement,
+        )?,
+        fallback_weight: route.transact_weight,
+    }];
 
     Ok(crate::model::ExecutionPlan {
-        route: path.route.clone(),
+        route: composed_route(&execution_path.route, settlement.settlement_path.as_ref()),
         steps: vec![
             PlanStep::LockAsset {
                 chain: intent.source_chain,
@@ -374,19 +508,19 @@ fn build_swap_plan(
             },
             PlanStep::SendXcm {
                 origin: intent.source_chain,
-                destination: *path
+                destination: *execution_path
                     .route
                     .get(1)
                     .ok_or(RouteError::ArithmeticOverflow)?,
                 instructions: vec![build_multihop_transfer_instruction(
-                    &path.hops,
+                    &execution_path.hops,
                     0,
                     swap.amount_in,
                     final_remote_instructions,
                 )],
             },
             PlanStep::ExpectSettlement {
-                chain: route.destination,
+                chain: settlement.settlement_chain,
                 asset: swap.asset_out,
                 recipient: swap.recipient.clone(),
                 minimum_amount: Some(swap.min_amount_out),
@@ -455,10 +589,7 @@ fn build_stake_plan(
             },
             PlanStep::SendXcm {
                 origin: intent.source_chain,
-                destination: *path
-                    .route
-                    .get(1)
-                    .ok_or(RouteError::ArithmeticOverflow)?,
+                destination: *path.route.get(1).ok_or(RouteError::ArithmeticOverflow)?,
                 instructions: vec![build_multihop_transfer_instruction(
                     &path.hops,
                     0,
@@ -536,10 +667,7 @@ fn build_call_plan(
             },
             PlanStep::SendXcm {
                 origin: intent.source_chain,
-                destination: *path
-                    .route
-                    .get(1)
-                    .ok_or(RouteError::ArithmeticOverflow)?,
+                destination: *path.route.get(1).ok_or(RouteError::ArithmeticOverflow)?,
                 instructions: vec![build_multihop_transfer_instruction(
                     &path.hops,
                     0,
@@ -620,7 +748,7 @@ fn encode_swap_adapter_call(
     asset_out: AssetKey,
     amount_in: u128,
     min_amount_out: u128,
-    recipient: &str,
+    settlement: &SwapSettlement,
 ) -> Result<String, RouteError> {
     Ok(abi_encode_call(
         destination_adapter_selector(adapter)?,
@@ -629,7 +757,7 @@ fn encode_swap_adapter_call(
             AbiToken::Bytes32(encode_asset_id(asset_out)),
             AbiToken::Uint(amount_in),
             AbiToken::Uint(min_amount_out),
-            AbiToken::Bytes(recipient.as_bytes().to_vec()),
+            AbiToken::Bytes(encode_swap_settlement_plan(settlement)),
         ],
     ))
 }
@@ -691,10 +819,14 @@ enum AbiToken {
 }
 
 fn abi_encode_call(selector: [u8; 4], tokens: &[AbiToken]) -> String {
-    let head_size = tokens.len() * 32;
-    let mut encoded = Vec::with_capacity(4 + head_size + 128);
+    let mut encoded = Vec::with_capacity(4 + tokens.len() * 32 + 128);
     encoded.extend_from_slice(&selector);
+    encoded.extend_from_slice(&abi_encode_tokens(tokens));
+    hex_encode(&encoded)
+}
 
+fn abi_encode_tokens(tokens: &[AbiToken]) -> Vec<u8> {
+    let head_size = tokens.len() * 32;
     let mut head = Vec::with_capacity(head_size);
     let mut tail = Vec::new();
 
@@ -716,9 +848,10 @@ fn abi_encode_call(selector: [u8; 4], tokens: &[AbiToken]) -> String {
         }
     }
 
+    let mut encoded = Vec::with_capacity(head.len() + tail.len());
     encoded.extend_from_slice(&head);
     encoded.extend_from_slice(&tail);
-    hex_encode(&encoded)
+    encoded
 }
 
 fn encode_asset_id(asset: AssetKey) -> [u8; 32] {
@@ -738,6 +871,29 @@ fn encode_address_word(value: &[u8; 20]) -> [u8; 32] {
     let mut word = [0u8; 32];
     word[12..].copy_from_slice(value);
     word
+}
+
+fn encode_swap_settlement_plan(settlement: &SwapSettlement) -> Vec<u8> {
+    let estimated_fee = settlement.estimated_fee.map(|fee| fee.amount).unwrap_or(0);
+
+    let tokens = [
+        AbiToken::Uint(settlement.mode as u128),
+        AbiToken::Bytes32(encode_asset_id(settlement.asset)),
+        AbiToken::Uint(u128::from(parachain_id(settlement.reserve_chain))),
+        AbiToken::Uint(u128::from(parachain_id(settlement.settlement_chain))),
+        AbiToken::Uint(estimated_fee),
+        AbiToken::Bytes(settlement.recipient.as_bytes().to_vec()),
+    ];
+
+    abi_encode_tokens(&tokens)
+}
+
+fn parachain_id(chain: ChainKey) -> u32 {
+    match chain {
+        ChainKey::PolkadotHub => 1000,
+        ChainKey::AssetHub => 1000,
+        ChainKey::Hydration => 2034,
+    }
 }
 
 fn parse_evm_address(field: &'static str, value: &str) -> Result<[u8; 20], RouteError> {

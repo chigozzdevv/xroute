@@ -95,6 +95,7 @@ test("sdk execute derives the XCM envelope from the route-engine quote", async (
       assetOut: "USDT",
       amountIn: "1000000000000",
       minAmountOut: "490000000",
+      settlementChain: "hydration",
       recipient: aliceAddress,
     },
   });
@@ -132,6 +133,7 @@ test("route engine quote provider returns adapter-backed remote calls", async ()
 
   assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.LOCAL);
   assert.deepEqual(quote.route, ["polkadot-hub", "asset-hub", "hydration"]);
+  assert.equal(quote.estimatedSettlementFee, null);
   assert.equal(quote.submission.action, "call");
   assert.equal(remoteInstructions[0].type, "buy-execution");
   assert.equal(remoteInstructions[1].type, "transact");
@@ -163,6 +165,44 @@ test("route engine quote provider selects published testnet deployments", async 
 
   assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.TESTNET);
   assert.equal(remoteInstructions[1].targetAddress, "0x0000000000000000000000000000000000002003");
+});
+
+test("route engine quote provider quotes a hydration swap that settles on asset hub", async () => {
+  const provider = createRouteEngineQuoteProvider({
+    cwd: workspaceRoot,
+  });
+  const intent = createSwapIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    refundAddress: aliceAddress,
+    deadline: 1_773_185_200,
+    params: {
+      assetIn: "DOT",
+      assetOut: "USDT",
+      amountIn: "1000000000000",
+      minAmountOut: "493000000",
+      settlementChain: "asset-hub",
+      recipient: aliceAddress,
+    },
+  });
+
+  const quote = normalizeQuote(await provider.quote(intent));
+  const remoteInstructions = finalRemoteInstructions(quote);
+
+  assert.deepEqual(quote.route, [
+    "polkadot-hub",
+    "asset-hub",
+    "hydration",
+    "asset-hub",
+  ]);
+  assert.deepEqual(quote.estimatedSettlementFee, {
+    asset: "USDT",
+    amount: 35000n,
+  });
+  assert.equal(quote.expectedOutput.amount, 493480000n);
+  assert.equal(remoteInstructions.length, 2);
+  assert.equal(remoteInstructions[1].type, "transact");
+  assert.match(remoteInstructions[1].contractCall, /^0x670b1f29[0-9a-f]+$/);
 });
 
 test("http quote provider forwards normalized intents and returns quotes", async () => {

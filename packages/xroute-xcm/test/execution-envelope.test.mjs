@@ -61,6 +61,7 @@ test("buildExecutionEnvelope encodes the hydration swap adapter path", async () 
       assetOut: "USDT",
       amountIn: "1000000000000",
       minAmountOut: "490000000",
+      settlementChain: "hydration",
       recipient: aliceAddress,
     },
   });
@@ -79,7 +80,7 @@ test("buildExecutionEnvelope encodes the hydration swap adapter path", async () 
   assert.equal(innerTransfer.type, "TransferReserveAsset");
   assert.equal(remoteInstructions[0].type, "BuyExecution");
   assert.equal(remoteInstructions[1].type, "Transact");
-  assert.equal(remoteInstructions[2].type, "DepositAsset");
+  assert.equal(remoteInstructions.length, 2);
   assert.equal(remoteInstructions[1].value.origin_kind.type, "SovereignAccount");
   assert.equal(remoteInstructions[1].value.fallback_max_weight.ref_time, 3500000000n);
   assert.equal(remoteInstructions[1].value.fallback_max_weight.proof_size, 120000n);
@@ -160,6 +161,7 @@ test("buildExecutionEnvelope selects the published testnet adapter deployment", 
       assetOut: "USDT",
       amountIn: "1000000000000",
       minAmountOut: "490000000",
+      settlementChain: "hydration",
       recipient: aliceAddress,
     },
   });
@@ -187,9 +189,41 @@ test("buildExecutionEnvelope rejects a transact payload with a mismatched publis
       assetOut: "USDT",
       amountIn: "1000000000000",
       minAmountOut: "490000000",
+      settlementChain: "hydration",
       recipient: aliceAddress,
     },
   });
+
+test("buildExecutionEnvelope encodes a hydration swap that settles on asset hub", async () => {
+  const intent = createSwapIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    refundAddress: bobAddress,
+    deadline: 1_773_185_200,
+    params: {
+      assetIn: "DOT",
+      assetOut: "USDT",
+      amountIn: "1000000000000",
+      minAmountOut: "493000000",
+      settlementChain: "asset-hub",
+      recipient: aliceAddress,
+    },
+  });
+  const quote = await quoteProvider.quote(intent);
+
+  const envelope = buildExecutionEnvelope({ intent, quote });
+  const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
+  const remoteInstructions = hydrationRemoteInstructions(decoded);
+
+  assert.equal(remoteInstructions.length, 2);
+  assert.equal(remoteInstructions[1].type, "Transact");
+  assert.ok(toHex(remoteInstructions[1].value.call).startsWith("0x00986153"));
+  assert.ok(
+    toHex(remoteInstructions[1].value.call).includes(
+      "00000000000000000000000000000000000000000000000000000000000003e8",
+    ),
+  );
+});
   const quote = await quoteProvider.quote(intent);
   const badQuote = {
     ...quote,

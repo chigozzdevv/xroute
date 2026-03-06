@@ -13,7 +13,7 @@ contract HydrationSwapAdapterV1 is HydrationAdapterBase, IHydrationSwapAdapterV1
         bytes32 indexed assetOutId,
         uint256 amountIn,
         uint256 minAmountOut,
-        bytes recipient
+        bytes settlementPlan
     );
 
     constructor(address dispatcher_, address executor_) HydrationAdapterBase(dispatcher_) {
@@ -26,9 +26,9 @@ contract HydrationSwapAdapterV1 is HydrationAdapterBase, IHydrationSwapAdapterV1
         bytes32 assetOutId,
         uint256 amountIn,
         uint256 minAmountOut,
-        bytes calldata recipient
+        bytes calldata settlementPlan
     ) external onlyDispatcher {
-        executor.swap(assetInId, assetOutId, amountIn, minAmountOut, recipient);
-        emit SwapForwarded(assetInId, assetOutId, amountIn, minAmountOut, recipient);
+        executor.swap(assetInId, assetOutId, amountIn, minAmountOut, settlementPlan);
+        emit SwapForwarded(assetInId, assetOutId, amountIn, minAmountOut, settlementPlan);
     }
 }

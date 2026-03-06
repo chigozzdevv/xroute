@@ -25,6 +25,11 @@ pub enum RouteError {
         destination: ChainKey,
         asset: AssetKey,
     },
+    UnsupportedSettlementRoute {
+        execution: ChainKey,
+        settlement: ChainKey,
+        asset: AssetKey,
+    },
     UnsupportedAction {
         action: &'static str,
     },
@@ -47,6 +52,10 @@ pub enum RouteError {
     MinOutputTooHigh {
         requested: u128,
         expected: u128,
+    },
+    SettlementFeeExceedsOutput {
+        gross_output: u128,
+        settlement_fee: u128,
     },
     InvalidHex {
         field: &'static str,
@@ -106,6 +115,17 @@ impl Display for RouteError {
                 destination.as_str(),
                 asset.symbol()
             ),
+            Self::UnsupportedSettlementRoute {
+                execution,
+                settlement,
+                asset,
+            } => write!(
+                f,
+                "unsupported settlement route: {} -> {} for {}",
+                execution.as_str(),
+                settlement.as_str(),
+                asset.symbol()
+            ),
             Self::UnsupportedAction { action } => {
                 write!(f, "unsupported action: {action}")
             }
@@ -143,6 +163,13 @@ impl Display for RouteError {
             } => write!(
                 f,
                 "requested minimum output {requested} exceeds estimated output {expected}"
+            ),
+            Self::SettlementFeeExceedsOutput {
+                gross_output,
+                settlement_fee,
+            } => write!(
+                f,
+                "estimated settlement fee {settlement_fee} exceeds gross output {gross_output}"
             ),
             Self::InvalidHex { field } => {
                 write!(f, "{field} must be a valid 0x-prefixed hex string")

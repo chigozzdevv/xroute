@@ -27,7 +27,12 @@ export const CHAINS = Object.freeze({
     key: "asset-hub",
     label: "Asset Hub",
     parachainId: 1000,
-    supportedActions: Object.freeze([ACTION_TYPES.TRANSFER]),
+    supportedActions: Object.freeze([
+      ACTION_TYPES.TRANSFER,
+      ACTION_TYPES.SWAP,
+      ACTION_TYPES.STAKE,
+      ACTION_TYPES.CALL,
+    ]),
   }),
 });
 
@@ -67,12 +72,22 @@ export const ASSETS = Object.freeze({
           ]),
         }),
       }),
+      "asset-hub": Object.freeze({
+        parents: 0,
+        interior: Object.freeze({
+          type: "x2",
+          value: Object.freeze([
+            Object.freeze({ type: "pallet-instance", value: 50 }),
+            Object.freeze({ type: "general-index", value: 1984n }),
+          ]),
+        }),
+      }),
     }),
   }),
   HDX: Object.freeze({
     symbol: "HDX",
     decimals: 12,
-    supportedChains: Object.freeze(["hydration"]),
+    supportedChains: Object.freeze(["hydration", "asset-hub"]),
     xcmLocations: Object.freeze({
       hydration: Object.freeze({
         parents: 0,
@@ -82,6 +97,16 @@ export const ASSETS = Object.freeze({
             type: "general-index",
             value: 0n,
           }),
+        }),
+      }),
+      "asset-hub": Object.freeze({
+        parents: 1,
+        interior: Object.freeze({
+          type: "x2",
+          value: Object.freeze([
+            Object.freeze({ type: "parachain", value: 2034 }),
+            Object.freeze({ type: "general-index", value: 0n }),
+          ]),
         }),
       }),
     }),
@@ -108,7 +133,44 @@ const USER_ROUTES = Object.freeze([
       ACTION_TYPES.CALL,
     ]),
     transferableAssets: Object.freeze(["DOT"]),
-    swapPairs: Object.freeze([{ assetIn: "DOT", assetOut: "USDT" }]),
+    swapPairs: Object.freeze([
+      Object.freeze({
+        assetIn: "DOT",
+        assetOut: "USDT",
+        settlementChains: Object.freeze(["hydration", "asset-hub"]),
+      }),
+      Object.freeze({
+        assetIn: "DOT",
+        assetOut: "HDX",
+        settlementChains: Object.freeze(["hydration", "asset-hub"]),
+      }),
+    ]),
+    stakeAssets: Object.freeze(["DOT"]),
+    callAssets: Object.freeze(["DOT"]),
+  }),
+  Object.freeze({
+    sourceChain: "asset-hub",
+    destinationChain: "hydration",
+    path: Object.freeze(["asset-hub", "hydration"]),
+    actions: Object.freeze([
+      ACTION_TYPES.TRANSFER,
+      ACTION_TYPES.SWAP,
+      ACTION_TYPES.STAKE,
+      ACTION_TYPES.CALL,
+    ]),
+    transferableAssets: Object.freeze(["DOT"]),
+    swapPairs: Object.freeze([
+      Object.freeze({
+        assetIn: "DOT",
+        assetOut: "USDT",
+        settlementChains: Object.freeze(["hydration", "asset-hub"]),
+      }),
+      Object.freeze({
+        assetIn: "DOT",
+        assetOut: "HDX",
+        settlementChains: Object.freeze(["hydration", "asset-hub"]),
+      }),
+    ]),
     stakeAssets: Object.freeze(["DOT"]),
     callAssets: Object.freeze(["DOT"]),
   }),
@@ -185,18 +247,27 @@ export function assertTransferRoute(sourceChain, destinationChain, assetKey) {
   return route;
 }
 
-export function assertSwapRoute(sourceChain, destinationChain, assetInKey, assetOutKey) {
+export function assertSwapRoute(
+  sourceChain,
+  destinationChain,
+  assetInKey,
+  assetOutKey,
+  settlementChain = destinationChain,
+) {
   const route = getRoute(sourceChain, destinationChain);
   assertIncluded("action", ACTION_TYPES.SWAP, route.actions);
   const assetIn = getAsset(assetInKey);
   const assetOut = getAsset(assetOutKey);
 
   const supported = route.swapPairs.some(
-    (pair) => pair.assetIn === assetIn.symbol && pair.assetOut === assetOut.symbol,
+    (pair) =>
+      pair.assetIn === assetIn.symbol &&
+      pair.assetOut === assetOut.symbol &&
+      pair.settlementChains.includes(getChain(settlementChain).key),
   );
   if (!supported) {
     throw new Error(
-      `swap ${assetIn.symbol} -> ${assetOut.symbol} is not supported on ${route.sourceChain} -> ${route.destinationChain}`,
+      `swap ${assetIn.symbol} -> ${assetOut.symbol} is not supported on ${route.sourceChain} -> ${route.destinationChain} for settlement on ${getChain(settlementChain).key}`,
     );
   }
 

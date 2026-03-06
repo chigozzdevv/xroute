@@ -80,6 +80,12 @@ fn build_intent(options: &HashMap<String, String>) -> Result<Intent, String> {
             asset_out: parse_asset(required(options, "asset-out")?)?,
             amount_in: parse_u128(required(options, "amount-in")?, "amount-in")?,
             min_amount_out: parse_u128(required(options, "min-amount-out")?, "min-amount-out")?,
+            settlement_chain: options
+                .get("settlement-chain")
+                .map(String::as_str)
+                .map(parse_chain)
+                .transpose()?
+                .unwrap_or(destination_chain),
             recipient: required(options, "recipient")?.to_owned(),
         }),
         "stake" => IntentAction::Stake(StakeIntent {
@@ -158,11 +164,12 @@ fn parse_u128(value: &str, name: &str) -> Result<u128, String> {
 
 fn quote_to_json(quote: &Quote) -> String {
     format!(
-        "{{\"quoteId\":{},\"deploymentProfile\":{},\"route\":{},\"fees\":{},\"expectedOutput\":{},\"minOutput\":{},\"submission\":{},\"executionPlan\":{}}}",
+        "{{\"quoteId\":{},\"deploymentProfile\":{},\"route\":{},\"fees\":{},\"estimatedSettlementFee\":{},\"expectedOutput\":{},\"minOutput\":{},\"submission\":{},\"executionPlan\":{}}}",
         json_string(&quote.quote_id),
         json_string(quote.deployment_profile.as_str()),
         chain_array_json(&quote.route),
         fee_breakdown_json(&quote.fees),
+        option_asset_amount_json(quote.estimated_settlement_fee.as_ref()),
         asset_amount_json(&quote.expected_output),
         option_asset_amount_json(quote.min_output.as_ref()),
         submission_terms_json(quote),
@@ -375,7 +382,7 @@ fn usage() -> String {
         "",
         "action flags:",
         "  transfer: --asset <symbol> --amount <units> --recipient <address>",
-        "  swap: --asset-in <symbol> --asset-out <symbol> --amount-in <units> --min-amount-out <units> --recipient <address>",
+        "  swap: --asset-in <symbol> --asset-out <symbol> --amount-in <units> --min-amount-out <units> --recipient <address> [--settlement-chain <chain>]",
         "  stake: --asset <symbol> --amount <units> --validator <id> --recipient <address>",
         "  call: --asset <symbol> --amount <units> --target <address> --calldata <hex>",
     ]

@@ -33,10 +33,18 @@ The design goal is simple:
 Current supported vertical slices:
 
 - `polkadot-hub -> asset-hub` native `transfer`
+- `asset-hub -> hydration` native `transfer`
 - `polkadot-hub -> asset-hub -> hydration` native `transfer`
 - `polkadot-hub -> asset-hub -> hydration` `swap`
+- `asset-hub -> hydration` `swap`
 - `polkadot-hub -> asset-hub -> hydration` `stake`
 - `polkadot-hub -> asset-hub -> hydration` generic `call`
+
+Current swap capabilities:
+
+- `DOT -> USDT` on Hydration
+- `DOT -> HDX` on Hydration
+- settlement on `hydration` or on `asset-hub`
 
 Current implemented layers:
 
@@ -68,7 +76,8 @@ const { intent, quote } = await client.quote({
       assetIn: "DOT",
       assetOut: "USDT",
       amountIn: "1000000000000",
-      minAmountOut: "490000000",
+      minAmountOut: "493000000",
+      settlementChain: "asset-hub",
       recipient: ownerAddress,
     },
   },
@@ -82,8 +91,10 @@ The Rust route engine:
 - validates the intent
 - searches the supported route graph
 - estimates `xcmFee`, `destinationFee`, and `platformFee`
+- estimates output-side settlement fees for remote-settlement swaps
 - resolves the deployment profile
 - emits destination adapter target addresses and calldata
+- encodes destination settlement plans for adapter-backed swaps
 - builds nested multihop execution plans consumed by the XCM layer
 
 `3. Hub router`
@@ -116,15 +127,29 @@ Important distinction:
 
 ## Execution Flow
 
-Typical swap flow:
+Typical remote-settlement swap flow:
 
 1. User creates a `swap` intent on `polkadot-hub`.
-2. The route engine resolves the multihop path `polkadot-hub -> asset-hub -> hydration`.
-3. The SDK converts that nested plan into the committed router request and XCM envelope.
-4. The router escrows funds and dispatches the exact payload.
-5. The XCM message executes across the intermediate hop and reaches the destination adapter.
-6. The executor records `settled` or `failed` onchain.
-7. If needed, the executor records a `refund`.
+2. The route engine resolves the execution path `polkadot-hub -> asset-hub -> hydration`.
+3. If the output should land on another chain, the route engine also resolves the settlement path from the execution chain to the settlement chain.
+4. The swap executor payload is built with an explicit settlement plan instead of relying on the client to infer delivery behavior.
+5. The SDK converts that plan into the committed router request and XCM envelope.
+6. The router escrows funds and dispatches the exact payload.
+7. The XCM message executes across the intermediate hop and reaches the Hydration adapter.
+8. The Hydration executor delivers the result locally or forwards it to the settlement chain.
+9. The executor records `settled` or `failed` onchain.
+10. If needed, the executor records a `refund`.
+
+For adapter-backed actions:
+
+- `destinationChain` is the execution chain
+- `settlementChain` is where the user finally receives the result
+
+Example route shapes:
+
+- `polkadot-hub -> asset-hub -> hydration`
+- `polkadot-hub -> asset-hub -> hydration -> asset-hub`
+- `asset-hub -> hydration -> asset-hub`
 
 ## Project Structure
 
@@ -260,11 +285,15 @@ const { intent, quote } = await client.quote({
       assetIn: "DOT",
       assetOut: "USDT",
       amountIn: "1000000000000",
-      minAmountOut: "490000000",
+      minAmountOut: "493000000",
+      settlementChain: "asset-hub",
       recipient: process.env.XROUTE_OWNER_ADDRESS,
     },
   },
 });
+
+console.log(quote.route);
+console.log(quote.estimatedSettlementFee);
 
 const execution = await client.execute({
   intent,
@@ -336,6 +365,7 @@ Important runtime notes:
 
 - the cast-backed router adapter expects EVM hex addresses, not SS58 addresses
 - the local quote provider is server-side because it shells into the Rust route engine
+- swap quotes may include `estimatedSettlementFee` when the final delivery happens off the execution chain
 - the file-backed indexer is persistent, but it is still an offchain projection
 
 ## Trust Model
