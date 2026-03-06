@@ -1,0 +1,31 @@
+{
+  "name": "@xroute/sdk",
+  "version": "0.1.0",
+  "description": "XRoute SDK for intent quoting, XCM dispatch preparation, onchain router submission, and status tracking.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.mjs",
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./router-adapters": "./dist/router-adapters.mjs",
+    "./status-indexer": "./dist/status-indexer.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node scripts/build-package.mjs",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@polkadot-api/metadata-builders": "0.13.9",
+    "@polkadot-api/substrate-bindings": "0.17.0"
+  }
+}

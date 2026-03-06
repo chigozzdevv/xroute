@@ -135,6 +135,126 @@ The current core vertical slice is:
 
 `transfer` is the simple delivery path. `swap`, `stake`, and generic `call` now share the same adapter-driven destination execution model.
 
+## SDK setup
+
+The repo now includes a distributable SDK package at [packages/xroute-sdk/package.json](/Users/chigozzdev/Desktop/xroute/packages/xroute-sdk/package.json).
+
+Build and pack it with:
+
+```bash
+npm run build:sdk-package
+npm pack --dry-run ./packages/xroute-sdk
+```
+
+Runtime prerequisites:
+
+- `Node.js 20+`
+- `Foundry cast` for onchain writes and execution-hash computation
+- `cargo` if you use the local Rust quote provider
+- a deployed `XRouteHubRouter` address
+- source-chain ERC-20 asset addresses
+- an EVM `rpcUrl` and signer `privateKey`
+
+Important: the onchain router adapter uses EVM hex addresses like `0xabc...`, not SS58 addresses like `5F...`.
+
+## SDK usage
+
+For local development against the Rust planner:
+
+```js
+import {
+  createCastRouterAdapter,
+  createRouteEngineQuoteProvider,
+  createStaticAssetAddressResolver,
+  createXRouteClient,
+  FileBackedStatusIndexer,
+} from "@xroute/sdk";
+
+const quoteProvider = createRouteEngineQuoteProvider({
+  cwd: process.cwd(),
+  deploymentProfile: "local",
+});
+
+const statusProvider = new FileBackedStatusIndexer({
+  eventsPath: "./.xroute/status-events.jsonl",
+});
+
+const routerAdapter = createCastRouterAdapter({
+  rpcUrl: process.env.XROUTE_RPC_URL,
+  routerAddress: process.env.XROUTE_ROUTER_ADDRESS,
+  privateKey: process.env.XROUTE_PRIVATE_KEY,
+  ownerAddress: process.env.XROUTE_OWNER_ADDRESS,
+  statusIndexer: statusProvider,
+});
+
+const assetAddressResolver = createStaticAssetAddressResolver({
+  "polkadot-hub": {
+    DOT: "0x0000000000000000000000000000000000000401",
+  },
+});
+
+const client = createXRouteClient({
+  quoteProvider,
+  routerAdapter,
+  statusProvider,
+  assetAddressResolver,
+});
+
+const { intent, quote } = await client.quote({
+  sourceChain: "polkadot-hub",
+  destinationChain: "hydration",
+  refundAddress: process.env.XROUTE_OWNER_ADDRESS,
+  deadline: Math.floor(Date.now() / 1000) + 1800,
+  action: {
+    type: "swap",
+    params: {
+      assetIn: "DOT",
+      assetOut: "USDT",
+      amountIn: "1000000000000",
+      minAmountOut: "490000000",
+      recipient: process.env.XROUTE_OWNER_ADDRESS,
+    },
+  },
+});
+
+const execution = await client.execute({
+  intent,
+  quote,
+  owner: process.env.XROUTE_OWNER_ADDRESS,
+});
+
+console.log(execution.submitted.intentId);
+console.log(client.getStatus(execution.submitted.intentId));
+```
+
+For a hosted quote service instead of the local Rust binary:
+
+```js
+import {
+  createHttpQuoteProvider,
+  createXRouteClient,
+} from "@xroute/sdk";
+
+const quoteProvider = createHttpQuoteProvider({
+  endpoint: "https://quotes.example.com/xroute/quote",
+});
+```
+
+## SDK pieces
+
+- `createRouteEngineQuoteProvider(...)`
+  - shells into the local Rust route engine
+- `createHttpQuoteProvider(...)`
+  - calls a remote quote API over HTTP
+- `createCastRouterAdapter(...)`
+  - performs real EVM writes with `cast`
+  - auto-approves the input asset when needed
+  - computes deterministic intent ids using the same hash path as the contract
+- `FileBackedStatusIndexer`
+  - persists indexed status events to disk and reloads them on restart
+- `createStaticAssetAddressResolver(...)`
+  - resolves source-chain asset contract addresses for router submission
+
 ## References I used
 
 - [Smart Contracts on Polkadot Hub](https://docs.polkadot.com/polkadot-protocol/smart-contract-basics/)

@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-import { createIntent } from "../xroute-intents/index.mjs";
+import { createIntent, toPlainIntent } from "../xroute-intents/index.mjs";
 import {
   ACTION_TYPES,
   toBigInt,
@@ -173,6 +173,45 @@ export function createRouteEngineQuoteProvider({
   };
 }
 
+export function createHttpQuoteProvider({
+  endpoint,
+  fetchImpl = globalThis.fetch,
+  headers = {},
+} = {}) {
+  const normalizedEndpoint = String(endpoint ?? "").trim();
+  if (normalizedEndpoint === "") {
+    throw new Error("endpoint is required");
+  }
+  if (typeof fetchImpl !== "function") {
+    throw new Error("fetchImpl is required");
+  }
+
+  return {
+    async quote(intentInput) {
+      const intent = intentInput.quoteId ? intentInput : createIntent(intentInput);
+      const response = await fetchImpl(normalizedEndpoint, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...headers,
+        },
+        body: JSON.stringify({
+          intent: toPlainIntent(intent),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`http quote failed with status ${response.status}`);
+      }
+
+      return {
+        ...(await response.json()),
+        quoteId: intent.quoteId,
+      };
+    },
+  };
+}
+
 export function normalizeQuote(quote) {
   const action = assertIncluded(
     "quote.submission.action",
@@ -292,3 +331,19 @@ function buildRouteEngineQuoteArgs(
       throw new Error(`unsupported action type: ${intent.action.type}`);
   }
 }
+
+export {
+  createCastRouterAdapter,
+  createStaticAssetAddressResolver,
+} from "./router-adapters.mjs";
+export {
+  FileBackedStatusIndexer,
+  InMemoryStatusIndexer,
+  createDestinationExecutionFailedEvent,
+  createDestinationExecutionStartedEvent,
+  createDestinationExecutionSucceededEvent,
+  createIntentCancelledEvent,
+  createIntentDispatchedEvent,
+  createIntentSubmittedEvent,
+  createRefundIssuedEvent,
+} from "./status-indexer.mjs";

@@ -9,7 +9,12 @@ import {
   createTransferIntent,
 } from "../../xroute-intents/index.mjs";
 import { DEPLOYMENT_PROFILES } from "../../xroute-precompile-interfaces/index.mjs";
-import { createRouteEngineQuoteProvider, createXRouteClient, normalizeQuote } from "../index.mjs";
+import {
+  createHttpQuoteProvider,
+  createRouteEngineQuoteProvider,
+  createXRouteClient,
+  normalizeQuote,
+} from "../index.mjs";
 
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const aliceAddress = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
@@ -156,4 +161,63 @@ test("route engine quote provider selects published testnet deployments", async 
 
   assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.TESTNET);
   assert.equal(remoteInstructions[1].targetAddress, "0x0000000000000000000000000000000000002003");
+});
+
+test("http quote provider forwards normalized intents and returns quotes", async () => {
+  const intent = createTransferIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "asset-hub",
+    refundAddress: "5Frefund",
+    deadline: 1_773_185_200,
+    params: {
+      asset: "DOT",
+      amount: "250000000000",
+      recipient: "5Frecipient",
+    },
+  });
+  const provider = createHttpQuoteProvider({
+    endpoint: "https://quote.example.test/quote",
+    async fetchImpl(url, init) {
+      assert.equal(url, "https://quote.example.test/quote");
+      const body = JSON.parse(init.body);
+      assert.equal(body.intent.quoteId, intent.quoteId);
+      assert.equal(body.intent.action.type, "transfer");
+
+      return {
+        ok: true,
+        async json() {
+          return {
+            deploymentProfile: "local",
+            route: ["polkadot-hub", "asset-hub"],
+            fees: {
+              xcmFee: { asset: "DOT", amount: "100000000" },
+              destinationFee: { asset: "DOT", amount: "20000000" },
+              platformFee: { asset: "DOT", amount: "250000000" },
+              totalFee: { asset: "DOT", amount: "370000000" },
+            },
+            expectedOutput: { asset: "DOT", amount: "250000000000" },
+            minOutput: { asset: "DOT", amount: "250000000000" },
+            submission: {
+              action: "transfer",
+              asset: "DOT",
+              amount: "250000000000",
+              xcmFee: "100000000",
+              destinationFee: "20000000",
+              minOutputAmount: "250000000000",
+            },
+            executionPlan: {
+              route: ["polkadot-hub", "asset-hub"],
+              steps: [],
+            },
+          };
+        },
+      };
+    },
+  });
+
+  const quote = normalizeQuote(await provider.quote(intent));
+
+  assert.equal(quote.quoteId, intent.quoteId);
+  assert.equal(quote.submission.action, "transfer");
+  assert.equal(quote.fees.totalFee.amount, 370000000n);
 });
