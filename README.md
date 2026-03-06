@@ -52,9 +52,9 @@ The real implementation should be split like this:
 - `route engine`
   - computes route
   - estimates fees
-  - builds destination adapter calldata and XCM execution plans
+  - emits destination adapter addresses, adapter calldata, and XCM execution plans
   - knows destination-specific logic like Hydration swap, stake, and call execution
-  - reads the shared destination adapter spec registry for published selectors
+  - reads the shared adapter spec registry and deployment manifest for published selectors and addresses
 - `status indexer`
   - tracks submission, dispatch, destination execution, and final status
 - `sdk`
@@ -108,13 +108,13 @@ xroute/
 - `packages/xroute-intents`
   - `transfer`, `swap`, `stake`, `call` schemas
 - `packages/xroute-precompile-interfaces`
-  - Solidity interfaces, concrete adapter contracts, and published specs for Hub precompiles and destination adapters
+  - Solidity interfaces, concrete adapter contracts, published adapter specs, and deployment manifests
 - `packages/xroute-sdk`
   - developer-facing client and route-engine bridge
 - `packages/xroute-types`
   - shared types
 - `packages/xroute-xcm`
-  - metadata-backed XCM payload encoding from route plans and adapter calls
+  - metadata-backed XCM payload encoding from route plans, adapter addresses, and adapter calls
 - `services/route-engine`
   - Rust quote and payload builder
 - `services/status-indexer`

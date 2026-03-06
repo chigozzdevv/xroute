@@ -74,7 +74,12 @@ test("buildExecutionEnvelope encodes the hydration swap adapter path", async () 
   assert.equal(remoteInstructions[1].value.origin_kind.type, "SovereignAccount");
   assert.equal(remoteInstructions[1].value.fallback_max_weight.ref_time, 3500000000n);
   assert.equal(remoteInstructions[1].value.fallback_max_weight.proof_size, 120000n);
-  assert.ok(toHex(remoteInstructions[1].value.call).startsWith("0x670b1f29"));
+  assert.ok(toHex(remoteInstructions[1].value.call).startsWith("0x00986153"));
+  assert.ok(
+    toHex(remoteInstructions[1].value.call).includes(
+      "0000000000000000000000000000000000000000000000000000000000001001",
+    ),
+  );
 });
 
 test("buildExecutionEnvelope encodes the hydration stake adapter path", async () => {
@@ -98,7 +103,12 @@ test("buildExecutionEnvelope encodes the hydration stake adapter path", async ()
 
   assert.equal(remoteInstructions[0].type, "BuyExecution");
   assert.equal(remoteInstructions[1].type, "Transact");
-  assert.ok(toHex(remoteInstructions[1].value.call).startsWith("0xdfabdde3"));
+  assert.ok(toHex(remoteInstructions[1].value.call).startsWith("0x00986153"));
+  assert.ok(
+    toHex(remoteInstructions[1].value.call).includes(
+      "0000000000000000000000000000000000000000000000000000000000001002",
+    ),
+  );
 });
 
 test("buildExecutionEnvelope encodes the hydration generic call adapter path", async () => {
@@ -122,7 +132,12 @@ test("buildExecutionEnvelope encodes the hydration generic call adapter path", a
 
   assert.equal(remoteInstructions[0].type, "BuyExecution");
   assert.equal(remoteInstructions[1].type, "Transact");
-  assert.ok(toHex(remoteInstructions[1].value.call).startsWith("0x7db7dbf6"));
+  assert.ok(toHex(remoteInstructions[1].value.call).startsWith("0x00986153"));
+  assert.ok(
+    toHex(remoteInstructions[1].value.call).includes(
+      "0000000000000000000000000000000000000000000000000000000000001003",
+    ),
+  );
 });
 
 test("buildExecutionEnvelope rejects a transact payload with a mismatched published selector", async () => {
@@ -160,7 +175,7 @@ test("buildExecutionEnvelope rejects a transact payload with a mismatched publis
                             ? remoteInstruction
                             : {
                                 ...remoteInstruction,
-                                encodedCall: "0xdeadbeef",
+                                contractCall: "0xdeadbeef",
                               },
                       ),
                     },
@@ -173,6 +188,56 @@ test("buildExecutionEnvelope rejects a transact payload with a mismatched publis
   assert.throws(
     () => buildExecutionEnvelope({ intent, quote: badQuote }),
     /must start with published selector 0x670b1f29/,
+  );
+});
+
+test("buildExecutionEnvelope rejects a transact payload with a mismatched published target address", async () => {
+  const intent = createStakeIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    refundAddress: bobAddress,
+    deadline: 1_773_185_200,
+    params: {
+      asset: "DOT",
+      amount: "400000000000",
+      validator: "validator-01",
+      recipient: aliceAddress,
+    },
+  });
+  const quote = await quoteProvider.quote(intent);
+  const badQuote = {
+    ...quote,
+    executionPlan: {
+      ...quote.executionPlan,
+      steps: quote.executionPlan.steps.map((step, stepIndex) =>
+        stepIndex !== 4
+          ? step
+          : {
+              ...step,
+              instructions: step.instructions.map((instruction, instructionIndex) =>
+                instructionIndex !== 0
+                  ? instruction
+                  : {
+                      ...instruction,
+                      remoteInstructions: instruction.remoteInstructions.map(
+                        (remoteInstruction, remoteIndex) =>
+                          remoteIndex !== 1
+                            ? remoteInstruction
+                            : {
+                                ...remoteInstruction,
+                                targetAddress: "0x0000000000000000000000000000000000001999",
+                              },
+                      ),
+                    },
+              ),
+            },
+      ),
+    },
+  };
+
+  assert.throws(
+    () => buildExecutionEnvelope({ intent, quote: badQuote }),
+    /must match published deployment 0x0000000000000000000000000000000000001002/,
   );
 });
 

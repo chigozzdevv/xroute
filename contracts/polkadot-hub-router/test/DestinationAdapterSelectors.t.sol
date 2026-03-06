@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {HydrationCallAdapterV1} from "../src/adapters/HydrationCallAdapterV1.sol";
 import {HydrationStakeAdapterV1} from "../src/adapters/HydrationStakeAdapterV1.sol";
 import {HydrationSwapAdapterV1} from "../src/adapters/HydrationSwapAdapterV1.sol";
+import {IDestinationTransactDispatcherV1} from "../src/interfaces/IDestinationTransactDispatcherV1.sol";
 import {TestBase} from "./helpers/TestBase.sol";
 
 contract DestinationAdapterSelectorsTest is TestBase {
@@ -20,5 +21,10 @@ contract DestinationAdapterSelectorsTest is TestBase {
     function test_hydration_call_adapter_selector_matches_published_spec() public pure {
         bytes4 expected = bytes4(hex"7db7dbf6");
         require(HydrationCallAdapterV1.executeCall.selector == expected, "assert eq failed");
+    }
+
+    function test_destination_transact_dispatcher_selector_matches_published_spec() public pure {
+        bytes4 expected = bytes4(hex"00986153");
+        require(IDestinationTransactDispatcherV1.dispatchEvmCall.selector == expected, "assert eq failed");
     }
 }

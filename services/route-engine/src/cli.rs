@@ -257,12 +257,14 @@ fn xcm_instruction_json(instruction: &XcmInstruction) -> String {
         ),
         XcmInstruction::Transact {
             adapter,
-            encoded_call,
+            target_address,
+            contract_call,
             fallback_weight,
         } => format!(
-            "{{\"type\":\"transact\",\"adapter\":{},\"encodedCall\":{},\"fallbackWeight\":{}}}",
+            "{{\"type\":\"transact\",\"adapter\":{},\"targetAddress\":{},\"contractCall\":{},\"fallbackWeight\":{}}}",
             json_string(destination_adapter_label(*adapter)),
-            json_string(encoded_call),
+            json_string(target_address),
+            json_string(contract_call),
             xcm_weight_json(fallback_weight),
         ),
         XcmInstruction::DepositAsset { asset, recipient } => format!(

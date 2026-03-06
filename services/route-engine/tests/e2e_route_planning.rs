@@ -90,9 +90,11 @@ fn quotes_hydration_swap_and_builds_adapter_transact_plan() {
                         remote_instructions[1],
                         XcmInstruction::Transact {
                             adapter: DestinationAdapter::HydrationSwapV1,
-                            encoded_call: remote_instructions[1]
-                                .encoded_call()
-                                .expect("swap encoded call")
+                            target_address: "0x0000000000000000000000000000000000001001"
+                                .to_owned(),
+                            contract_call: remote_instructions[1]
+                                .contract_call()
+                                .expect("swap contract call")
                                 .to_owned(),
                             fallback_weight: XcmWeight {
                                 ref_time: 3_500_000_000,
@@ -102,8 +104,8 @@ fn quotes_hydration_swap_and_builds_adapter_transact_plan() {
                     );
                     assert!(
                         remote_instructions[1]
-                            .encoded_call()
-                            .expect("swap encoded call")
+                            .contract_call()
+                            .expect("swap contract call")
                             .starts_with("0x670b1f29")
                     );
                     assert_eq!(
@@ -225,9 +227,11 @@ fn quotes_hydration_stake_and_builds_adapter_transact_plan() {
                     remote_instructions[1],
                     XcmInstruction::Transact {
                         adapter: DestinationAdapter::HydrationStakeV1,
-                        encoded_call: remote_instructions[1]
-                            .encoded_call()
-                            .expect("stake encoded call")
+                        target_address: "0x0000000000000000000000000000000000001002"
+                            .to_owned(),
+                        contract_call: remote_instructions[1]
+                            .contract_call()
+                            .expect("stake contract call")
                             .to_owned(),
                         fallback_weight: XcmWeight {
                             ref_time: 4_000_000_000,
@@ -237,8 +241,8 @@ fn quotes_hydration_stake_and_builds_adapter_transact_plan() {
                 );
                 assert!(
                     remote_instructions[1]
-                        .encoded_call()
-                        .expect("stake encoded call")
+                        .contract_call()
+                        .expect("stake contract call")
                         .starts_with("0xdfabdde3")
                 );
             }
@@ -281,9 +285,11 @@ fn quotes_hydration_call_and_builds_adapter_transact_plan() {
                     remote_instructions[1],
                     XcmInstruction::Transact {
                         adapter: DestinationAdapter::HydrationCallV1,
-                        encoded_call: remote_instructions[1]
-                            .encoded_call()
-                            .expect("call encoded call")
+                        target_address: "0x0000000000000000000000000000000000001003"
+                            .to_owned(),
+                        contract_call: remote_instructions[1]
+                            .contract_call()
+                            .expect("call contract call")
                             .to_owned(),
                         fallback_weight: XcmWeight {
                             ref_time: 3_000_000_000,
@@ -293,8 +299,8 @@ fn quotes_hydration_call_and_builds_adapter_transact_plan() {
                 );
                 assert!(
                     remote_instructions[1]
-                        .encoded_call()
-                        .expect("call encoded call")
+                        .contract_call()
+                        .expect("call contract call")
                         .starts_with("0x7db7dbf6")
                 );
             }
@@ -305,13 +311,13 @@ fn quotes_hydration_call_and_builds_adapter_transact_plan() {
 }
 
 trait InstructionExt {
-    fn encoded_call(&self) -> Option<&str>;
+    fn contract_call(&self) -> Option<&str>;
 }
 
 impl InstructionExt for XcmInstruction {
-    fn encoded_call(&self) -> Option<&str> {
+    fn contract_call(&self) -> Option<&str> {
         match self {
-            XcmInstruction::Transact { encoded_call, .. } => Some(encoded_call.as_str()),
+            XcmInstruction::Transact { contract_call, .. } => Some(contract_call.as_str()),
             _ => None,
         }
     }

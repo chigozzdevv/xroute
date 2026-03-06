@@ -126,5 +126,6 @@ test("route engine quote provider returns adapter-backed remote calls", async ()
   assert.equal(quote.submission.action, "call");
   assert.equal(remoteInstructions[1].type, "transact");
   assert.equal(remoteInstructions[1].adapter, "hydration-call-v1");
-  assert.match(remoteInstructions[1].encodedCall, /^0x7db7dbf6[0-9a-f]+$/);
+  assert.equal(remoteInstructions[1].targetAddress, "0x0000000000000000000000000000000000001003");
+  assert.match(remoteInstructions[1].contractCall, /^0x7db7dbf6[0-9a-f]+$/);
 });

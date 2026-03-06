@@ -13,6 +13,7 @@ import { getDynamicBuilder, getLookupFn } from "@polkadot-api/metadata-builders"
 import { getAssetLocation, getParachainId } from "../xroute-chain-registry/index.mjs";
 import {
   DISPATCH_MODES,
+  assertAddress,
   assertHexString,
   assertIncluded,
   assertInteger,
@@ -21,7 +22,9 @@ import {
 } from "../xroute-types/index.mjs";
 import {
   ACTION_TO_CONTRACT_ENUM,
+  DESTINATION_TRANSACT_DISPATCH,
   DISPATCH_MODE_TO_CONTRACT_ENUM,
+  getDestinationAdapterDeployment,
   getDestinationAdapterSpec,
 } from "../xroute-precompile-interfaces/index.mjs";
 
@@ -248,11 +251,21 @@ function buildRemoteInstruction({
         weight_limit: Enum("Unlimited", undefined),
       });
     case "transact":
-      assertEncodedAdapterCall(instruction.adapter, instruction.encodedCall);
+      assertPublishedAdapterInvocation({
+        adapterId: instruction.adapter,
+        chainKey: sendStep.destination,
+        targetAddress: instruction.targetAddress,
+        contractCall: instruction.contractCall,
+      });
       return Enum("Transact", {
         origin_kind: Enum("SovereignAccount", undefined),
         fallback_max_weight: buildWeight(instruction.fallbackWeight),
-        call: Binary.fromBytes(hexToBytes(instruction.encodedCall)),
+        call: Binary.fromBytes(
+          encodeDispatchEvmCall({
+            targetAddress: instruction.targetAddress,
+            contractCall: instruction.contractCall,
+          }),
+        ),
       });
     case "deposit-asset":
       return Enum("DepositAsset", {
@@ -334,18 +347,75 @@ function buildJunction(junction) {
 }
 
 function hexToBytes(value) {
-  return Uint8Array.from(Buffer.from(assertHexString("encodedCall", value).slice(2), "hex"));
+  return Uint8Array.from(Buffer.from(assertHexString("hex", value).slice(2), "hex"));
 }
 
-function assertEncodedAdapterCall(adapterId, encodedCall) {
+function assertPublishedAdapterInvocation({
+  adapterId,
+  chainKey,
+  targetAddress,
+  contractCall,
+}) {
   const spec = getDestinationAdapterSpec(adapterId);
-  const normalizedCall = assertHexString("encodedCall", encodedCall);
+  const deployment = getDestinationAdapterDeployment(adapterId, chainKey);
+  const normalizedAddress = assertAddress("targetAddress", targetAddress);
+  const normalizedCall = assertHexString("contractCall", contractCall);
 
   if (!normalizedCall.startsWith(spec.selector)) {
     throw new Error(
-      `encodedCall for ${adapterId} must start with published selector ${spec.selector}`,
+      `contractCall for ${adapterId} must start with published selector ${spec.selector}`,
     );
   }
 
-  return normalizedCall;
+  if (normalizedAddress !== deployment.address) {
+    throw new Error(
+      `targetAddress for ${adapterId} on ${chainKey} must match published deployment ${deployment.address}`,
+    );
+  }
+
+  return Object.freeze({
+    targetAddress: normalizedAddress,
+    contractCall: normalizedCall,
+  });
+}
+
+function encodeDispatchEvmCall({ targetAddress, contractCall }) {
+  const normalizedAddress = assertAddress("targetAddress", targetAddress);
+  const normalizedCall = assertHexString("contractCall", contractCall);
+  const selector = hexToBytes(DESTINATION_TRANSACT_DISPATCH.selector);
+  const callBytes = hexToBytes(normalizedCall);
+  const encoded = new Uint8Array(4 + 32 + 32 + 32 + paddedLength(callBytes.length));
+
+  encoded.set(selector, 0);
+  encoded.set(encodeAddressWord(normalizedAddress), 4);
+  encoded.set(encodeUintWord(64n), 36);
+  encoded.set(encodeUintWord(BigInt(callBytes.length)), 68);
+  encoded.set(callBytes, 100);
+
+  return encoded;
+}
+
+function encodeUintWord(value) {
+  const normalized = toBigInt(value, "uintWord");
+  const word = new Uint8Array(32);
+  let remainder = normalized;
+
+  for (let index = 31; index >= 0 && remainder > 0n; index -= 1) {
+    word[index] = Number(remainder & 0xffn);
+    remainder >>= 8n;
+  }
+
+  return word;
+}
+
+function encodeAddressWord(address) {
+  const addressBytes = hexToBytes(assertAddress("address", address));
+  const word = new Uint8Array(32);
+  word.set(addressBytes, 12);
+  return word;
+}
+
+function paddedLength(length) {
+  const remainder = length % 32;
+  return remainder === 0 ? length : length + (32 - remainder);
 }

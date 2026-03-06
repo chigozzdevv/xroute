@@ -274,7 +274,8 @@ pub enum XcmInstruction {
     },
     Transact {
         adapter: DestinationAdapter,
-        encoded_call: String,
+        target_address: String,
+        contract_call: String,
         fallback_weight: XcmWeight,
     },
     DepositAsset {

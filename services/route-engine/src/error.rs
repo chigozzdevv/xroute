@@ -34,6 +34,14 @@ pub enum RouteError {
     InvalidDestinationAdapterSpec {
         adapter: &'static str,
     },
+    MissingDestinationAdapterDeployment {
+        adapter: &'static str,
+        chain: ChainKey,
+    },
+    InvalidDestinationAdapterDeployment {
+        adapter: &'static str,
+        chain: ChainKey,
+    },
     MinOutputTooHigh {
         requested: u128,
         expected: u128,
@@ -105,6 +113,18 @@ impl Display for RouteError {
             Self::InvalidDestinationAdapterSpec { adapter } => {
                 write!(f, "invalid destination adapter spec for {adapter}")
             }
+            Self::MissingDestinationAdapterDeployment { adapter, chain } => write!(
+                f,
+                "missing destination adapter deployment for {} on {}",
+                adapter,
+                chain.as_str()
+            ),
+            Self::InvalidDestinationAdapterDeployment { adapter, chain } => write!(
+                f,
+                "invalid destination adapter deployment for {} on {}",
+                adapter,
+                chain.as_str()
+            ),
             Self::MinOutputTooHigh {
                 requested,
                 expected,

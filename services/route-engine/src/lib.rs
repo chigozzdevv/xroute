@@ -1,3 +1,4 @@
+mod adapter_deployments;
 mod adapter_specs;
 mod engine;
 mod error;

@@ -1,3 +1,4 @@
+use crate::adapter_deployments::lookup_destination_adapter_deployment;
 use crate::adapter_specs::lookup_destination_adapter_spec;
 use crate::error::RouteError;
 use crate::model::{
@@ -344,7 +345,12 @@ fn build_swap_plan(
                         },
                         XcmInstruction::Transact {
                             adapter: route.adapter,
-                            encoded_call: encode_swap_adapter_call(
+                            target_address: destination_adapter_address(
+                                route.adapter,
+                                route.destination,
+                            )?
+                            .to_owned(),
+                            contract_call: encode_swap_adapter_call(
                                 route.adapter,
                                 swap.asset_in,
                                 swap.asset_out,
@@ -424,7 +430,12 @@ fn build_stake_plan(
                         },
                         XcmInstruction::Transact {
                             adapter: route.adapter,
-                            encoded_call: encode_stake_adapter_call(
+                            target_address: destination_adapter_address(
+                                route.adapter,
+                                route.destination,
+                            )?
+                            .to_owned(),
+                            contract_call: encode_stake_adapter_call(
                                 route.adapter,
                                 stake.asset,
                                 stake.amount,
@@ -499,7 +510,12 @@ fn build_call_plan(
                         },
                         XcmInstruction::Transact {
                             adapter: route.adapter,
-                            encoded_call: encode_call_adapter_call(
+                            target_address: destination_adapter_address(
+                                route.adapter,
+                                route.destination,
+                            )?
+                            .to_owned(),
+                            contract_call: encode_call_adapter_call(
                                 route.adapter,
                                 call.asset,
                                 call.amount,
@@ -605,6 +621,13 @@ fn encode_call_adapter_call(
 
 fn destination_adapter_selector(adapter: DestinationAdapter) -> Result<[u8; 4], RouteError> {
     Ok(lookup_destination_adapter_spec(adapter)?.selector)
+}
+
+fn destination_adapter_address(
+    adapter: DestinationAdapter,
+    destination: crate::model::ChainKey,
+) -> Result<&'static str, RouteError> {
+    Ok(lookup_destination_adapter_deployment(adapter, destination)?.address)
 }
 
 #[derive(Debug, Clone)]
