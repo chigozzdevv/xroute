@@ -9,12 +9,17 @@ import {
   createSwapIntent,
   createTransferIntent,
 } from "../../xroute-intents/index.mjs";
+import { DEPLOYMENT_PROFILES } from "../../xroute-precompile-interfaces/index.mjs";
 import { createRouteEngineQuoteProvider } from "../../xroute-sdk/index.mjs";
 import { buildExecutionEnvelope, getDefaultXcmCodecContext } from "../index.mjs";
 
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const quoteProvider = createRouteEngineQuoteProvider({
   cwd: workspaceRoot,
+});
+const testnetQuoteProvider = createRouteEngineQuoteProvider({
+  cwd: workspaceRoot,
+  deploymentProfile: DEPLOYMENT_PROFILES.TESTNET,
 });
 const aliceAddress = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
 const bobAddress = "5FHneW46xGXgs5mUiveU4sbTyGBzmto4mKc9UEQx7JjvqSg";
@@ -136,6 +141,33 @@ test("buildExecutionEnvelope encodes the hydration generic call adapter path", a
   assert.ok(
     toHex(remoteInstructions[1].value.call).includes(
       "0000000000000000000000000000000000000000000000000000000000001003",
+    ),
+  );
+});
+
+test("buildExecutionEnvelope selects the published testnet adapter deployment", async () => {
+  const intent = createSwapIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    refundAddress: bobAddress,
+    deadline: 1_773_185_200,
+    params: {
+      assetIn: "DOT",
+      assetOut: "USDT",
+      amountIn: "1000000000000",
+      minAmountOut: "490000000",
+      recipient: aliceAddress,
+    },
+  });
+  const quote = await testnetQuoteProvider.quote(intent);
+
+  const envelope = buildExecutionEnvelope({ intent, quote });
+  const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
+  const remoteInstructions = decoded.value[1].value.xcm;
+
+  assert.ok(
+    toHex(remoteInstructions[1].value.call).includes(
+      "0000000000000000000000000000000000000000000000000000000000002001",
     ),
   );
 });

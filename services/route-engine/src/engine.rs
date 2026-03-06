@@ -2,20 +2,22 @@ use crate::adapter_deployments::lookup_destination_adapter_deployment;
 use crate::adapter_specs::lookup_destination_adapter_spec;
 use crate::error::RouteError;
 use crate::model::{
-    AssetAmount, AssetKey, DestinationAdapter, FeeBreakdown, FeeType, Intent, IntentAction,
-    PlanStep, Quote, SubmissionAction, SubmissionTerms, XcmInstruction,
+    AssetAmount, AssetKey, DeploymentProfile, DestinationAdapter, FeeBreakdown, FeeType, Intent,
+    IntentAction, PlanStep, Quote, SubmissionAction, SubmissionTerms, XcmInstruction,
 };
 use crate::registry::{CallRoute, RouteRegistry, StakeRoute, SwapRoute, TransferRoute};
 
 #[derive(Debug, Clone, Copy)]
 pub struct EngineSettings {
     pub platform_fee_bps: u16,
+    pub deployment_profile: DeploymentProfile,
 }
 
 impl Default for EngineSettings {
     fn default() -> Self {
         Self {
             platform_fee_bps: 10,
+            deployment_profile: DeploymentProfile::Local,
         }
     }
 }
@@ -58,6 +60,7 @@ impl RouteEngine {
 
                 Ok(Quote {
                     quote_id,
+                    deployment_profile: self.settings.deployment_profile,
                     route: execution_plan.route.clone(),
                     fees,
                     expected_output: AssetAmount::new(transfer.asset, transfer.amount),
@@ -102,10 +105,12 @@ impl RouteEngine {
                     route.xcm_fee,
                     route.destination_fee,
                 )?;
-                let execution_plan = build_swap_plan(&intent, route, &fees)?;
+                let execution_plan =
+                    build_swap_plan(&intent, route, &fees, self.settings.deployment_profile)?;
 
                 Ok(Quote {
                     quote_id,
+                    deployment_profile: self.settings.deployment_profile,
                     route: execution_plan.route.clone(),
                     fees,
                     expected_output,
@@ -124,11 +129,7 @@ impl RouteEngine {
             IntentAction::Stake(stake) => {
                 let route = self
                     .registry
-                    .stake_route(
-                        intent.source_chain,
-                        intent.destination_chain,
-                        stake.asset,
-                    )
+                    .stake_route(intent.source_chain, intent.destination_chain, stake.asset)
                     .ok_or(RouteError::UnsupportedStakeRoute {
                         source: intent.source_chain,
                         destination: intent.destination_chain,
@@ -140,10 +141,12 @@ impl RouteEngine {
                     route.xcm_fee,
                     route.destination_fee,
                 )?;
-                let execution_plan = build_stake_plan(&intent, route, &fees)?;
+                let execution_plan =
+                    build_stake_plan(&intent, route, &fees, self.settings.deployment_profile)?;
 
                 Ok(Quote {
                     quote_id,
+                    deployment_profile: self.settings.deployment_profile,
                     route: execution_plan.route.clone(),
                     fees,
                     expected_output: AssetAmount::new(stake.asset, stake.amount),
@@ -162,11 +165,7 @@ impl RouteEngine {
             IntentAction::Call(call) => {
                 let route = self
                     .registry
-                    .call_route(
-                        intent.source_chain,
-                        intent.destination_chain,
-                        call.asset,
-                    )
+                    .call_route(intent.source_chain, intent.destination_chain, call.asset)
                     .ok_or(RouteError::UnsupportedCallRoute {
                         source: intent.source_chain,
                         destination: intent.destination_chain,
@@ -178,10 +177,12 @@ impl RouteEngine {
                     route.xcm_fee,
                     route.destination_fee,
                 )?;
-                let execution_plan = build_call_plan(&intent, route, &fees)?;
+                let execution_plan =
+                    build_call_plan(&intent, route, &fees, self.settings.deployment_profile)?;
 
                 Ok(Quote {
                     quote_id,
+                    deployment_profile: self.settings.deployment_profile,
                     route: execution_plan.route.clone(),
                     fees,
                     expected_output: AssetAmount::new(call.asset, 0),
@@ -296,6 +297,7 @@ fn build_swap_plan(
     intent: &Intent,
     route: &SwapRoute,
     fees: &FeeBreakdown,
+    deployment_profile: DeploymentProfile,
 ) -> Result<crate::model::ExecutionPlan, RouteError> {
     let principal = intent.principal_amount();
     let locked = principal
@@ -348,6 +350,7 @@ fn build_swap_plan(
                             target_address: destination_adapter_address(
                                 route.adapter,
                                 route.destination,
+                                deployment_profile,
                             )?
                             .to_owned(),
                             contract_call: encode_swap_adapter_call(
@@ -381,6 +384,7 @@ fn build_stake_plan(
     intent: &Intent,
     route: &StakeRoute,
     fees: &FeeBreakdown,
+    deployment_profile: DeploymentProfile,
 ) -> Result<crate::model::ExecutionPlan, RouteError> {
     let principal = intent.principal_amount();
     let locked = principal
@@ -433,6 +437,7 @@ fn build_stake_plan(
                             target_address: destination_adapter_address(
                                 route.adapter,
                                 route.destination,
+                                deployment_profile,
                             )?
                             .to_owned(),
                             contract_call: encode_stake_adapter_call(
@@ -461,6 +466,7 @@ fn build_call_plan(
     intent: &Intent,
     route: &CallRoute,
     fees: &FeeBreakdown,
+    deployment_profile: DeploymentProfile,
 ) -> Result<crate::model::ExecutionPlan, RouteError> {
     let principal = intent.principal_amount();
     let locked = principal
@@ -513,6 +519,7 @@ fn build_call_plan(
                             target_address: destination_adapter_address(
                                 route.adapter,
                                 route.destination,
+                                deployment_profile,
                             )?
                             .to_owned(),
                             contract_call: encode_call_adapter_call(
@@ -626,8 +633,9 @@ fn destination_adapter_selector(adapter: DestinationAdapter) -> Result<[u8; 4], 
 fn destination_adapter_address(
     adapter: DestinationAdapter,
     destination: crate::model::ChainKey,
+    deployment_profile: DeploymentProfile,
 ) -> Result<&'static str, RouteError> {
-    Ok(lookup_destination_adapter_deployment(adapter, destination)?.address)
+    Ok(lookup_destination_adapter_deployment(adapter, destination, deployment_profile)?.address)
 }
 
 #[derive(Debug, Clone)]

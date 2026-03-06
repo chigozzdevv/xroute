@@ -9,6 +9,12 @@ import {
 } from "../xroute-types/index.mjs";
 
 export const XCM_PRECOMPILE_ADDRESS = "0x00000000000000000000000000000000000a0000";
+export const DEPLOYMENT_PROFILES = Object.freeze({
+  LOCAL: "local",
+  TESTNET: "testnet",
+  MAINNET: "mainnet",
+});
+export const DEFAULT_DEPLOYMENT_PROFILE = DEPLOYMENT_PROFILES.LOCAL;
 export const DESTINATION_ADAPTER_TARGET_KINDS = Object.freeze({
   EVM_CONTRACT: "evm-contract",
 });
@@ -58,14 +64,30 @@ export function getDestinationAdapterSpec(adapterId) {
   return spec;
 }
 
-export function getDestinationAdapterDeployment(adapterId, chainKey) {
+export function normalizeDeploymentProfile(profile) {
+  return assertIncluded(
+    "deploymentProfile",
+    assertNonEmptyString("deploymentProfile", profile),
+    Object.values(DEPLOYMENT_PROFILES),
+  );
+}
+
+export function getDestinationAdapterDeployment(
+  adapterId,
+  chainKey,
+  deploymentProfile = DEFAULT_DEPLOYMENT_PROFILE,
+) {
   const normalizedAdapterId = assertNonEmptyString("adapterId", adapterId);
   const normalizedChainKey = assertNonEmptyString("chainKey", chainKey);
-  const deployment = DESTINATION_ADAPTER_DEPLOYMENTS[`${normalizedAdapterId}:${normalizedChainKey}`];
+  const normalizedDeploymentProfile = normalizeDeploymentProfile(deploymentProfile);
+  const deployment =
+    DESTINATION_ADAPTER_DEPLOYMENTS[
+      `${normalizedAdapterId}:${normalizedChainKey}:${normalizedDeploymentProfile}`
+    ];
 
   if (!deployment) {
     throw new Error(
-      `missing destination adapter deployment for ${normalizedAdapterId} on ${normalizedChainKey}`,
+      `missing destination adapter deployment for ${normalizedAdapterId} on ${normalizedChainKey} (${normalizedDeploymentProfile})`,
     );
   }
 
@@ -110,19 +132,21 @@ function parseDestinationAdapterDeployments() {
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith("#"))
     .map((line) => {
-      const [adapterId, chainKey, address, extra] = line.split("|");
-      if (!adapterId || !chainKey || !address || extra) {
+      const [adapterId, chainKey, deploymentProfile, address, extra] = line.split("|");
+      if (!adapterId || !chainKey || !deploymentProfile || !address || extra) {
         throw new Error(`invalid destination adapter deployment line: ${line}`);
       }
 
       const normalizedAdapterId = assertNonEmptyString("adapterId", adapterId);
       const normalizedChainKey = assertNonEmptyString("chainKey", chainKey);
+      const normalizedDeploymentProfile = normalizeDeploymentProfile(deploymentProfile);
 
       return [
-        `${normalizedAdapterId}:${normalizedChainKey}`,
+        `${normalizedAdapterId}:${normalizedChainKey}:${normalizedDeploymentProfile}`,
         Object.freeze({
           adapterId: normalizedAdapterId,
           chainKey: normalizedChainKey,
+          deploymentProfile: normalizedDeploymentProfile,
           address: assertAddress("address", address),
         }),
       ];

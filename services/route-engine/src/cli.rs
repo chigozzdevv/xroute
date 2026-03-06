@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
 use route_engine::{
-    AssetAmount, AssetKey, CallIntent, ChainKey, DestinationAdapter, ExecutionPlan, FeeBreakdown,
-    FeeType, Intent, IntentAction, PlanStep, Quote, RouteEngine, StakeIntent, SubmissionAction,
-    SwapIntent, TransferIntent, XcmInstruction, XcmWeight,
+    AssetAmount, AssetKey, CallIntent, ChainKey, DeploymentProfile, DestinationAdapter,
+    EngineSettings, ExecutionPlan, FeeBreakdown, FeeType, Intent, IntentAction, PlanStep, Quote,
+    RouteEngine, RouteRegistry, StakeIntent, SubmissionAction, SwapIntent, TransferIntent,
+    XcmInstruction, XcmWeight,
 };
 
 pub fn run() -> Result<(), String> {
@@ -20,10 +21,22 @@ pub fn run() -> Result<(), String> {
 
 fn run_quote(args: Vec<String>) -> Result<(), String> {
     let options = parse_options(args)?;
+    let deployment_profile = options
+        .get("deployment-profile")
+        .map(String::as_str)
+        .map(parse_deployment_profile)
+        .transpose()?
+        .unwrap_or(DeploymentProfile::Local);
     let intent = build_intent(&options)?;
-    let quote = RouteEngine::default()
-        .quote(intent)
-        .map_err(|error| error.to_string())?;
+    let quote = RouteEngine::new(
+        RouteRegistry::default(),
+        EngineSettings {
+            platform_fee_bps: 10,
+            deployment_profile,
+        },
+    )
+    .quote(intent)
+    .map_err(|error| error.to_string())?;
 
     println!("{}", quote_to_json(&quote));
     Ok(())
@@ -122,6 +135,15 @@ fn parse_asset(value: &str) -> Result<AssetKey, String> {
     }
 }
 
+fn parse_deployment_profile(value: &str) -> Result<DeploymentProfile, String> {
+    match value {
+        "local" => Ok(DeploymentProfile::Local),
+        "testnet" => Ok(DeploymentProfile::Testnet),
+        "mainnet" => Ok(DeploymentProfile::Mainnet),
+        other => Err(format!("unsupported deployment profile: {other}")),
+    }
+}
+
 fn parse_u64(value: &str, name: &str) -> Result<u64, String> {
     value
         .parse::<u64>()
@@ -136,8 +158,9 @@ fn parse_u128(value: &str, name: &str) -> Result<u128, String> {
 
 fn quote_to_json(quote: &Quote) -> String {
     format!(
-        "{{\"quoteId\":{},\"route\":{},\"fees\":{},\"expectedOutput\":{},\"minOutput\":{},\"submission\":{},\"executionPlan\":{}}}",
+        "{{\"quoteId\":{},\"deploymentProfile\":{},\"route\":{},\"fees\":{},\"expectedOutput\":{},\"minOutput\":{},\"submission\":{},\"executionPlan\":{}}}",
         json_string(&quote.quote_id),
+        json_string(quote.deployment_profile.as_str()),
         chain_array_json(&quote.route),
         fee_breakdown_json(&quote.fees),
         asset_amount_json(&quote.expected_output),
@@ -348,7 +371,7 @@ fn destination_adapter_label(adapter: DestinationAdapter) -> &'static str {
 fn usage() -> String {
     [
         "usage:",
-        "  route-engine quote --source-chain <chain> --destination-chain <chain> --refund-address <address> --deadline <unix-seconds> --action <transfer|swap|stake|call> [action flags]",
+        "  route-engine quote --source-chain <chain> --destination-chain <chain> --refund-address <address> --deadline <unix-seconds> --action <transfer|swap|stake|call> [action flags] [--deployment-profile <local|testnet|mainnet>]",
         "",
         "action flags:",
         "  transfer: --asset <symbol> --amount <units> --recipient <address>",

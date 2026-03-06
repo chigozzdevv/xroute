@@ -32,7 +32,9 @@ pub fn lookup_destination_adapter_spec(
         let selector = fields.next();
 
         if fields.next().is_some() {
-            return Err(RouteError::InvalidDestinationAdapterSpec { adapter: adapter_id });
+            return Err(RouteError::InvalidDestinationAdapterSpec {
+                adapter: adapter_id,
+            });
         }
 
         if let (
@@ -41,8 +43,13 @@ pub fn lookup_destination_adapter_spec(
             Some(implementation_contract),
             Some(signature),
             Some(selector),
-        ) = (id, target_kind, implementation_contract, signature, selector)
-        {
+        ) = (
+            id,
+            target_kind,
+            implementation_contract,
+            signature,
+            selector,
+        ) {
             if id == adapter_id {
                 return Ok(DestinationAdapterSpec {
                     id,
@@ -53,11 +60,15 @@ pub fn lookup_destination_adapter_spec(
                 });
             }
         } else {
-            return Err(RouteError::InvalidDestinationAdapterSpec { adapter: adapter_id });
+            return Err(RouteError::InvalidDestinationAdapterSpec {
+                adapter: adapter_id,
+            });
         }
     }
 
-    Err(RouteError::MissingDestinationAdapterSpec { adapter: adapter_id })
+    Err(RouteError::MissingDestinationAdapterSpec {
+        adapter: adapter_id,
+    })
 }
 
 fn parse_selector(adapter: &'static str, selector: &str) -> Result<[u8; 4], RouteError> {

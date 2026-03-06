@@ -13,6 +13,10 @@ import {
   buildRouterIntentRequest,
   createDispatchEnvelope,
 } from "../xroute-xcm/index.mjs";
+import {
+  DEFAULT_DEPLOYMENT_PROFILE,
+  normalizeDeploymentProfile,
+} from "../xroute-precompile-interfaces/index.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -140,11 +144,16 @@ export function createRouteEngineQuoteProvider({
   commandArgs = ["run", "-q", "-p", "route-engine", "--"],
   cwd,
   env,
+  deploymentProfile = DEFAULT_DEPLOYMENT_PROFILE,
 } = {}) {
+  const normalizedDeploymentProfile = normalizeDeploymentProfile(deploymentProfile);
+
   return {
     async quote(intentInput) {
       const intent = intentInput.quoteId ? intentInput : createIntent(intentInput);
-      const args = commandArgs.concat(buildRouteEngineQuoteArgs(intent));
+      const args = commandArgs.concat(
+        buildRouteEngineQuoteArgs(intent, normalizedDeploymentProfile),
+      );
 
       try {
         const { stdout } = await execFileAsync(command, args, {
@@ -173,6 +182,9 @@ export function normalizeQuote(quote) {
 
   return Object.freeze({
     quoteId: quote.quoteId,
+    deploymentProfile: normalizeDeploymentProfile(
+      quote?.deploymentProfile ?? DEFAULT_DEPLOYMENT_PROFILE,
+    ),
     route: quote.route.slice(),
     fees: normalizeFeeBreakdown(quote.fees),
     expectedOutput: normalizeAssetAmount(quote.expectedOutput),
@@ -211,7 +223,10 @@ function normalizeAssetAmount(assetAmount) {
   });
 }
 
-function buildRouteEngineQuoteArgs(intent) {
+function buildRouteEngineQuoteArgs(
+  intent,
+  deploymentProfile = DEFAULT_DEPLOYMENT_PROFILE,
+) {
   const shared = [
     "quote",
     "--source-chain",
@@ -222,6 +237,8 @@ function buildRouteEngineQuoteArgs(intent) {
     intent.refundAddress,
     "--deadline",
     String(intent.deadline),
+    "--deployment-profile",
+    normalizeDeploymentProfile(deploymentProfile),
     "--action",
     intent.action.type,
   ];

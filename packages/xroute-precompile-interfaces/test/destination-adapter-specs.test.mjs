@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 
 import {
+  DEPLOYMENT_PROFILES,
   DESTINATION_ADAPTER_DEPLOYMENTS,
   DESTINATION_ADAPTER_SPECS,
   DESTINATION_TRANSACT_DISPATCH,
@@ -30,13 +31,32 @@ test("destination adapter selectors match their published function signatures", 
   }
 });
 
-test("destination adapter deployments are published per chain", () => {
-  const deployment = getDestinationAdapterDeployment("hydration-swap-v1", "hydration");
+test("destination adapter deployments are published per chain and profile", () => {
+  const local = getDestinationAdapterDeployment(
+    "hydration-swap-v1",
+    "hydration",
+    DEPLOYMENT_PROFILES.LOCAL,
+  );
+  const testnet = getDestinationAdapterDeployment(
+    "hydration-swap-v1",
+    "hydration",
+    DEPLOYMENT_PROFILES.TESTNET,
+  );
+  const mainnet = getDestinationAdapterDeployment(
+    "hydration-call-v1",
+    "hydration",
+    DEPLOYMENT_PROFILES.MAINNET,
+  );
 
-  assert.equal(deployment.address, "0x0000000000000000000000000000000000001001");
+  assert.equal(local.address, "0x0000000000000000000000000000000000001001");
+  assert.equal(testnet.address, "0x0000000000000000000000000000000000002001");
   assert.equal(
-    DESTINATION_ADAPTER_DEPLOYMENTS["hydration-call-v1:hydration"].address,
-    "0x0000000000000000000000000000000000001003",
+    mainnet.address,
+    "0x0000000000000000000000000000000000003003",
+  );
+  assert.equal(
+    DESTINATION_ADAPTER_DEPLOYMENTS["hydration-stake-v1:hydration:testnet"].address,
+    "0x0000000000000000000000000000000000002002",
   );
 });
 

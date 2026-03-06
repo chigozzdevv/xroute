@@ -22,10 +22,12 @@ import {
 } from "../xroute-types/index.mjs";
 import {
   ACTION_TO_CONTRACT_ENUM,
+  DEFAULT_DEPLOYMENT_PROFILE,
   DESTINATION_TRANSACT_DISPATCH,
   DISPATCH_MODE_TO_CONTRACT_ENUM,
   getDestinationAdapterDeployment,
   getDestinationAdapterSpec,
+  normalizeDeploymentProfile,
 } from "../xroute-precompile-interfaces/index.mjs";
 
 const VERSIONED_LOCATION_TYPE_ID = 164;
@@ -186,6 +188,9 @@ export function buildExplorerLabel({ sourceChain, destinationChain, mode }) {
 }
 
 export function buildVersionedXcmMessage({ quote }) {
+  const deploymentProfile = normalizeDeploymentProfile(
+    quote?.deploymentProfile ?? DEFAULT_DEPLOYMENT_PROFILE,
+  );
   const sendStep = getExecutionStep(quote, "send-xcm");
   const transferInstruction = getInstruction(sendStep, "transfer-reserve-asset");
   const transferAmount = toBigInt(
@@ -208,6 +213,7 @@ export function buildVersionedXcmMessage({ quote }) {
         buildRemoteInstruction({
           instruction,
           sendStep,
+          deploymentProfile,
         }),
       ),
     }),
@@ -239,6 +245,7 @@ function getInstruction(sendStep, instructionType) {
 function buildRemoteInstruction({
   instruction,
   sendStep,
+  deploymentProfile,
 }) {
   switch (instruction.type) {
     case "buy-execution":
@@ -254,6 +261,7 @@ function buildRemoteInstruction({
       assertPublishedAdapterInvocation({
         adapterId: instruction.adapter,
         chainKey: sendStep.destination,
+        deploymentProfile,
         targetAddress: instruction.targetAddress,
         contractCall: instruction.contractCall,
       });
@@ -353,11 +361,12 @@ function hexToBytes(value) {
 function assertPublishedAdapterInvocation({
   adapterId,
   chainKey,
+  deploymentProfile,
   targetAddress,
   contractCall,
 }) {
   const spec = getDestinationAdapterSpec(adapterId);
-  const deployment = getDestinationAdapterDeployment(adapterId, chainKey);
+  const deployment = getDestinationAdapterDeployment(adapterId, chainKey, deploymentProfile);
   const normalizedAddress = assertAddress("targetAddress", targetAddress);
   const normalizedCall = assertHexString("contractCall", contractCall);
 

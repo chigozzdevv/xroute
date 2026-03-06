@@ -19,6 +19,7 @@ test("sdk coordinates quote, submit, dispatch, and status tracking", async () =>
     async quote(intent) {
       return {
         quoteId: intent.quoteId,
+        deploymentProfile: "local",
         route: ["polkadot-hub", "hydration"],
         fees: {
           xcmFee: { asset: "DOT", amount: 150000000n },

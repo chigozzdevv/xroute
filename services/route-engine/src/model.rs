@@ -24,6 +24,29 @@ impl Display for ChainKey {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DeploymentProfile {
+    Local,
+    Testnet,
+    Mainnet,
+}
+
+impl DeploymentProfile {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Testnet => "testnet",
+            Self::Mainnet => "mainnet",
+        }
+    }
+}
+
+impl Display for DeploymentProfile {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AssetKey {
     Dot,
     Usdt,
@@ -182,6 +205,7 @@ pub struct CallIntent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Quote {
     pub quote_id: String,
+    pub deployment_profile: DeploymentProfile,
     pub route: Vec<ChainKey>,
     pub fees: FeeBreakdown,
     pub expected_output: AssetAmount,

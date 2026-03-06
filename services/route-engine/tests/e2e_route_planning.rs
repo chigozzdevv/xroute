@@ -1,7 +1,7 @@
 use route_engine::{
-    AssetKey, CallIntent, ChainKey, DestinationAdapter, FeeType, Intent, IntentAction, PlanStep,
-    RouteEngine, StakeIntent, SubmissionAction, SwapIntent, TransferIntent, XcmInstruction,
-    XcmWeight,
+    AssetKey, CallIntent, ChainKey, DeploymentProfile, DestinationAdapter, EngineSettings, FeeType,
+    Intent, IntentAction, PlanStep, RouteEngine, RouteRegistry, StakeIntent, SubmissionAction,
+    SwapIntent, TransferIntent, XcmInstruction, XcmWeight,
 };
 
 #[test]
@@ -23,6 +23,7 @@ fn quotes_hydration_swap_and_builds_adapter_transact_plan() {
 
     let quote = engine.quote(intent).expect("swap quote should build");
 
+    assert_eq!(quote.deployment_profile, DeploymentProfile::Local);
     assert_eq!(
         quote.route,
         vec![ChainKey::PolkadotHub, ChainKey::Hydration]
@@ -90,8 +91,7 @@ fn quotes_hydration_swap_and_builds_adapter_transact_plan() {
                         remote_instructions[1],
                         XcmInstruction::Transact {
                             adapter: DestinationAdapter::HydrationSwapV1,
-                            target_address: "0x0000000000000000000000000000000000001001"
-                                .to_owned(),
+                            target_address: "0x0000000000000000000000000000000000001001".to_owned(),
                             contract_call: remote_instructions[1]
                                 .contract_call()
                                 .expect("swap contract call")
@@ -102,12 +102,10 @@ fn quotes_hydration_swap_and_builds_adapter_transact_plan() {
                             },
                         }
                     );
-                    assert!(
-                        remote_instructions[1]
-                            .contract_call()
-                            .expect("swap contract call")
-                            .starts_with("0x670b1f29")
-                    );
+                    assert!(remote_instructions[1]
+                        .contract_call()
+                        .expect("swap contract call")
+                        .starts_with("0x670b1f29"));
                     assert_eq!(
                         remote_instructions[2],
                         XcmInstruction::DepositAsset {
@@ -140,6 +138,7 @@ fn quotes_asset_transfer_and_builds_delivery_plan() {
 
     let quote = engine.quote(intent).expect("transfer quote should build");
 
+    assert_eq!(quote.deployment_profile, DeploymentProfile::Local);
     assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::AssetHub]);
     assert_eq!(quote.fees.xcm_fee.amount, 100_000_000);
     assert_eq!(quote.fees.destination_fee.amount, 20_000_000);
@@ -212,6 +211,7 @@ fn quotes_hydration_stake_and_builds_adapter_transact_plan() {
 
     let quote = engine.quote(intent).expect("stake quote should build");
 
+    assert_eq!(quote.deployment_profile, DeploymentProfile::Local);
     assert_eq!(quote.submission.action, SubmissionAction::Stake);
     assert_eq!(quote.submission.min_output_amount, 0);
     assert!(quote.min_output.is_none());
@@ -227,8 +227,7 @@ fn quotes_hydration_stake_and_builds_adapter_transact_plan() {
                     remote_instructions[1],
                     XcmInstruction::Transact {
                         adapter: DestinationAdapter::HydrationStakeV1,
-                        target_address: "0x0000000000000000000000000000000000001002"
-                            .to_owned(),
+                        target_address: "0x0000000000000000000000000000000000001002".to_owned(),
                         contract_call: remote_instructions[1]
                             .contract_call()
                             .expect("stake contract call")
@@ -239,12 +238,10 @@ fn quotes_hydration_stake_and_builds_adapter_transact_plan() {
                         },
                     }
                 );
-                assert!(
-                    remote_instructions[1]
-                        .contract_call()
-                        .expect("stake contract call")
-                        .starts_with("0xdfabdde3")
-                );
+                assert!(remote_instructions[1]
+                    .contract_call()
+                    .expect("stake contract call")
+                    .starts_with("0xdfabdde3"));
             }
             other => panic!("unexpected instruction: {other:?}"),
         },
@@ -270,6 +267,7 @@ fn quotes_hydration_call_and_builds_adapter_transact_plan() {
 
     let quote = engine.quote(intent).expect("call quote should build");
 
+    assert_eq!(quote.deployment_profile, DeploymentProfile::Local);
     assert_eq!(quote.submission.action, SubmissionAction::Call);
     assert_eq!(quote.submission.min_output_amount, 0);
     assert_eq!(quote.expected_output.amount, 0);
@@ -285,8 +283,7 @@ fn quotes_hydration_call_and_builds_adapter_transact_plan() {
                     remote_instructions[1],
                     XcmInstruction::Transact {
                         adapter: DestinationAdapter::HydrationCallV1,
-                        target_address: "0x0000000000000000000000000000000000001003"
-                            .to_owned(),
+                        target_address: "0x0000000000000000000000000000000000001003".to_owned(),
                         contract_call: remote_instructions[1]
                             .contract_call()
                             .expect("call contract call")
@@ -297,12 +294,10 @@ fn quotes_hydration_call_and_builds_adapter_transact_plan() {
                         },
                     }
                 );
-                assert!(
-                    remote_instructions[1]
-                        .contract_call()
-                        .expect("call contract call")
-                        .starts_with("0x7db7dbf6")
-                );
+                assert!(remote_instructions[1]
+                    .contract_call()
+                    .expect("call contract call")
+                    .starts_with("0x7db7dbf6"));
             }
             other => panic!("unexpected instruction: {other:?}"),
         },
@@ -320,5 +315,51 @@ impl InstructionExt for XcmInstruction {
             XcmInstruction::Transact { contract_call, .. } => Some(contract_call.as_str()),
             _ => None,
         }
+    }
+}
+
+#[test]
+fn quotes_hydration_swap_against_testnet_deployments() {
+    let engine = RouteEngine::new(
+        RouteRegistry::default(),
+        EngineSettings {
+            platform_fee_bps: 10,
+            deployment_profile: DeploymentProfile::Testnet,
+        },
+    );
+    let intent = Intent {
+        source_chain: ChainKey::PolkadotHub,
+        destination_chain: ChainKey::Hydration,
+        action: IntentAction::Swap(SwapIntent {
+            asset_in: AssetKey::Dot,
+            asset_out: AssetKey::Usdt,
+            amount_in: AssetKey::Dot.units(10),
+            min_amount_out: AssetKey::Usdt.units(49),
+            recipient: "5FswapRecipient".to_owned(),
+        }),
+        refund_address: "5Frefund".to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let quote = engine
+        .quote(intent)
+        .expect("testnet swap quote should build");
+
+    assert_eq!(quote.deployment_profile, DeploymentProfile::Testnet);
+
+    match &quote.execution_plan.steps[4] {
+        PlanStep::SendXcm { instructions, .. } => match &instructions[0] {
+            XcmInstruction::TransferReserveAsset {
+                remote_instructions,
+                ..
+            } => match &remote_instructions[1] {
+                XcmInstruction::Transact { target_address, .. } => {
+                    assert_eq!(target_address, "0x0000000000000000000000000000000000002001");
+                }
+                other => panic!("unexpected instruction: {other:?}"),
+            },
+            other => panic!("unexpected instruction: {other:?}"),
+        },
+        other => panic!("unexpected plan step: {other:?}"),
     }
 }

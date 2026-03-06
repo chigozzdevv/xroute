@@ -1,4 +1,4 @@
-use crate::model::{AssetKey, ChainKey};
+use crate::model::{AssetKey, ChainKey, DeploymentProfile};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
@@ -37,10 +37,12 @@ pub enum RouteError {
     MissingDestinationAdapterDeployment {
         adapter: &'static str,
         chain: ChainKey,
+        profile: DeploymentProfile,
     },
     InvalidDestinationAdapterDeployment {
         adapter: &'static str,
         chain: ChainKey,
+        profile: DeploymentProfile,
     },
     MinOutputTooHigh {
         requested: u128,
@@ -113,17 +115,27 @@ impl Display for RouteError {
             Self::InvalidDestinationAdapterSpec { adapter } => {
                 write!(f, "invalid destination adapter spec for {adapter}")
             }
-            Self::MissingDestinationAdapterDeployment { adapter, chain } => write!(
-                f,
-                "missing destination adapter deployment for {} on {}",
+            Self::MissingDestinationAdapterDeployment {
                 adapter,
-                chain.as_str()
+                chain,
+                profile,
+            } => write!(
+                f,
+                "missing destination adapter deployment for {} on {} ({})",
+                adapter,
+                chain.as_str(),
+                profile.as_str()
             ),
-            Self::InvalidDestinationAdapterDeployment { adapter, chain } => write!(
-                f,
-                "invalid destination adapter deployment for {} on {}",
+            Self::InvalidDestinationAdapterDeployment {
                 adapter,
-                chain.as_str()
+                chain,
+                profile,
+            } => write!(
+                f,
+                "invalid destination adapter deployment for {} on {} ({})",
+                adapter,
+                chain.as_str(),
+                profile.as_str()
             ),
             Self::MinOutputTooHigh {
                 requested,
@@ -132,8 +144,12 @@ impl Display for RouteError {
                 f,
                 "requested minimum output {requested} exceeds estimated output {expected}"
             ),
-            Self::InvalidHex { field } => write!(f, "{field} must be a valid 0x-prefixed hex string"),
-            Self::InvalidAddress { field } => write!(f, "{field} must be a 20-byte 0x-prefixed hex address"),
+            Self::InvalidHex { field } => {
+                write!(f, "{field} must be a valid 0x-prefixed hex string")
+            }
+            Self::InvalidAddress { field } => {
+                write!(f, "{field} must be a 20-byte 0x-prefixed hex address")
+            }
             Self::ArithmeticOverflow => write!(f, "arithmetic overflow while building quote"),
         }
     }

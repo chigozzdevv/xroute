@@ -8,6 +8,7 @@ import {
   createSwapIntent,
   createTransferIntent,
 } from "../../xroute-intents/index.mjs";
+import { DEPLOYMENT_PROFILES } from "../../xroute-precompile-interfaces/index.mjs";
 import { createRouteEngineQuoteProvider, createXRouteClient, normalizeQuote } from "../index.mjs";
 
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -32,6 +33,7 @@ test("route engine quote provider bridges the rust planner", async () => {
   const quote = normalizeQuote(await provider.quote(intent));
 
   assert.equal(quote.quoteId, intent.quoteId);
+  assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.LOCAL);
   assert.deepEqual(quote.route, ["polkadot-hub", "asset-hub"]);
   assert.equal(quote.submission.action, "transfer");
   assert.equal(quote.submission.amount, 250000000000n);
@@ -123,9 +125,35 @@ test("route engine quote provider returns adapter-backed remote calls", async ()
   const quote = normalizeQuote(await provider.quote(intent));
   const remoteInstructions = quote.executionPlan.steps[4].instructions[0].remoteInstructions;
 
+  assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.LOCAL);
   assert.equal(quote.submission.action, "call");
   assert.equal(remoteInstructions[1].type, "transact");
   assert.equal(remoteInstructions[1].adapter, "hydration-call-v1");
   assert.equal(remoteInstructions[1].targetAddress, "0x0000000000000000000000000000000000001003");
   assert.match(remoteInstructions[1].contractCall, /^0x7db7dbf6[0-9a-f]+$/);
+});
+
+test("route engine quote provider selects published testnet deployments", async () => {
+  const provider = createRouteEngineQuoteProvider({
+    cwd: workspaceRoot,
+    deploymentProfile: DEPLOYMENT_PROFILES.TESTNET,
+  });
+  const intent = createCallIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    refundAddress: aliceAddress,
+    deadline: 1_773_185_200,
+    params: {
+      asset: "DOT",
+      amount: "50000000000",
+      target: "0x1111111111111111111111111111111111111111",
+      calldata: "0xdeadbeef",
+    },
+  });
+
+  const quote = normalizeQuote(await provider.quote(intent));
+  const remoteInstructions = quote.executionPlan.steps[4].instructions[0].remoteInstructions;
+
+  assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.TESTNET);
+  assert.equal(remoteInstructions[1].targetAddress, "0x0000000000000000000000000000000000002003");
 });
