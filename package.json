@@ -3,14 +3,11 @@
   "private": true,
   "packageManager": "pnpm@10.6.0",
   "scripts": {
-    "build": "turbo run build",
-    "check": "turbo run check",
-    "dev": "turbo run dev --parallel",
-    "lint": "turbo run lint",
-    "test": "turbo run test"
-  },
-  "devDependencies": {
-    "turbo": "^2.4.4",
-    "typescript": "^5.8.2"
+    "build": "cargo build -p route-engine && forge build --root contracts/polkadot-hub-router && node --test packages/*/test/*.test.mjs services/status-indexer/test/*.test.mjs",
+    "check": "npm run test",
+    "test": "npm run test:rust && npm run test:solidity && npm run test:node",
+    "test:node": "node --test packages/*/test/*.test.mjs services/status-indexer/test/*.test.mjs",
+    "test:rust": "cargo test -p route-engine",
+    "test:solidity": "forge test --root contracts/polkadot-hub-router"
   }
 }

@@ -1,0 +1,271 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+import { createIntent } from "../xroute-intents/index.mjs";
+import {
+  ACTION_TYPES,
+  toBigInt,
+  assertIncluded,
+} from "../xroute-types/index.mjs";
+import {
+  buildDispatchRequest,
+  buildRouterIntentRequest,
+  createDispatchEnvelope,
+} from "../xroute-xcm/index.mjs";
+
+const execFileAsync = promisify(execFile);
+
+export function createXRouteClient({
+  quoteProvider,
+  routerAdapter,
+  statusProvider,
+  assetAddressResolver,
+  castBin = "cast",
+}) {
+  if (!quoteProvider?.quote) {
+    throw new Error("quoteProvider.quote is required");
+  }
+  if (!routerAdapter?.submitIntent || !routerAdapter?.dispatchIntent) {
+    throw new Error("routerAdapter submitIntent and dispatchIntent are required");
+  }
+  if (!statusProvider?.getStatus || !statusProvider?.getTimeline || !statusProvider?.subscribe) {
+    throw new Error("statusProvider is incomplete");
+  }
+  if (typeof assetAddressResolver !== "function") {
+    throw new Error("assetAddressResolver is required");
+  }
+
+  async function quoteIntent(intentInput) {
+    const intent = intentInput.quoteId ? intentInput : createIntent(intentInput);
+    const quote = normalizeQuote(await quoteProvider.quote(intent));
+
+    if (quote.quoteId !== intent.quoteId) {
+      throw new Error("quote id must match the normalized intent quote id");
+    }
+
+    return { intent, quote };
+  }
+
+  async function submitIntent({ intent, quote, envelope, owner }) {
+    const normalizedIntent = intent.quoteId ? intent : createIntent(intent);
+    const normalizedQuote = normalizeQuote(quote);
+    const normalizedEnvelope = createDispatchEnvelope(envelope);
+    const assetAddress = await assetAddressResolver({
+      chainKey: normalizedIntent.sourceChain,
+      assetKey: normalizedQuote.submission.asset,
+    });
+    const request = buildRouterIntentRequest({
+      intent: normalizedIntent,
+      quote: normalizedQuote,
+      envelope: normalizedEnvelope,
+      assetAddress,
+      castBin,
+    });
+
+    return routerAdapter.submitIntent({
+      owner,
+      intent: normalizedIntent,
+      quote: normalizedQuote,
+      request,
+    });
+  }
+
+  async function dispatchIntent({ intentId, envelope }) {
+    return routerAdapter.dispatchIntent({
+      intentId,
+      request: buildDispatchRequest(envelope),
+    });
+  }
+
+  async function executeIntent({ intent, quote, envelope, owner }) {
+    const quoted = quote
+      ? {
+          intent: intent.quoteId ? intent : createIntent(intent),
+          quote: normalizeQuote(quote),
+        }
+      : await quoteIntent(intent);
+
+    if (quoted.quote.quoteId !== quoted.intent.quoteId) {
+      throw new Error("quote id must match the normalized intent quote id");
+    }
+
+    const submitted = await submitIntent({
+      intent: quoted.intent,
+      quote: quoted.quote,
+      envelope,
+      owner,
+    });
+    const dispatched = await dispatchIntent({
+      intentId: submitted.intentId,
+      envelope,
+    });
+
+    return {
+      intent: quoted.intent,
+      quote: quoted.quote,
+      submitted,
+      dispatched,
+      status: statusProvider.getStatus(submitted.intentId),
+    };
+  }
+
+  return {
+    quote: quoteIntent,
+    submit: submitIntent,
+    dispatch: dispatchIntent,
+    execute: executeIntent,
+
+    getStatus(intentId) {
+      return statusProvider.getStatus(intentId);
+    },
+
+    getTimeline(intentId) {
+      return statusProvider.getTimeline(intentId);
+    },
+
+    subscribe(listener) {
+      return statusProvider.subscribe(listener);
+    },
+  };
+}
+
+export function createRouteEngineQuoteProvider({
+  command = "cargo",
+  commandArgs = ["run", "-q", "-p", "route-engine", "--"],
+  cwd,
+  env,
+} = {}) {
+  return {
+    async quote(intentInput) {
+      const intent = intentInput.quoteId ? intentInput : createIntent(intentInput);
+      const args = commandArgs.concat(buildRouteEngineQuoteArgs(intent));
+
+      try {
+        const { stdout } = await execFileAsync(command, args, {
+          cwd,
+          env,
+          maxBuffer: 1024 * 1024,
+        });
+        return {
+          ...JSON.parse(stdout),
+          quoteId: intent.quoteId,
+        };
+      } catch (error) {
+        const detail = error.stderr?.trim() || error.stdout?.trim() || error.message;
+        throw new Error(`route engine quote failed: ${detail}`);
+      }
+    },
+  };
+}
+
+export function normalizeQuote(quote) {
+  const action = assertIncluded(
+    "quote.submission.action",
+    quote?.submission?.action,
+    Object.values(ACTION_TYPES),
+  );
+
+  return Object.freeze({
+    quoteId: quote.quoteId,
+    route: quote.route.slice(),
+    fees: normalizeFeeBreakdown(quote.fees),
+    expectedOutput: normalizeAssetAmount(quote.expectedOutput),
+    minOutput: quote.minOutput ? normalizeAssetAmount(quote.minOutput) : null,
+    submission: Object.freeze({
+      action,
+      asset: quote.submission.asset,
+      amount: toBigInt(quote.submission.amount, "quote.submission.amount"),
+      xcmFee: toBigInt(quote.submission.xcmFee, "quote.submission.xcmFee"),
+      destinationFee: toBigInt(
+        quote.submission.destinationFee,
+        "quote.submission.destinationFee",
+      ),
+      minOutputAmount: toBigInt(
+        quote.submission.minOutputAmount,
+        "quote.submission.minOutputAmount",
+      ),
+    }),
+    executionPlan: quote.executionPlan,
+  });
+}
+
+function normalizeFeeBreakdown(fees) {
+  return Object.freeze({
+    xcmFee: normalizeAssetAmount(fees.xcmFee),
+    destinationFee: normalizeAssetAmount(fees.destinationFee),
+    platformFee: normalizeAssetAmount(fees.platformFee),
+    totalFee: normalizeAssetAmount(fees.totalFee),
+  });
+}
+
+function normalizeAssetAmount(assetAmount) {
+  return Object.freeze({
+    asset: assetAmount.asset,
+    amount: toBigInt(assetAmount.amount, `${assetAmount.asset} amount`),
+  });
+}
+
+function buildRouteEngineQuoteArgs(intent) {
+  const shared = [
+    "quote",
+    "--source-chain",
+    intent.sourceChain,
+    "--destination-chain",
+    intent.destinationChain,
+    "--refund-address",
+    intent.refundAddress,
+    "--deadline",
+    String(intent.deadline),
+    "--action",
+    intent.action.type,
+  ];
+
+  switch (intent.action.type) {
+    case ACTION_TYPES.TRANSFER:
+      return shared.concat([
+        "--asset",
+        intent.action.params.asset,
+        "--amount",
+        intent.action.params.amount.toString(),
+        "--recipient",
+        intent.action.params.recipient,
+      ]);
+    case ACTION_TYPES.SWAP:
+      return shared.concat([
+        "--asset-in",
+        intent.action.params.assetIn,
+        "--asset-out",
+        intent.action.params.assetOut,
+        "--amount-in",
+        intent.action.params.amountIn.toString(),
+        "--min-amount-out",
+        intent.action.params.minAmountOut.toString(),
+        "--recipient",
+        intent.action.params.recipient,
+      ]);
+    case ACTION_TYPES.STAKE:
+      return shared.concat([
+        "--asset",
+        intent.action.params.asset,
+        "--amount",
+        intent.action.params.amount.toString(),
+        "--validator",
+        intent.action.params.validator,
+        "--recipient",
+        intent.action.params.recipient,
+      ]);
+    case ACTION_TYPES.CALL:
+      return shared.concat([
+        "--asset",
+        intent.action.params.asset,
+        "--amount",
+        intent.action.params.amount.toString(),
+        "--target",
+        intent.action.params.target,
+        "--calldata",
+        intent.action.params.calldata,
+      ]);
+    default:
+      throw new Error(`unsupported action type: ${intent.action.type}`);
+  }
+}

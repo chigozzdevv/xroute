@@ -16,7 +16,7 @@ without manually building XCM messages.
 Example:
 
 ```ts
-const quote = await router.quote({
+const { intent, quote } = await router.quote({
   sourceChain: "polkadot-hub",
   destinationChain: "hydration",
   action: {
@@ -31,7 +31,15 @@ const quote = await router.quote({
   }
 });
 
-await router.execute(quote);
+await router.execute({
+  intent,
+  quote,
+  owner: userAddress,
+  envelope: {
+    mode: "execute",
+    message: "0x1234"
+  }
+});
 ```
 
 ## What the implementation should actually be
@@ -105,7 +113,7 @@ xroute/
 - `packages/xroute-precompile-interfaces`
   - Solidity interfaces for Hub precompiles
 - `packages/xroute-sdk`
-  - developer-facing client
+  - developer-facing client and route-engine bridge
 - `packages/xroute-types`
   - shared types
 - `packages/xroute-xcm`
