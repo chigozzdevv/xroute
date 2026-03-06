@@ -1,3 +1,4 @@
+mod adapter_specs;
 mod engine;
 mod error;
 mod model;

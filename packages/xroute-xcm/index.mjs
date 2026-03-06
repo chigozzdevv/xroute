@@ -22,6 +22,7 @@ import {
 import {
   ACTION_TO_CONTRACT_ENUM,
   DISPATCH_MODE_TO_CONTRACT_ENUM,
+  getDestinationAdapterSpec,
 } from "../xroute-precompile-interfaces/index.mjs";
 
 const VERSIONED_LOCATION_TYPE_ID = 164;
@@ -247,6 +248,7 @@ function buildRemoteInstruction({
         weight_limit: Enum("Unlimited", undefined),
       });
     case "transact":
+      assertEncodedAdapterCall(instruction.adapter, instruction.encodedCall);
       return Enum("Transact", {
         origin_kind: Enum("SovereignAccount", undefined),
         fallback_max_weight: buildWeight(instruction.fallbackWeight),
@@ -333,4 +335,17 @@ function buildJunction(junction) {
 
 function hexToBytes(value) {
   return Uint8Array.from(Buffer.from(assertHexString("encodedCall", value).slice(2), "hex"));
+}
+
+function assertEncodedAdapterCall(adapterId, encodedCall) {
+  const spec = getDestinationAdapterSpec(adapterId);
+  const normalizedCall = assertHexString("encodedCall", encodedCall);
+
+  if (!normalizedCall.startsWith(spec.selector)) {
+    throw new Error(
+      `encodedCall for ${adapterId} must start with published selector ${spec.selector}`,
+    );
+  }
+
+  return normalizedCall;
 }

@@ -28,6 +28,12 @@ pub enum RouteError {
     UnsupportedAction {
         action: &'static str,
     },
+    MissingDestinationAdapterSpec {
+        adapter: &'static str,
+    },
+    InvalidDestinationAdapterSpec {
+        adapter: &'static str,
+    },
     MinOutputTooHigh {
         requested: u128,
         expected: u128,
@@ -92,6 +98,12 @@ impl Display for RouteError {
             ),
             Self::UnsupportedAction { action } => {
                 write!(f, "unsupported action: {action}")
+            }
+            Self::MissingDestinationAdapterSpec { adapter } => {
+                write!(f, "missing destination adapter spec for {adapter}")
+            }
+            Self::InvalidDestinationAdapterSpec { adapter } => {
+                write!(f, "invalid destination adapter spec for {adapter}")
             }
             Self::MinOutputTooHigh {
                 requested,

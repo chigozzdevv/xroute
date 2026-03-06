@@ -1,13 +1,10 @@
+use crate::adapter_specs::lookup_destination_adapter_spec;
 use crate::error::RouteError;
 use crate::model::{
-    AssetAmount, AssetKey, FeeBreakdown, FeeType, Intent, IntentAction, PlanStep, Quote,
-    SubmissionAction, SubmissionTerms, XcmInstruction,
+    AssetAmount, AssetKey, DestinationAdapter, FeeBreakdown, FeeType, Intent, IntentAction,
+    PlanStep, Quote, SubmissionAction, SubmissionTerms, XcmInstruction,
 };
 use crate::registry::{CallRoute, RouteRegistry, StakeRoute, SwapRoute, TransferRoute};
-
-const HYDRATION_SWAP_SELECTOR: [u8; 4] = [0x67, 0x0b, 0x1f, 0x29];
-const HYDRATION_STAKE_SELECTOR: [u8; 4] = [0xdf, 0xab, 0xdd, 0xe3];
-const HYDRATION_CALL_SELECTOR: [u8; 4] = [0x7d, 0xb7, 0xdb, 0xf6];
 
 #[derive(Debug, Clone, Copy)]
 pub struct EngineSettings {
@@ -348,12 +345,13 @@ fn build_swap_plan(
                         XcmInstruction::Transact {
                             adapter: route.adapter,
                             encoded_call: encode_swap_adapter_call(
+                                route.adapter,
                                 swap.asset_in,
                                 swap.asset_out,
                                 swap.amount_in,
                                 swap.min_amount_out,
                                 &swap.recipient,
-                            ),
+                            )?,
                             fallback_weight: route.transact_weight,
                         },
                         XcmInstruction::DepositAsset {
@@ -427,11 +425,12 @@ fn build_stake_plan(
                         XcmInstruction::Transact {
                             adapter: route.adapter,
                             encoded_call: encode_stake_adapter_call(
+                                route.adapter,
                                 stake.asset,
                                 stake.amount,
                                 &stake.validator,
                                 &stake.recipient,
-                            ),
+                            )?,
                             fallback_weight: route.transact_weight,
                         },
                     ],
@@ -501,6 +500,7 @@ fn build_call_plan(
                         XcmInstruction::Transact {
                             adapter: route.adapter,
                             encoded_call: encode_call_adapter_call(
+                                route.adapter,
                                 call.asset,
                                 call.amount,
                                 &call.target,
@@ -548,14 +548,15 @@ fn percentage_fee(amount: u128, bps: u16) -> u128 {
 }
 
 fn encode_swap_adapter_call(
+    adapter: DestinationAdapter,
     asset_in: AssetKey,
     asset_out: AssetKey,
     amount_in: u128,
     min_amount_out: u128,
     recipient: &str,
-) -> String {
-    abi_encode_call(
-        HYDRATION_SWAP_SELECTOR,
+) -> Result<String, RouteError> {
+    Ok(abi_encode_call(
+        destination_adapter_selector(adapter)?,
         &[
             AbiToken::Bytes32(encode_asset_id(asset_in)),
             AbiToken::Bytes32(encode_asset_id(asset_out)),
@@ -563,34 +564,36 @@ fn encode_swap_adapter_call(
             AbiToken::Uint(min_amount_out),
             AbiToken::Bytes(recipient.as_bytes().to_vec()),
         ],
-    )
+    ))
 }
 
 fn encode_stake_adapter_call(
+    adapter: DestinationAdapter,
     asset: AssetKey,
     amount: u128,
     validator: &str,
     recipient: &str,
-) -> String {
-    abi_encode_call(
-        HYDRATION_STAKE_SELECTOR,
+) -> Result<String, RouteError> {
+    Ok(abi_encode_call(
+        destination_adapter_selector(adapter)?,
         &[
             AbiToken::Bytes32(encode_asset_id(asset)),
             AbiToken::Uint(amount),
             AbiToken::Bytes(validator.as_bytes().to_vec()),
             AbiToken::Bytes(recipient.as_bytes().to_vec()),
         ],
-    )
+    ))
 }
 
 fn encode_call_adapter_call(
+    adapter: DestinationAdapter,
     asset: AssetKey,
     amount: u128,
     target: &str,
     calldata: &str,
 ) -> Result<String, RouteError> {
     Ok(abi_encode_call(
-        HYDRATION_CALL_SELECTOR,
+        destination_adapter_selector(adapter)?,
         &[
             AbiToken::Bytes32(encode_asset_id(asset)),
             AbiToken::Uint(amount),
@@ -598,6 +601,10 @@ fn encode_call_adapter_call(
             AbiToken::Bytes(parse_hex_bytes("call.calldata", calldata)?),
         ],
     ))
+}
+
+fn destination_adapter_selector(adapter: DestinationAdapter) -> Result<[u8; 4], RouteError> {
+    Ok(lookup_destination_adapter_spec(adapter)?.selector)
 }
 
 #[derive(Debug, Clone)]

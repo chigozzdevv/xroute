@@ -22,6 +22,10 @@ abstract contract TestBase {
         require(actual == expected, "assert eq failed");
     }
 
+    function assertEq(bytes4 actual, bytes4 expected) internal pure {
+        require(actual == expected, "assert eq failed");
+    }
+
     function assertEq(bytes memory actual, bytes memory expected) internal pure {
         require(keccak256(actual) == keccak256(expected), "assert eq failed");
     }

@@ -125,6 +125,57 @@ test("buildExecutionEnvelope encodes the hydration generic call adapter path", a
   assert.ok(toHex(remoteInstructions[1].value.call).startsWith("0x7db7dbf6"));
 });
 
+test("buildExecutionEnvelope rejects a transact payload with a mismatched published selector", async () => {
+  const intent = createSwapIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    refundAddress: bobAddress,
+    deadline: 1_773_185_200,
+    params: {
+      assetIn: "DOT",
+      assetOut: "USDT",
+      amountIn: "1000000000000",
+      minAmountOut: "490000000",
+      recipient: aliceAddress,
+    },
+  });
+  const quote = await quoteProvider.quote(intent);
+  const badQuote = {
+    ...quote,
+    executionPlan: {
+      ...quote.executionPlan,
+      steps: quote.executionPlan.steps.map((step, stepIndex) =>
+        stepIndex !== 4
+          ? step
+          : {
+              ...step,
+              instructions: step.instructions.map((instruction, instructionIndex) =>
+                instructionIndex !== 0
+                  ? instruction
+                  : {
+                      ...instruction,
+                      remoteInstructions: instruction.remoteInstructions.map(
+                        (remoteInstruction, remoteIndex) =>
+                          remoteIndex !== 1
+                            ? remoteInstruction
+                            : {
+                                ...remoteInstruction,
+                                encodedCall: "0xdeadbeef",
+                              },
+                      ),
+                    },
+              ),
+            },
+      ),
+    },
+  };
+
+  assert.throws(
+    () => buildExecutionEnvelope({ intent, quote: badQuote }),
+    /must start with published selector 0x670b1f29/,
+  );
+});
+
 function toHex(value) {
   if (typeof value === "string") {
     return value.toLowerCase();
