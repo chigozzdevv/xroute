@@ -141,3 +141,96 @@ test("cast router adapter approves, submits, dispatches, and persists status eve
     [dotAddress, routerAddress, routerAddress],
   );
 });
+
+test("cast router adapter finalizes and refunds intents onchain", async () => {
+  const calls = [];
+  const statusIndexer = new InMemoryStatusIndexer();
+  const settledIntentId = "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+  const failedIntentId = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+  statusIndexer.ingest({
+    type: "intent-submitted",
+    at: 1,
+    intentId: settledIntentId,
+    quoteId: "quote-1",
+    owner: signerAddress,
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    actionType: "swap",
+    asset: "DOT",
+    amount: "1000000000000",
+  });
+  statusIndexer.ingest({
+    type: "intent-submitted",
+    at: 2,
+    intentId: failedIntentId,
+    quoteId: "quote-2",
+    owner: signerAddress,
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    actionType: "swap",
+    asset: "DOT",
+    amount: "1000000000000",
+  });
+  const adapter = createCastRouterAdapter({
+    rpcUrl: "http://127.0.0.1:8545",
+    routerAddress,
+    privateKey,
+    ownerAddress: signerAddress,
+    statusIndexer,
+    eventClock: () => 200,
+    async commandRunner({ args }) {
+      calls.push(args);
+      const [command, ...rest] = args;
+
+      if (command === "send" && rest[0] === routerAddress && rest[1] === "finalizeSuccess(bytes32,bytes32,bytes32,uint128)") {
+        return { stdout: "{\"transactionHash\":\"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}\n" };
+      }
+      if (command === "send" && rest[0] === routerAddress && rest[1] === "finalizeFailure(bytes32,bytes32,bytes32)") {
+        return { stdout: "{\"transactionHash\":\"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}\n" };
+      }
+      if (command === "send" && rest[0] === routerAddress && rest[1] === "refundFailedIntent(bytes32,uint128)") {
+        return { stdout: "{\"transactionHash\":\"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}\n" };
+      }
+      if (command === "call" && rest[1] === "previewRefundableAmount(bytes32)(uint128)") {
+        return { stdout: "1000250000000\n" };
+      }
+
+      throw new Error(`unexpected cast call: ${args.join(" ")}`);
+    },
+  });
+
+  const finalized = await adapter.finalizeSuccess({
+    intentId: settledIntentId,
+    outcomeReference: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    resultAssetId: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    resultAmount: 493515000n,
+  });
+  const settledStatus = statusIndexer.getStatus(finalized.intentId);
+
+  assert.equal(finalized.txHash, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+  assert.equal(settledStatus.status, "settled");
+  assert.equal(
+    settledStatus.result.asset,
+    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  );
+  assert.equal(settledStatus.result.amount, 493515000n);
+
+  const failedFinalization = await adapter.finalizeFailure({
+    intentId: failedIntentId,
+    outcomeReference: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    failureReasonHash: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  });
+  const refundable = await adapter.previewRefundableAmount(failedIntentId);
+  const refunded = await adapter.refundFailedIntent({
+    intentId: failedFinalization.intentId,
+    refundAmount: 1000250000000n,
+  });
+  const refundedStatus = statusIndexer.getStatus(refunded.intentId);
+
+  assert.equal(refundable, 1000250000000n);
+  assert.equal(refunded.txHash, "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
+  assert.equal(refundedStatus.status, "refunded");
+  assert.equal(refundedStatus.failureReason, "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+  assert.equal(refundedStatus.refund.asset, "DOT");
+  assert.equal(refundedStatus.refund.amount, 1000250000000n);
+});

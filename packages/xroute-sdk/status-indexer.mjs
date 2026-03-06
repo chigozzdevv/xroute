@@ -425,6 +425,7 @@ function reduceRecord(current, event) {
     case INDEXER_EVENT_TYPES.REFUND_ISSUED:
       return {
         ...next,
+        status: INTENT_STATUSES.REFUNDED,
         refund: {
           asset: event.refundAsset,
           amount: event.refundAmount,

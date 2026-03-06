@@ -19,6 +19,7 @@ export const INTENT_STATUSES = Object.freeze({
   SETTLED: "settled",
   FAILED: "failed",
   CANCELLED: "cancelled",
+  REFUNDED: "refunded",
 });
 
 export const INDEXER_EVENT_TYPES = Object.freeze({
@@ -93,6 +94,15 @@ export function assertAddress(name, value) {
   const normalized = assertHexString(name, value);
   if (normalized.length !== 42) {
     throw new Error(`${name} must be a 20-byte 0x-prefixed hex address`);
+  }
+
+  return normalized;
+}
+
+export function assertBytes32Hex(name, value) {
+  const normalized = assertHexString(name, value);
+  if (normalized.length !== 66) {
+    throw new Error(`${name} must be a 32-byte 0x-prefixed hex value`);
   }
 
   return normalized;

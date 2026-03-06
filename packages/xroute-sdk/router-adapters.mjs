@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import {
   DISPATCH_MODES,
   assertAddress,
+  assertBytes32Hex,
   assertHexString,
   assertIncluded,
   assertNonEmptyString,
@@ -11,19 +12,26 @@ import {
 } from "../xroute-types/index.mjs";
 import { createDispatchEnvelope } from "../xroute-xcm/index.mjs";
 import {
+  createDestinationExecutionFailedEvent,
   createDestinationExecutionStartedEvent,
+  createDestinationExecutionSucceededEvent,
   createIntentDispatchedEvent,
   createIntentSubmittedEvent,
+  createRefundIssuedEvent,
 } from "./status-indexer.mjs";
 
 const execFileAsync = promisify(execFile);
 const SUBMIT_INTENT_SIGNATURE =
   "submitIntent((uint8,address,uint128,uint128,uint128,uint128,uint64,bytes32))";
 const DISPATCH_INTENT_SIGNATURE = "dispatchIntent(bytes32,(uint8,bytes,bytes))";
+const FINALIZE_SUCCESS_SIGNATURE = "finalizeSuccess(bytes32,bytes32,bytes32,uint128)";
+const FINALIZE_FAILURE_SIGNATURE = "finalizeFailure(bytes32,bytes32,bytes32)";
+const REFUND_FAILED_INTENT_SIGNATURE = "refundFailedIntent(bytes32,uint128)";
 const APPROVE_SIGNATURE = "approve(address,uint256)";
 const ALLOWANCE_SIGNATURE = "allowance(address,address)(uint256)";
 const PREVIEW_LOCKED_AMOUNT_SIGNATURE =
   "previewLockedAmount((uint8,address,uint128,uint128,uint128,uint128,uint64,bytes32))(uint128)";
+const PREVIEW_REFUNDABLE_AMOUNT_SIGNATURE = "previewRefundableAmount(bytes32)(uint128)";
 const NEXT_INTENT_NONCE_SIGNATURE = "nextIntentNonce()(uint256)";
 const HASH_INTENT_SIGNATURE = "f(address,uint256,uint8,address,uint128,uint128,uint128,uint128,uint64,bytes32)";
 const HASH_DISPATCH_SIGNATURE = "f(uint8,bytes,bytes)";
@@ -120,7 +128,7 @@ export function createCastRouterAdapter({
   }
 
   async function dispatchIntent({ intentId, request }) {
-    const normalizedIntentId = assertHexString("intentId", intentId);
+    const normalizedIntentId = assertBytes32Hex("intentId", intentId);
     const txHash = await sendTransaction(
       normalizedRouterAddress,
       DISPATCH_INTENT_SIGNATURE,
@@ -161,12 +169,122 @@ export function createCastRouterAdapter({
     };
   }
 
+  async function finalizeSuccess({
+    intentId,
+    outcomeReference,
+    resultAssetId,
+    resultAmount,
+  }) {
+    const normalizedIntentId = assertBytes32Hex("intentId", intentId);
+    const normalizedOutcomeReference = assertBytes32Hex(
+      "outcomeReference",
+      outcomeReference,
+    );
+    const normalizedResultAssetId = assertBytes32Hex("resultAssetId", resultAssetId);
+    const normalizedResultAmount = toUintString(resultAmount);
+    const txHash = await sendTransaction(normalizedRouterAddress, FINALIZE_SUCCESS_SIGNATURE, [
+      normalizedIntentId,
+      normalizedOutcomeReference,
+      normalizedResultAssetId,
+      normalizedResultAmount,
+    ]);
+
+    if (statusIndexer) {
+      statusIndexer.ingest(
+        createDestinationExecutionSucceededEvent({
+          at: eventClock(),
+          sequence: nextSequence++,
+          intentId: normalizedIntentId,
+          resultAsset: normalizedResultAssetId,
+          resultAmount: toBigInt(resultAmount, "resultAmount"),
+          destinationTxHash: normalizedOutcomeReference,
+        }),
+      );
+    }
+
+    return {
+      intentId: normalizedIntentId,
+      txHash,
+      outcomeReference: normalizedOutcomeReference,
+      resultAssetId: normalizedResultAssetId,
+      resultAmount: toBigInt(resultAmount, "resultAmount"),
+    };
+  }
+
+  async function finalizeFailure({ intentId, outcomeReference, failureReasonHash }) {
+    const normalizedIntentId = assertBytes32Hex("intentId", intentId);
+    const normalizedOutcomeReference = assertBytes32Hex(
+      "outcomeReference",
+      outcomeReference,
+    );
+    const normalizedFailureReasonHash = assertBytes32Hex(
+      "failureReasonHash",
+      failureReasonHash,
+    );
+    const txHash = await sendTransaction(normalizedRouterAddress, FINALIZE_FAILURE_SIGNATURE, [
+      normalizedIntentId,
+      normalizedOutcomeReference,
+      normalizedFailureReasonHash,
+    ]);
+
+    if (statusIndexer) {
+      statusIndexer.ingest(
+        createDestinationExecutionFailedEvent({
+          at: eventClock(),
+          sequence: nextSequence++,
+          intentId: normalizedIntentId,
+          reason: normalizedFailureReasonHash,
+        }),
+      );
+    }
+
+    return {
+      intentId: normalizedIntentId,
+      txHash,
+      outcomeReference: normalizedOutcomeReference,
+      failureReasonHash: normalizedFailureReasonHash,
+    };
+  }
+
+  async function refundFailedIntent({ intentId, refundAmount, refundAsset }) {
+    const normalizedIntentId = assertBytes32Hex("intentId", intentId);
+    const normalizedRefundAmount = toBigInt(refundAmount, "refundAmount");
+    const txHash = await sendTransaction(normalizedRouterAddress, REFUND_FAILED_INTENT_SIGNATURE, [
+      normalizedIntentId,
+      normalizedRefundAmount.toString(),
+    ]);
+
+    if (statusIndexer) {
+      statusIndexer.ingest(
+        createRefundIssuedEvent({
+          at: eventClock(),
+          sequence: nextSequence++,
+          intentId: normalizedIntentId,
+          refundAsset: resolveRefundAsset({ intentId: normalizedIntentId, refundAsset }),
+          refundAmount: normalizedRefundAmount,
+        }),
+      );
+    }
+
+    return {
+      intentId: normalizedIntentId,
+      txHash,
+      refundAmount: normalizedRefundAmount,
+    };
+  }
+
   async function previewLockedAmount(request) {
     return readUint256(
       normalizedRouterAddress,
       PREVIEW_LOCKED_AMOUNT_SIGNATURE,
       [formatIntentRequestTuple(request)],
     );
+  }
+
+  async function previewRefundableAmount(intentId) {
+    return readUint256(normalizedRouterAddress, PREVIEW_REFUNDABLE_AMOUNT_SIGNATURE, [
+      assertBytes32Hex("intentId", intentId),
+    ]);
   }
 
   async function ensureAllowance({
@@ -206,7 +324,7 @@ export function createCastRouterAdapter({
       assertHexString("request.executionHash", request.executionHash),
     ]);
 
-    return assertHexString("intentId", await runCast(["keccak", encoded]));
+    return assertBytes32Hex("intentId", await runCast(["keccak", encoded]));
   }
 
   async function computeDispatchExecutionHash(request) {
@@ -218,7 +336,7 @@ export function createCastRouterAdapter({
       assertHexString("request.message", request.message),
     ]);
 
-    return assertHexString("executionHash", await runCast(["keccak", encoded]));
+    return assertBytes32Hex("executionHash", await runCast(["keccak", encoded]));
   }
 
   async function readUint256(contractAddress, signature, args = []) {
@@ -263,9 +381,26 @@ export function createCastRouterAdapter({
   return {
     submitIntent,
     dispatchIntent,
+    finalizeSuccess,
+    finalizeFailure,
+    refundFailedIntent,
     previewLockedAmount,
+    previewRefundableAmount,
     getSignerAddress,
   };
+
+  function resolveRefundAsset({ intentId, refundAsset }) {
+    if (refundAsset) {
+      return assertNonEmptyString("refundAsset", refundAsset);
+    }
+
+    const indexedStatus = statusIndexer?.getStatus?.(intentId);
+    if (indexedStatus?.asset) {
+      return assertNonEmptyString("status.asset", indexedStatus.asset);
+    }
+
+    throw new Error("refundAsset is required when the status indexer has no source asset for the intent");
+  }
 }
 
 export function createStaticAssetAddressResolver(addressesByChain) {

@@ -29,18 +29,8 @@ contract XRouteHubRouterTest is TestBase {
 
     function test_submit_and_dispatch_execute_intent() public {
         bytes memory message = hex"050c000401000003008c864713010000";
-        bytes32 executionHash = keccak256(abi.encode(XRouteHubRouter.DispatchMode.Execute, bytes(""), message));
-
-        XRouteHubRouter.IntentRequest memory request = XRouteHubRouter.IntentRequest({
-            actionType: XRouteHubRouter.ActionType.Swap,
-            asset: address(token),
-            amount: 100 * 10 ** 10,
-            xcmFee: 150_000_000,
-            destinationFee: 100_000_000,
-            minOutputAmount: 490 * 10 ** 6,
-            deadline: uint64(block.timestamp + 1 days),
-            executionHash: executionHash
-        });
+        bytes32 executionHash = _executionHash(XRouteHubRouter.DispatchMode.Execute, "", message);
+        XRouteHubRouter.IntentRequest memory request = _swapIntentRequest(executionHash);
 
         uint256 lockedAmount = router.previewLockedAmount(request);
 
@@ -63,14 +53,14 @@ contract XRouteHubRouterTest is TestBase {
         assertEq(uint256(intent.actionType), uint256(XRouteHubRouter.ActionType.Swap));
         assertEq(uint256(intent.status), uint256(XRouteHubRouter.IntentStatus.Submitted));
         assertEq(intent.executionHash, executionHash);
+        assertEq(intent.outcomeReference, bytes32(0));
+        assertEq(intent.resultAssetId, bytes32(0));
+        assertEq(intent.failureReasonHash, bytes32(0));
+        assertEq(intent.resultAmount, 0);
+        assertEq(intent.refundAmount, 0);
 
         vm.prank(EXECUTOR);
-        router.dispatchIntent(
-            intentId,
-            XRouteHubRouter.DispatchRequest({
-                mode: XRouteHubRouter.DispatchMode.Execute, destination: "", message: message
-            })
-        );
+        router.dispatchIntent(intentId, _dispatchRequest(XRouteHubRouter.DispatchMode.Execute, "", message));
 
         intent = router.getIntent(intentId);
 
@@ -83,7 +73,7 @@ contract XRouteHubRouterTest is TestBase {
 
     function test_cancel_returns_full_locked_amount() public {
         bytes memory message = hex"050c000401000003";
-        bytes32 executionHash = keccak256(abi.encode(XRouteHubRouter.DispatchMode.Send, hex"00010203", message));
+        bytes32 executionHash = _executionHash(XRouteHubRouter.DispatchMode.Send, hex"00010203", message);
 
         XRouteHubRouter.IntentRequest memory request = XRouteHubRouter.IntentRequest({
             actionType: XRouteHubRouter.ActionType.Transfer,
@@ -115,18 +105,12 @@ contract XRouteHubRouterTest is TestBase {
 
     function test_dispatch_reverts_for_uncommitted_payload() public {
         bytes memory message = hex"050c00";
-        bytes32 executionHash = keccak256(abi.encode(XRouteHubRouter.DispatchMode.Execute, bytes(""), message));
-
-        XRouteHubRouter.IntentRequest memory request = XRouteHubRouter.IntentRequest({
-            actionType: XRouteHubRouter.ActionType.Swap,
-            asset: address(token),
-            amount: 10 * 10 ** 10,
-            xcmFee: 10_000_000,
-            destinationFee: 10_000_000,
-            minOutputAmount: 1,
-            deadline: uint64(block.timestamp + 1 days),
-            executionHash: executionHash
-        });
+        bytes32 executionHash = _executionHash(XRouteHubRouter.DispatchMode.Execute, "", message);
+        XRouteHubRouter.IntentRequest memory request = _swapIntentRequest(executionHash);
+        request.amount = 10 * 10 ** 10;
+        request.xcmFee = 10_000_000;
+        request.destinationFee = 10_000_000;
+        request.minOutputAmount = 1;
 
         vm.prank(ALICE);
         bytes32 intentId = router.submitIntent(request);
@@ -139,5 +123,118 @@ contract XRouteHubRouterTest is TestBase {
                 mode: XRouteHubRouter.DispatchMode.Execute, destination: "", message: hex"1234"
             })
         );
+    }
+
+    function test_finalize_success_records_settlement_onchain() public {
+        bytes memory message = hex"050c000401000003008c864713010000";
+        bytes32 intentId = _submitAndDispatchSwap(message);
+        bytes32 outcomeReference = keccak256("hydration-settlement-1");
+        bytes32 resultAssetId = keccak256("USDT");
+
+        vm.prank(EXECUTOR);
+        router.finalizeSuccess(intentId, outcomeReference, resultAssetId, 493_515_000);
+
+        XRouteHubRouter.IntentRecord memory intent = router.getIntent(intentId);
+        assertEq(uint256(intent.status), uint256(XRouteHubRouter.IntentStatus.Settled));
+        assertEq(intent.outcomeReference, outcomeReference);
+        assertEq(intent.resultAssetId, resultAssetId);
+        assertEq(intent.resultAmount, 493_515_000);
+        assertEq(intent.failureReasonHash, bytes32(0));
+        assertEq(router.previewRefundableAmount(intentId), 0);
+
+        vm.prank(EXECUTOR);
+        vm.expectRevert(XRouteHubRouter.InvalidIntentStatus.selector);
+        router.finalizeFailure(intentId, keccak256("second-outcome"), keccak256("should-not-work"));
+    }
+
+    function test_finalize_failure_and_refund_record_onchain() public {
+        bytes memory message = hex"050c000401000003008c864713010000";
+        bytes32 intentId = _submitAndDispatchSwap(message);
+        bytes32 outcomeReference = keccak256("hydration-failure-1");
+        bytes32 failureReasonHash = keccak256("slippage-exceeded");
+
+        vm.prank(EXECUTOR);
+        router.finalizeFailure(intentId, outcomeReference, failureReasonHash);
+
+        XRouteHubRouter.IntentRecord memory failedIntent = router.getIntent(intentId);
+        assertEq(uint256(failedIntent.status), uint256(XRouteHubRouter.IntentStatus.Failed));
+        assertEq(failedIntent.outcomeReference, outcomeReference);
+        assertEq(failedIntent.failureReasonHash, failureReasonHash);
+        assertEq(router.previewRefundableAmount(intentId), 1_000_250_000_000);
+
+        vm.prank(EXECUTOR);
+        router.refundFailedIntent(intentId, 1_000_250_000_000);
+
+        XRouteHubRouter.IntentRecord memory refundedIntent = router.getIntent(intentId);
+        assertEq(uint256(refundedIntent.status), uint256(XRouteHubRouter.IntentStatus.Refunded));
+        assertEq(refundedIntent.refundAmount, 1_000_250_000_000);
+        assertEq(token.balanceOf(ALICE), 20_000_000_000_000 - 1_000_000_000);
+        assertEq(token.balanceOf(address(router)), 0);
+        assertEq(token.balanceOf(TREASURY), 1_000_000_000);
+    }
+
+    function test_finalize_success_reverts_below_min_output() public {
+        bytes memory message = hex"050c000401000003008c864713010000";
+        bytes32 intentId = _submitAndDispatchSwap(message);
+
+        vm.prank(EXECUTOR);
+        vm.expectRevert(XRouteHubRouter.InsufficientResultAmount.selector);
+        router.finalizeSuccess(intentId, keccak256("hydration-settlement-2"), keccak256("USDT"), 489_999_999);
+    }
+
+    function test_refund_reverts_above_refundable_amount() public {
+        bytes memory message = hex"050c000401000003008c864713010000";
+        bytes32 intentId = _submitAndDispatchSwap(message);
+
+        vm.prank(EXECUTOR);
+        router.finalizeFailure(intentId, keccak256("hydration-failure-2"), keccak256("remote-execution-failed"));
+
+        vm.prank(EXECUTOR);
+        vm.expectRevert(XRouteHubRouter.InvalidRefundAmount.selector);
+        router.refundFailedIntent(intentId, 1_000_250_000_001);
+    }
+
+    function _submitAndDispatchSwap(bytes memory message) internal returns (bytes32 intentId) {
+        bytes32 executionHash = _executionHash(XRouteHubRouter.DispatchMode.Execute, "", message);
+        XRouteHubRouter.IntentRequest memory request = _swapIntentRequest(executionHash);
+
+        vm.prank(ALICE);
+        intentId = router.submitIntent(request);
+
+        vm.prank(EXECUTOR);
+        router.dispatchIntent(intentId, _dispatchRequest(XRouteHubRouter.DispatchMode.Execute, "", message));
+    }
+
+    function _swapIntentRequest(bytes32 executionHash)
+        internal
+        view
+        returns (XRouteHubRouter.IntentRequest memory)
+    {
+        return XRouteHubRouter.IntentRequest({
+            actionType: XRouteHubRouter.ActionType.Swap,
+            asset: address(token),
+            amount: 100 * 10 ** 10,
+            xcmFee: 150_000_000,
+            destinationFee: 100_000_000,
+            minOutputAmount: 490 * 10 ** 6,
+            deadline: uint64(block.timestamp + 1 days),
+            executionHash: executionHash
+        });
+    }
+
+    function _dispatchRequest(XRouteHubRouter.DispatchMode mode, bytes memory destination, bytes memory message)
+        internal
+        pure
+        returns (XRouteHubRouter.DispatchRequest memory)
+    {
+        return XRouteHubRouter.DispatchRequest({mode: mode, destination: destination, message: message});
+    }
+
+    function _executionHash(XRouteHubRouter.DispatchMode mode, bytes memory destination, bytes memory message)
+        internal
+        pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encode(mode, destination, message));
     }
 }

@@ -21,7 +21,10 @@ contract XRouteHubRouter {
         None,
         Submitted,
         Dispatched,
-        Cancelled
+        Settled,
+        Failed,
+        Cancelled,
+        Refunded
     }
 
     struct IntentRequest {
@@ -53,6 +56,11 @@ contract XRouteHubRouter {
         ActionType actionType;
         IntentStatus status;
         bytes32 executionHash;
+        bytes32 outcomeReference;
+        bytes32 resultAssetId;
+        bytes32 failureReasonHash;
+        uint128 resultAmount;
+        uint128 refundAmount;
     }
 
     error ZeroAddress();
@@ -65,7 +73,12 @@ contract XRouteHubRouter {
     error IntentExpired();
     error InvalidIntentStatus();
     error InvalidDispatchPayload();
+    error InvalidOutcomeReference();
+    error InvalidFailureReason();
+    error InvalidRefundAmount();
+    error InsufficientResultAmount();
     error AssetTransferFailed();
+    error ReentrantCall();
 
     event IntentSubmitted(
         bytes32 indexed intentId,
@@ -76,7 +89,12 @@ contract XRouteHubRouter {
         uint128 totalLocked
     );
     event IntentDispatched(bytes32 indexed intentId, DispatchMode mode, uint64 refTime, uint64 proofSize);
+    event IntentSettled(
+        bytes32 indexed intentId, bytes32 indexed outcomeReference, bytes32 resultAssetId, uint128 resultAmount
+    );
+    event IntentFailed(bytes32 indexed intentId, bytes32 indexed outcomeReference, bytes32 failureReasonHash);
     event IntentCancelled(bytes32 indexed intentId);
+    event IntentRefunded(bytes32 indexed intentId, uint128 refundAmount);
     event ExecutorUpdated(address indexed executor);
     event TreasuryUpdated(address indexed treasury);
     event PlatformFeeUpdated(uint16 feeBps);
@@ -91,6 +109,7 @@ contract XRouteHubRouter {
     address public treasury;
     uint16 public platformFeeBps;
     uint256 public nextIntentNonce;
+    uint256 private reentrancyLock;
 
     mapping(bytes32 intentId => IntentRecord) public intents;
 
@@ -104,6 +123,13 @@ contract XRouteHubRouter {
         _;
     }
 
+    modifier nonReentrant() {
+        if (reentrancyLock == 1) revert ReentrantCall();
+        reentrancyLock = 1;
+        _;
+        reentrancyLock = 0;
+    }
+
     constructor(address xcmPrecompile, address initialExecutor, address initialTreasury, uint16 feeBps) {
         if (xcmPrecompile == address(0) || initialExecutor == address(0) || initialTreasury == address(0)) {
             revert ZeroAddress();
@@ -115,6 +141,7 @@ contract XRouteHubRouter {
         executor = initialExecutor;
         treasury = initialTreasury;
         platformFeeBps = feeBps;
+        reentrancyLock = 0;
 
         emit OwnershipTransferred(address(0), msg.sender);
         emit ExecutorUpdated(initialExecutor);
@@ -122,7 +149,7 @@ contract XRouteHubRouter {
         emit PlatformFeeUpdated(feeBps);
     }
 
-    function submitIntent(IntentRequest calldata request) external returns (bytes32 intentId) {
+    function submitIntent(IntentRequest calldata request) external nonReentrant returns (bytes32 intentId) {
         if (request.asset == address(0)) revert ZeroAddress();
         if (request.amount == 0) revert InvalidAmount();
         if (request.deadline <= block.timestamp) revert InvalidDeadline();
@@ -157,7 +184,12 @@ contract XRouteHubRouter {
             deadline: request.deadline,
             actionType: request.actionType,
             status: IntentStatus.Submitted,
-            executionHash: request.executionHash
+            executionHash: request.executionHash,
+            outcomeReference: bytes32(0),
+            resultAssetId: bytes32(0),
+            failureReasonHash: bytes32(0),
+            resultAmount: 0,
+            refundAmount: 0
         });
 
         _safeTransferFrom(request.asset, msg.sender, address(this), totalLocked);
@@ -165,7 +197,7 @@ contract XRouteHubRouter {
         emit IntentSubmitted(intentId, msg.sender, request.asset, request.actionType, request.amount, totalLocked);
     }
 
-    function dispatchIntent(bytes32 intentId, DispatchRequest calldata request) external onlyExecutor {
+    function dispatchIntent(bytes32 intentId, DispatchRequest calldata request) external onlyExecutor nonReentrant {
         IntentRecord storage intent = intents[intentId];
         if (intent.owner == address(0)) revert IntentNotFound();
         if (intent.status != IntentStatus.Submitted) revert InvalidIntentStatus();
@@ -191,7 +223,65 @@ contract XRouteHubRouter {
         emit IntentDispatched(intentId, request.mode, 0, 0);
     }
 
-    function cancelIntent(bytes32 intentId) external {
+    function finalizeSuccess(bytes32 intentId, bytes32 outcomeReference, bytes32 resultAssetId, uint128 resultAmount)
+        external
+        onlyExecutor
+        nonReentrant
+    {
+        IntentRecord storage intent = intents[intentId];
+        if (intent.owner == address(0)) revert IntentNotFound();
+        if (intent.status != IntentStatus.Dispatched) revert InvalidIntentStatus();
+        if (outcomeReference == bytes32(0)) revert InvalidOutcomeReference();
+        if (resultAmount < intent.minOutputAmount) revert InsufficientResultAmount();
+
+        intent.status = IntentStatus.Settled;
+        intent.outcomeReference = outcomeReference;
+        intent.resultAssetId = resultAssetId;
+        intent.failureReasonHash = bytes32(0);
+        intent.resultAmount = resultAmount;
+        intent.refundAmount = 0;
+
+        emit IntentSettled(intentId, outcomeReference, resultAssetId, resultAmount);
+    }
+
+    function finalizeFailure(bytes32 intentId, bytes32 outcomeReference, bytes32 failureReasonHash)
+        external
+        onlyExecutor
+        nonReentrant
+    {
+        IntentRecord storage intent = intents[intentId];
+        if (intent.owner == address(0)) revert IntentNotFound();
+        if (intent.status != IntentStatus.Dispatched) revert InvalidIntentStatus();
+        if (outcomeReference == bytes32(0)) revert InvalidOutcomeReference();
+        if (failureReasonHash == bytes32(0)) revert InvalidFailureReason();
+
+        intent.status = IntentStatus.Failed;
+        intent.outcomeReference = outcomeReference;
+        intent.resultAssetId = bytes32(0);
+        intent.failureReasonHash = failureReasonHash;
+        intent.resultAmount = 0;
+        intent.refundAmount = 0;
+
+        emit IntentFailed(intentId, outcomeReference, failureReasonHash);
+    }
+
+    function refundFailedIntent(bytes32 intentId, uint128 refundAmount) external onlyExecutor nonReentrant {
+        IntentRecord storage intent = intents[intentId];
+        if (intent.owner == address(0)) revert IntentNotFound();
+        if (intent.status != IntentStatus.Failed) revert InvalidIntentStatus();
+
+        uint128 refundableAmount = _refundableAmount(intent);
+        if (refundAmount == 0 || refundAmount > refundableAmount) revert InvalidRefundAmount();
+
+        intent.status = IntentStatus.Refunded;
+        intent.refundAmount = refundAmount;
+
+        _safeTransfer(intent.asset, intent.owner, refundAmount);
+
+        emit IntentRefunded(intentId, refundAmount);
+    }
+
+    function cancelIntent(bytes32 intentId) external nonReentrant {
         IntentRecord storage intent = intents[intentId];
         if (intent.owner == address(0)) revert IntentNotFound();
         if (intent.status != IntentStatus.Submitted) revert InvalidIntentStatus();
@@ -244,11 +334,26 @@ contract XRouteHubRouter {
         return request.amount + request.xcmFee + request.destinationFee + _platformFee(request.amount);
     }
 
+    function previewRefundableAmount(bytes32 intentId) external view returns (uint128) {
+        IntentRecord storage intent = intents[intentId];
+        if (intent.owner == address(0)) revert IntentNotFound();
+        if (intent.status != IntentStatus.Failed) {
+            return 0;
+        }
+
+        return _refundableAmount(intent);
+    }
+
     function _platformFee(uint128 amount) internal view returns (uint128) {
         if (amount == 0 || platformFeeBps == 0) return 0;
 
         uint128 fee = uint128((uint256(amount) * platformFeeBps) / 10_000);
         return fee == 0 ? 1 : fee;
+    }
+
+    function _refundableAmount(IntentRecord storage intent) internal view returns (uint128) {
+        uint128 lockedNetAmount = intent.amount + intent.xcmFee + intent.destinationFee;
+        return lockedNetAmount - intent.refundAmount;
     }
 
     function _safeTransfer(address asset, address to, uint256 amount) internal {

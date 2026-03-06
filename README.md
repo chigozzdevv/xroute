@@ -227,6 +227,31 @@ console.log(execution.submitted.intentId);
 console.log(client.getStatus(execution.submitted.intentId));
 ```
 
+Final outcomes can now be written back to the router onchain:
+
+```js
+await client.settle({
+  intentId: execution.submitted.intentId,
+  outcomeReference: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  resultAssetId: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  resultAmount: 493515000n,
+});
+
+await client.fail({
+  intentId: execution.submitted.intentId,
+  outcomeReference: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  failureReasonHash: "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+});
+
+await client.refund({
+  intentId: execution.submitted.intentId,
+  refundAmount: 1000250000000n,
+  refundAsset: "DOT",
+});
+```
+
+`outcomeReference`, `resultAssetId`, and `failureReasonHash` are 32-byte hex identifiers emitted by your relayer/backend. The router now persists `submitted`, `dispatched`, `settled`, `failed`, `cancelled`, and `refunded` states onchain.
+
 For a hosted quote service instead of the local Rust binary:
 
 ```js
@@ -250,8 +275,10 @@ const quoteProvider = createHttpQuoteProvider({
   - performs real EVM writes with `cast`
   - auto-approves the input asset when needed
   - computes deterministic intent ids using the same hash path as the contract
+  - exposes `finalizeSuccess`, `finalizeFailure`, and `refundFailedIntent` for onchain final state recording
 - `FileBackedStatusIndexer`
   - persists indexed status events to disk and reloads them on restart
+  - acts as an offchain cache/projection; the router contract is the onchain source of truth for final states
 - `createStaticAssetAddressResolver(...)`
   - resolves source-chain asset contract addresses for router submission
 

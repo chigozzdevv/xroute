@@ -119,11 +119,51 @@ export function createXRouteClient({
     };
   }
 
+  async function settleIntent({ intentId, outcomeReference, resultAssetId, resultAmount }) {
+    if (!routerAdapter.finalizeSuccess) {
+      throw new Error("routerAdapter.finalizeSuccess is required for settle");
+    }
+
+    return routerAdapter.finalizeSuccess({
+      intentId,
+      outcomeReference,
+      resultAssetId,
+      resultAmount,
+    });
+  }
+
+  async function failIntent({ intentId, outcomeReference, failureReasonHash }) {
+    if (!routerAdapter.finalizeFailure) {
+      throw new Error("routerAdapter.finalizeFailure is required for fail");
+    }
+
+    return routerAdapter.finalizeFailure({
+      intentId,
+      outcomeReference,
+      failureReasonHash,
+    });
+  }
+
+  async function refundIntent({ intentId, refundAmount, refundAsset }) {
+    if (!routerAdapter.refundFailedIntent) {
+      throw new Error("routerAdapter.refundFailedIntent is required for refund");
+    }
+
+    return routerAdapter.refundFailedIntent({
+      intentId,
+      refundAmount,
+      refundAsset,
+    });
+  }
+
   return {
     quote: quoteIntent,
     submit: submitIntent,
     dispatch: dispatchIntent,
     execute: executeIntent,
+    settle: settleIntent,
+    fail: failIntent,
+    refund: refundIntent,
 
     getStatus(intentId) {
       return statusProvider.getStatus(intentId);

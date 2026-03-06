@@ -63,7 +63,7 @@ test("status indexer tracks a failed execution and refund timeline", () => {
 
   const status = indexer.getStatus("intent-1");
 
-  assert.equal(status.status, "failed");
+  assert.equal(status.status, "refunded");
   assert.equal(status.failureReason, "slippage exceeded");
   assert.equal(status.refund.asset, "DOT");
   assert.equal(status.refund.amount, 1000125000000n);
