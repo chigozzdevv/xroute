@@ -2,6 +2,7 @@ use route_engine::{
     AssetAmount, AssetKey, CallIntent, ChainKey, DeploymentProfile, DestinationAdapter,
     EngineSettings, FeeType, Intent, IntentAction, PlanStep, RouteEngine, RouteRegistry,
     StakeIntent, SubmissionAction, SwapIntent, TransferIntent, XcmInstruction, XcmWeight,
+    lookup_destination_adapter_deployment,
 };
 
 #[test]
@@ -90,7 +91,7 @@ fn quotes_hydration_swap_over_a_multihop_path() {
         inner_transfer.remote_instructions()[1],
         XcmInstruction::Transact {
             adapter: DestinationAdapter::HydrationSwapV1,
-            target_address: "0x0000000000000000000000000000000000001001".to_owned(),
+            target_address: local_adapter_address(DestinationAdapter::HydrationSwapV1).to_owned(),
             contract_call: inner_transfer.remote_instructions()[1]
                 .contract_call()
                 .expect("swap contract call")
@@ -257,7 +258,7 @@ fn quotes_hydration_stake_over_a_multihop_path() {
         inner_transfer.remote_instructions()[1],
         XcmInstruction::Transact {
             adapter: DestinationAdapter::HydrationStakeV1,
-            target_address: "0x0000000000000000000000000000000000001002".to_owned(),
+            target_address: local_adapter_address(DestinationAdapter::HydrationStakeV1).to_owned(),
             contract_call: inner_transfer.remote_instructions()[1]
                 .contract_call()
                 .expect("stake contract call")
@@ -317,7 +318,7 @@ fn quotes_hydration_call_over_a_multihop_path() {
         inner_transfer.remote_instructions()[1],
         XcmInstruction::Transact {
             adapter: DestinationAdapter::HydrationCallV1,
-            target_address: "0x0000000000000000000000000000000000001003".to_owned(),
+            target_address: local_adapter_address(DestinationAdapter::HydrationCallV1).to_owned(),
             contract_call: inner_transfer.remote_instructions()[1]
                 .contract_call()
                 .expect("call contract call")
@@ -370,10 +371,25 @@ fn quotes_hydration_swap_against_testnet_deployments() {
     );
     match &inner_transfer.remote_instructions()[1] {
         XcmInstruction::Transact { target_address, .. } => {
-            assert_eq!(target_address, "0x0000000000000000000000000000000000002001");
+            assert_eq!(
+                target_address,
+                testnet_adapter_address(DestinationAdapter::HydrationSwapV1)
+            );
         }
         other => panic!("unexpected instruction: {other:?}"),
     }
+}
+
+fn local_adapter_address(adapter: DestinationAdapter) -> &'static str {
+    lookup_destination_adapter_deployment(adapter, ChainKey::Hydration, DeploymentProfile::Local)
+        .expect("local deployment")
+        .address
+}
+
+fn testnet_adapter_address(adapter: DestinationAdapter) -> &'static str {
+    lookup_destination_adapter_deployment(adapter, ChainKey::Hydration, DeploymentProfile::Testnet)
+        .expect("testnet deployment")
+        .address
 }
 
 trait InstructionExt {

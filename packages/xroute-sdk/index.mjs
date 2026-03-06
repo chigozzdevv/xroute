@@ -405,7 +405,10 @@ function execSerializedCommand({
 }
 
 export {
+  createCastTransactDispatcher,
   createCastRouterAdapter,
+  encodeAssetIdSymbol,
+  findFirstTransactInstruction,
   createStaticAssetAddressResolver,
 } from "./router-adapters.mjs";
 export {

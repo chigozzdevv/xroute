@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 
 import { ACTION_TYPES, DISPATCH_MODES } from "../xroute-types/index.mjs";
 import {
@@ -38,33 +38,34 @@ export const DISPATCH_MODE_TO_CONTRACT_ENUM = Object.freeze({
   [DISPATCH_MODES.SEND]: 1,
 });
 
-const GENERATED_DESTINATION_ADAPTER_SPECS = JSON.parse(readFileSync(
-  new URL("./generated/destination-adapter-specs.json", import.meta.url),
-  "utf8",
-));
-const GENERATED_DESTINATION_ADAPTER_DEPLOYMENTS = JSON.parse(readFileSync(
-  new URL("./generated/destination-adapter-deployments.json", import.meta.url),
-  "utf8",
-));
+const GENERATED_DESTINATION_ADAPTER_SPECS_PATH = new URL(
+  "./generated/destination-adapter-specs.json",
+  import.meta.url,
+);
+const GENERATED_DESTINATION_ADAPTER_DEPLOYMENTS_PATH = new URL(
+  "./generated/destination-adapter-deployments.json",
+  import.meta.url,
+);
 
-export const DESTINATION_TRANSACT_DISPATCH = Object.freeze({
-  interfaceContract: assertNonEmptyString(
-    "dispatch.interfaceContract",
-    GENERATED_DESTINATION_ADAPTER_SPECS.dispatch.interfaceContract,
-  ),
-  signature: assertNonEmptyString(
-    "dispatch.signature",
-    GENERATED_DESTINATION_ADAPTER_SPECS.dispatch.signature,
-  ),
-  selector: normalizeSelector(GENERATED_DESTINATION_ADAPTER_SPECS.dispatch.selector),
-});
+const manifestCache = {
+  specsManifest: { mtimeMs: -1, value: null },
+  deploymentsManifest: { mtimeMs: -1, value: null },
+  specsMap: { mtimeMs: -1, value: null },
+  deploymentsMap: { mtimeMs: -1, value: null },
+  dispatchSpec: { mtimeMs: -1, value: null },
+};
 
-export const DESTINATION_ADAPTER_SPECS = Object.freeze(parseDestinationAdapterSpecs());
-export const DESTINATION_ADAPTER_DEPLOYMENTS = Object.freeze(parseDestinationAdapterDeployments());
+export const DESTINATION_TRANSACT_DISPATCH = createLiveObjectProxy(
+  getDestinationTransactDispatch,
+);
+export const DESTINATION_ADAPTER_SPECS = createLiveObjectProxy(getDestinationAdapterSpecsMap);
+export const DESTINATION_ADAPTER_DEPLOYMENTS = createLiveObjectProxy(
+  getDestinationAdapterDeploymentsMap,
+);
 
 export function getDestinationAdapterSpec(adapterId) {
   const normalized = assertNonEmptyString("adapterId", adapterId);
-  const spec = DESTINATION_ADAPTER_SPECS[normalized];
+  const spec = getDestinationAdapterSpecsMap()[normalized];
   if (!spec) {
     throw new Error(`unsupported destination adapter: ${normalized}`);
   }
@@ -89,7 +90,7 @@ export function getDestinationAdapterDeployment(
   const normalizedChainKey = assertNonEmptyString("chainKey", chainKey);
   const normalizedDeploymentProfile = normalizeDeploymentProfile(deploymentProfile);
   const deployment =
-    DESTINATION_ADAPTER_DEPLOYMENTS[
+    getDestinationAdapterDeploymentsMap()[
       `${normalizedAdapterId}:${normalizedChainKey}:${normalizedDeploymentProfile}`
     ];
 
@@ -102,8 +103,34 @@ export function getDestinationAdapterDeployment(
   return deployment;
 }
 
-function parseDestinationAdapterSpecs() {
-  const entries = GENERATED_DESTINATION_ADAPTER_SPECS.adapters.map((spec) => {
+function getDestinationTransactDispatch() {
+  const manifest = loadSpecsManifest();
+  const cache = manifestCache.dispatchSpec;
+  if (cache.value && cache.mtimeMs === manifestCache.specsManifest.mtimeMs) {
+    return cache.value;
+  }
+
+  cache.mtimeMs = manifestCache.specsManifest.mtimeMs;
+  cache.value = Object.freeze({
+    interfaceContract: assertNonEmptyString(
+      "dispatch.interfaceContract",
+      manifest.dispatch.interfaceContract,
+    ),
+    signature: assertNonEmptyString("dispatch.signature", manifest.dispatch.signature),
+    selector: normalizeSelector(manifest.dispatch.selector),
+  });
+
+  return cache.value;
+}
+
+function getDestinationAdapterSpecsMap() {
+  const manifest = loadSpecsManifest();
+  const cache = manifestCache.specsMap;
+  if (cache.value && cache.mtimeMs === manifestCache.specsManifest.mtimeMs) {
+    return cache.value;
+  }
+
+  const entries = manifest.adapters.map((spec) => {
     const adapterId = assertNonEmptyString("adapterId", spec.id);
     return [
       adapterId,
@@ -124,11 +151,19 @@ function parseDestinationAdapterSpecs() {
     ];
   });
 
-  return Object.fromEntries(entries);
+  cache.mtimeMs = manifestCache.specsManifest.mtimeMs;
+  cache.value = Object.freeze(Object.fromEntries(entries));
+  return cache.value;
 }
 
-function parseDestinationAdapterDeployments() {
-  const entries = GENERATED_DESTINATION_ADAPTER_DEPLOYMENTS.deployments.map((deployment) => {
+function getDestinationAdapterDeploymentsMap() {
+  const manifest = loadDeploymentsManifest();
+  const cache = manifestCache.deploymentsMap;
+  if (cache.value && cache.mtimeMs === manifestCache.deploymentsManifest.mtimeMs) {
+    return cache.value;
+  }
+
+  const entries = manifest.deployments.map((deployment) => {
     const normalizedAdapterId = assertNonEmptyString("adapterId", deployment.adapterId);
     const normalizedChainKey = assertNonEmptyString("chainKey", deployment.chainKey);
     const normalizedDeploymentProfile = normalizeDeploymentProfile(
@@ -150,7 +185,59 @@ function parseDestinationAdapterDeployments() {
     ];
   });
 
-  return Object.fromEntries(entries);
+  cache.mtimeMs = manifestCache.deploymentsManifest.mtimeMs;
+  cache.value = Object.freeze(Object.fromEntries(entries));
+  return cache.value;
+}
+
+function loadSpecsManifest() {
+  return readCachedJson(
+    GENERATED_DESTINATION_ADAPTER_SPECS_PATH,
+    manifestCache.specsManifest,
+  );
+}
+
+function loadDeploymentsManifest() {
+  return readCachedJson(
+    GENERATED_DESTINATION_ADAPTER_DEPLOYMENTS_PATH,
+    manifestCache.deploymentsManifest,
+  );
+}
+
+function readCachedJson(path, cache) {
+  const mtimeMs = statSync(path).mtimeMs;
+  if (!cache.value || cache.mtimeMs !== mtimeMs) {
+    cache.mtimeMs = mtimeMs;
+    cache.value = JSON.parse(readFileSync(path, "utf8"));
+  }
+
+  return cache.value;
+}
+
+function createLiveObjectProxy(loader) {
+  return new Proxy(Object.create(null), {
+    get(_target, property) {
+      return loader()[property];
+    },
+    has(_target, property) {
+      return property in loader();
+    },
+    ownKeys() {
+      return Reflect.ownKeys(loader());
+    },
+    getOwnPropertyDescriptor(_target, property) {
+      const value = loader()[property];
+      if (value === undefined) {
+        return undefined;
+      }
+
+      return {
+        configurable: true,
+        enumerable: true,
+        value,
+      };
+    },
+  });
 }
 
 function normalizeSelector(selector) {

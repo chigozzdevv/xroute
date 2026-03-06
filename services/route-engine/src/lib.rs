@@ -6,6 +6,7 @@ mod manifest_json;
 mod model;
 mod registry;
 
+pub use adapter_deployments::lookup_destination_adapter_deployment;
 pub use engine::{EngineSettings, RouteEngine};
 pub use error::RouteError;
 pub use model::{

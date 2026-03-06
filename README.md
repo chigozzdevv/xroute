@@ -203,6 +203,7 @@ Requirements:
 - `Node.js 20+`
 - `cargo`
 - `forge` and `cast`
+- `anvil` for local live deployment and SDK e2e runs
 
 Install and verify the repo:
 
@@ -221,6 +222,13 @@ npm run build:sdk-package
 npm run build
 ```
 
+Live local deployment and e2e verification:
+
+```bash
+npm run deploy:local-devnet
+npm run test:devnet
+```
+
 The SDK package is built from:
 
 - [packages/xroute-sdk/package.json](/Users/chigozzdev/Desktop/xroute/packages/xroute-sdk/package.json)
@@ -230,6 +238,67 @@ Dry-run packing:
 ```bash
 npm pack --dry-run ./packages/xroute-sdk
 ```
+
+## Deployment
+
+The deployment tooling now has two layers:
+
+- `scripts/deploy-stack.mjs`
+  - profile-aware stack deployment for `local`, `testnet`, or `mainnet`
+- `scripts/deploy-local-devnet.mjs`
+  - local wrapper that deploys the full devnet stack and writes the local stack artifact
+
+Deployment commands:
+
+```bash
+npm run deploy:local-devnet
+npm run deploy:stack
+npm run deploy:testnet
+npm run deploy:mainnet
+```
+
+Important environment variables:
+
+- `XROUTE_RPC_URL`
+  - target EVM RPC for the deployment
+- `XROUTE_PRIVATE_KEY`
+  - deployer key used by `forge create` and `cast send`
+- `XROUTE_DEPLOYMENT_PROFILE`
+  - `local`, `testnet`, or `mainnet`
+- `XROUTE_XCM_ADDRESS`
+  - override the XCM precompile address for non-local deployments
+- `XROUTE_ROUTER_EXECUTOR`
+  - executor allowed to dispatch and finalize intents on the Hub router
+- `XROUTE_ROUTER_TREASURY`
+  - treasury that receives platform fees
+- `XROUTE_PLATFORM_FEE_BPS`
+  - router platform fee in basis points
+- `XROUTE_STACK_OUTPUT_PATH`
+  - optional output file for the deployed stack summary
+
+Local deployment behavior:
+
+- deploys `DevnetXcm`
+- deploys local `DOT`, `USDT`, and `HDX` devnet tokens
+- deploys the dispatcher, Hydration executors, Hydration adapters, and Hub router
+- configures swap pairs and token minter roles
+- regenerates the local adapter deployment manifest from the actual deployed addresses
+
+Generated local stack output:
+
+- [contracts/polkadot-hub-router/devnet](/Users/chigozzdev/Desktop/xroute/contracts/polkadot-hub-router/devnet)
+  - runtime deployment artifacts live here and are ignored by git
+
+Published adapter deployments consumed by the SDK:
+
+- [destination-adapter-deployments.json](/Users/chigozzdev/Desktop/xroute/packages/xroute-precompile-interfaces/generated/destination-adapter-deployments.json)
+
+Current verification status:
+
+- `local`
+  - deployed and exercised end to end through the SDK
+- `testnet` and `mainnet`
+  - deployment scripts are wired, but this repo does not contain a broadcasted live deployment yet
 
 ## SDK Usage
 

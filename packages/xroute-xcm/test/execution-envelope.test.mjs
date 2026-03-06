@@ -9,7 +9,10 @@ import {
   createSwapIntent,
   createTransferIntent,
 } from "../../xroute-intents/index.mjs";
-import { DEPLOYMENT_PROFILES } from "../../xroute-precompile-interfaces/index.mjs";
+import {
+  DEPLOYMENT_PROFILES,
+  getDestinationAdapterDeployment,
+} from "../../xroute-precompile-interfaces/index.mjs";
 import { createRouteEngineQuoteProvider } from "../../xroute-sdk/index.mjs";
 import { buildExecutionEnvelope, getDefaultXcmCodecContext } from "../index.mjs";
 
@@ -87,7 +90,7 @@ test("buildExecutionEnvelope encodes the hydration swap adapter path", async () 
   assert.ok(toHex(remoteInstructions[1].value.call).startsWith("0x00986153"));
   assert.ok(
     toHex(remoteInstructions[1].value.call).includes(
-      "0000000000000000000000000000000000000000000000000000000000001001",
+      expectedAddressWord("hydration-swap-v1", "local"),
     ),
   );
 });
@@ -116,7 +119,7 @@ test("buildExecutionEnvelope encodes the hydration stake adapter path", async ()
   assert.ok(toHex(remoteInstructions[1].value.call).startsWith("0x00986153"));
   assert.ok(
     toHex(remoteInstructions[1].value.call).includes(
-      "0000000000000000000000000000000000000000000000000000000000001002",
+      expectedAddressWord("hydration-stake-v1", "local"),
     ),
   );
 });
@@ -145,7 +148,7 @@ test("buildExecutionEnvelope encodes the hydration generic call adapter path", a
   assert.ok(toHex(remoteInstructions[1].value.call).startsWith("0x00986153"));
   assert.ok(
     toHex(remoteInstructions[1].value.call).includes(
-      "0000000000000000000000000000000000000000000000000000000000001003",
+      expectedAddressWord("hydration-call-v1", "local"),
     ),
   );
 });
@@ -173,7 +176,7 @@ test("buildExecutionEnvelope selects the published testnet adapter deployment", 
 
   assert.ok(
     toHex(remoteInstructions[1].value.call).includes(
-      "0000000000000000000000000000000000000000000000000000000000002001",
+      expectedAddressWord("hydration-swap-v1", "testnet"),
     ),
   );
 });
@@ -193,37 +196,6 @@ test("buildExecutionEnvelope rejects a transact payload with a mismatched publis
       recipient: aliceAddress,
     },
   });
-
-test("buildExecutionEnvelope encodes a hydration swap that settles on asset hub", async () => {
-  const intent = createSwapIntent({
-    sourceChain: "polkadot-hub",
-    destinationChain: "hydration",
-    refundAddress: bobAddress,
-    deadline: 1_773_185_200,
-    params: {
-      assetIn: "DOT",
-      assetOut: "USDT",
-      amountIn: "1000000000000",
-      minAmountOut: "493000000",
-      settlementChain: "asset-hub",
-      recipient: aliceAddress,
-    },
-  });
-  const quote = await quoteProvider.quote(intent);
-
-  const envelope = buildExecutionEnvelope({ intent, quote });
-  const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
-  const remoteInstructions = hydrationRemoteInstructions(decoded);
-
-  assert.equal(remoteInstructions.length, 2);
-  assert.equal(remoteInstructions[1].type, "Transact");
-  assert.ok(toHex(remoteInstructions[1].value.call).startsWith("0x00986153"));
-  assert.ok(
-    toHex(remoteInstructions[1].value.call).includes(
-      "00000000000000000000000000000000000000000000000000000000000003e8",
-    ),
-  );
-});
   const quote = await quoteProvider.quote(intent);
   const badQuote = {
     ...quote,
@@ -266,6 +238,37 @@ test("buildExecutionEnvelope encodes a hydration swap that settles on asset hub"
   assert.throws(
     () => buildExecutionEnvelope({ intent, quote: badQuote }),
     /must start with published selector 0x670b1f29/,
+  );
+});
+
+test("buildExecutionEnvelope encodes a hydration swap that settles on asset hub", async () => {
+  const intent = createSwapIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    refundAddress: bobAddress,
+    deadline: 1_773_185_200,
+    params: {
+      assetIn: "DOT",
+      assetOut: "USDT",
+      amountIn: "1000000000000",
+      minAmountOut: "493000000",
+      settlementChain: "asset-hub",
+      recipient: aliceAddress,
+    },
+  });
+  const quote = await quoteProvider.quote(intent);
+
+  const envelope = buildExecutionEnvelope({ intent, quote });
+  const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
+  const remoteInstructions = hydrationRemoteInstructions(decoded);
+
+  assert.equal(remoteInstructions.length, 2);
+  assert.equal(remoteInstructions[1].type, "Transact");
+  assert.ok(toHex(remoteInstructions[1].value.call).startsWith("0x00986153"));
+  assert.ok(
+    toHex(remoteInstructions[1].value.call).includes(
+      "00000000000000000000000000000000000000000000000000000000000003e8",
+    ),
   );
 });
 
@@ -324,7 +327,9 @@ test("buildExecutionEnvelope rejects a transact payload with a mismatched publis
 
   assert.throws(
     () => buildExecutionEnvelope({ intent, quote: badQuote }),
-    /must match published deployment 0x0000000000000000000000000000000000001002/,
+    new RegExp(
+      `must match published deployment ${getDestinationAdapterDeployment("hydration-stake-v1", "hydration", "local").address}`,
+    ),
   );
 });
 
@@ -342,4 +347,10 @@ function toHex(value) {
 
 function hydrationRemoteInstructions(decoded) {
   return decoded.value[1].value.xcm[1].value.xcm;
+}
+
+function expectedAddressWord(adapterId, deploymentProfile) {
+  return getDestinationAdapterDeployment(adapterId, "hydration", deploymentProfile)
+    .address.slice(2)
+    .padStart(64, "0");
 }

@@ -35,6 +35,7 @@ const PREVIEW_REFUNDABLE_AMOUNT_SIGNATURE = "previewRefundableAmount(bytes32)(ui
 const NEXT_INTENT_NONCE_SIGNATURE = "nextIntentNonce()(uint256)";
 const HASH_INTENT_SIGNATURE = "f(address,uint256,uint8,address,uint128,uint128,uint128,uint128,uint64,bytes32)";
 const HASH_DISPATCH_SIGNATURE = "f(uint8,bytes,bytes)";
+const DISPATCH_EVM_CALL_SIGNATURE = "dispatchEvmCall(address,bytes)";
 
 export function createCastRouterAdapter({
   rpcUrl,
@@ -419,6 +420,84 @@ export function createStaticAssetAddressResolver(addressesByChain) {
   };
 }
 
+export function createCastTransactDispatcher({
+  rpcUrl,
+  dispatcherAddress,
+  privateKey,
+  castBin = "cast",
+  cwd,
+  env,
+  commandRunner = defaultCommandRunner,
+} = {}) {
+  const normalizedRpcUrl = assertNonEmptyString("rpcUrl", rpcUrl);
+  const normalizedDispatcherAddress = assertAddress("dispatcherAddress", dispatcherAddress);
+  const normalizedPrivateKey = assertHexString("privateKey", privateKey);
+
+  async function dispatchQuote(quote) {
+    const transact = findFirstTransactInstruction(quote);
+    if (!transact) {
+      throw new Error("quote does not contain a transact instruction");
+    }
+
+    const txHash = await sendTransaction(normalizedDispatcherAddress, DISPATCH_EVM_CALL_SIGNATURE, [
+      transact.targetAddress,
+      transact.contractCall,
+    ]);
+
+    return {
+      txHash,
+      instruction: transact,
+      dispatcherAddress: normalizedDispatcherAddress,
+    };
+  }
+
+  return {
+    dispatchQuote,
+  };
+
+  async function sendTransaction(contractAddress, signature, args = []) {
+    const output = await runCast([
+      "send",
+      assertAddress("contractAddress", contractAddress),
+      signature,
+      ...args.map(String),
+      "--rpc-url",
+      normalizedRpcUrl,
+      "--private-key",
+      normalizedPrivateKey,
+      "--json",
+    ]);
+
+    return extractTransactionHash(output);
+  }
+
+  async function runCast(args) {
+    const result = await commandRunner({
+      command: castBin,
+      args,
+      cwd,
+      env,
+    });
+    return String(result?.stdout ?? result ?? "").trim();
+  }
+}
+
+export function findFirstTransactInstruction(quote) {
+  const sendStep = quote?.executionPlan?.steps?.find((step) => step.type === "send-xcm");
+  if (!sendStep) {
+    return null;
+  }
+
+  return findNestedTransact(sendStep.instructions ?? []);
+}
+
+export function encodeAssetIdSymbol(assetSymbol) {
+  const normalized = assertNonEmptyString("assetSymbol", assetSymbol).toUpperCase();
+  const bytes = Buffer.alloc(32);
+  Buffer.from(normalized, "utf8").copy(bytes, 0, 0, Math.min(32, normalized.length));
+  return `0x${bytes.toString("hex")}`;
+}
+
 function formatIntentRequestTuple(request) {
   return `(${String(request.actionType)},${assertAddress("request.asset", request.asset)},${toUintString(
     request.amount,
@@ -438,6 +517,21 @@ function formatDispatchRequestTuple(request) {
   )})`;
 }
 
+function findNestedTransact(instructions) {
+  for (const instruction of instructions) {
+    if (instruction?.type === "transact") {
+      return instruction;
+    }
+
+    const nested = findNestedTransact(instruction?.remoteInstructions ?? []);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
 function normalizeDispatchMode(mode) {
   if (mode === 0 || mode === 1) {
     return mode;
@@ -452,11 +546,14 @@ function toUintString(value) {
 
 function parseUint256(value) {
   const normalized = value.trim();
-  if (/^0x[0-9a-f]+$/i.test(normalized)) {
-    return BigInt(normalized);
+  const hexMatch = normalized.match(/^(0x[0-9a-f]+)/i);
+  if (hexMatch) {
+    return BigInt(hexMatch[1]);
   }
-  if (/^\d+$/.test(normalized)) {
-    return BigInt(normalized);
+
+  const decimalMatch = normalized.match(/^(\d+)/);
+  if (decimalMatch) {
+    return BigInt(decimalMatch[1]);
   }
 
   throw new Error(`unable to parse uint256 from cast output: ${normalized}`);

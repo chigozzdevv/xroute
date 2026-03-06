@@ -8,7 +8,10 @@ import {
   createSwapIntent,
   createTransferIntent,
 } from "../../xroute-intents/index.mjs";
-import { DEPLOYMENT_PROFILES } from "../../xroute-precompile-interfaces/index.mjs";
+import {
+  DEPLOYMENT_PROFILES,
+  getDestinationAdapterDeployment,
+} from "../../xroute-precompile-interfaces/index.mjs";
 import {
   createHttpQuoteProvider,
   createRouteEngineQuoteProvider,
@@ -138,7 +141,10 @@ test("route engine quote provider returns adapter-backed remote calls", async ()
   assert.equal(remoteInstructions[0].type, "buy-execution");
   assert.equal(remoteInstructions[1].type, "transact");
   assert.equal(remoteInstructions[1].adapter, "hydration-call-v1");
-  assert.equal(remoteInstructions[1].targetAddress, "0x0000000000000000000000000000000000001003");
+  assert.equal(
+    remoteInstructions[1].targetAddress,
+    getDestinationAdapterDeployment("hydration-call-v1", "hydration", "local").address,
+  );
   assert.match(remoteInstructions[1].contractCall, /^0x7db7dbf6[0-9a-f]+$/);
 });
 
@@ -164,7 +170,10 @@ test("route engine quote provider selects published testnet deployments", async 
   const remoteInstructions = finalRemoteInstructions(quote);
 
   assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.TESTNET);
-  assert.equal(remoteInstructions[1].targetAddress, "0x0000000000000000000000000000000000002003");
+  assert.equal(
+    remoteInstructions[1].targetAddress,
+    getDestinationAdapterDeployment("hydration-call-v1", "hydration", "testnet").address,
+  );
 });
 
 test("route engine quote provider quotes a hydration swap that settles on asset hub", async () => {

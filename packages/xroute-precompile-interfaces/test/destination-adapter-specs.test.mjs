@@ -48,15 +48,13 @@ test("destination adapter deployments are published per chain and profile", () =
     DEPLOYMENT_PROFILES.MAINNET,
   );
 
-  assert.equal(local.address, "0x0000000000000000000000000000000000001001");
-  assert.equal(testnet.address, "0x0000000000000000000000000000000000002001");
+  assert.match(local.address, /^0x[0-9a-f]{40}$/);
+  assert.match(testnet.address, /^0x[0-9a-f]{40}$/);
+  assert.match(mainnet.address, /^0x[0-9a-f]{40}$/);
+  assert.notEqual(local.address, testnet.address);
   assert.equal(
-    mainnet.address,
-    "0x0000000000000000000000000000000000003003",
-  );
-  assert.equal(
-    DESTINATION_ADAPTER_DEPLOYMENTS["hydration-stake-v1:hydration:testnet"].address,
-    "0x0000000000000000000000000000000000002002",
+    DESTINATION_ADAPTER_DEPLOYMENTS["hydration-stake-v1:hydration:testnet"].chainKey,
+    "hydration",
   );
 });
 
