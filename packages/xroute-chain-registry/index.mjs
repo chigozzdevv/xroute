@@ -19,6 +19,7 @@ export const CHAINS = Object.freeze({
     supportedActions: Object.freeze([
       ACTION_TYPES.TRANSFER,
       ACTION_TYPES.SWAP,
+      ACTION_TYPES.STAKE,
       ACTION_TYPES.CALL,
     ]),
   }),
@@ -94,6 +95,7 @@ export const ROUTES = Object.freeze([
     actions: Object.freeze([
       ACTION_TYPES.TRANSFER,
       ACTION_TYPES.SWAP,
+      ACTION_TYPES.STAKE,
       ACTION_TYPES.CALL,
     ]),
     transferableAssets: Object.freeze(["DOT"]),

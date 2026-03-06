@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createSwapIntent, createTransferIntent } from "../../xroute-intents/index.mjs";
+import {
+  createCallIntent,
+  createSwapIntent,
+  createTransferIntent,
+} from "../../xroute-intents/index.mjs";
 import { createRouteEngineQuoteProvider, createXRouteClient, normalizeQuote } from "../index.mjs";
 
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -97,4 +101,30 @@ test("sdk execute derives the XCM envelope from the route-engine quote", async (
   assert.match(execution.submitted.request.executionHash, /^0x[0-9a-f]{64}$/);
   assert.equal(routerAdapter.dispatched.mode, 0);
   assert.match(routerAdapter.dispatched.message, /^0x[0-9a-f]+$/);
+});
+
+test("route engine quote provider returns adapter-backed remote calls", async () => {
+  const provider = createRouteEngineQuoteProvider({
+    cwd: workspaceRoot,
+  });
+  const intent = createCallIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    refundAddress: aliceAddress,
+    deadline: 1_773_185_200,
+    params: {
+      asset: "DOT",
+      amount: "50000000000",
+      target: "0x1111111111111111111111111111111111111111",
+      calldata: "0xdeadbeef",
+    },
+  });
+
+  const quote = normalizeQuote(await provider.quote(intent));
+  const remoteInstructions = quote.executionPlan.steps[4].instructions[0].remoteInstructions;
+
+  assert.equal(quote.submission.action, "call");
+  assert.equal(remoteInstructions[1].type, "transact");
+  assert.equal(remoteInstructions[1].adapter, "hydration-call-v1");
+  assert.match(remoteInstructions[1].encodedCall, /^0x7db7dbf6[0-9a-f]+$/);
 });

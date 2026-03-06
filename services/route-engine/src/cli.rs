@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use route_engine::{
-    AssetAmount, AssetKey, CallIntent, ChainKey, ExecutionPlan, FeeBreakdown, FeeType, Intent,
-    IntentAction, PlanStep, Quote, RouteEngine, StakeIntent, SubmissionAction, SwapIntent,
-    TransferIntent, XcmInstruction,
+    AssetAmount, AssetKey, CallIntent, ChainKey, DestinationAdapter, ExecutionPlan, FeeBreakdown,
+    FeeType, Intent, IntentAction, PlanStep, Quote, RouteEngine, StakeIntent, SubmissionAction,
+    SwapIntent, TransferIntent, XcmInstruction, XcmWeight,
 };
 
 pub fn run() -> Result<(), String> {
@@ -255,15 +255,15 @@ fn xcm_instruction_json(instruction: &XcmInstruction) -> String {
             json_string(asset.symbol()),
             json_string(&amount.to_string()),
         ),
-        XcmInstruction::ExchangeAsset {
-            asset_in,
-            asset_out,
-            min_amount_out,
+        XcmInstruction::Transact {
+            adapter,
+            encoded_call,
+            fallback_weight,
         } => format!(
-            "{{\"type\":\"exchange-asset\",\"assetIn\":{},\"assetOut\":{},\"minAmountOut\":{}}}",
-            json_string(asset_in.symbol()),
-            json_string(asset_out.symbol()),
-            json_string(&min_amount_out.to_string()),
+            "{{\"type\":\"transact\",\"adapter\":{},\"encodedCall\":{},\"fallbackWeight\":{}}}",
+            json_string(destination_adapter_label(*adapter)),
+            json_string(encoded_call),
+            xcm_weight_json(fallback_weight),
         ),
         XcmInstruction::DepositAsset { asset, recipient } => format!(
             "{{\"type\":\"deposit-asset\",\"asset\":{},\"recipient\":{}}}",
@@ -291,6 +291,14 @@ fn option_amount_json(amount: &Option<u128>) -> String {
     amount
         .map(|value| json_string(&value.to_string()))
         .unwrap_or_else(|| "null".to_owned())
+}
+
+fn xcm_weight_json(weight: &XcmWeight) -> String {
+    format!(
+        "{{\"refTime\":{},\"proofSize\":{}}}",
+        json_string(&weight.ref_time.to_string()),
+        json_string(&weight.proof_size.to_string()),
+    )
 }
 
 fn chain_array_json(chains: &[ChainKey]) -> String {
@@ -329,6 +337,10 @@ fn fee_type_label(fee_type: FeeType) -> &'static str {
         FeeType::Destination => "destination",
         FeeType::Platform => "platform",
     }
+}
+
+fn destination_adapter_label(adapter: DestinationAdapter) -> &'static str {
+    adapter.as_str()
 }
 
 fn usage() -> String {

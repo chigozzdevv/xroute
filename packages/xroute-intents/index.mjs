@@ -1,6 +1,8 @@
 import {
   ACTION_TYPES,
+  assertAddress,
   assertInteger,
+  assertHexString,
   assertNonEmptyString,
   assertPositiveBigInt,
   assertIncluded,
@@ -178,8 +180,8 @@ function normalizeCall(sourceChain, destinationChain, params) {
     params: Object.freeze({
       asset: assertNonEmptyString("action.params.asset", params.asset).toUpperCase(),
       amount: assertPositiveBigInt("action.params.amount", params.amount),
-      target: assertNonEmptyString("action.params.target", params.target),
-      calldata: assertNonEmptyString("action.params.calldata", params.calldata),
+      target: assertAddress("action.params.target", params.target),
+      calldata: assertHexString("action.params.calldata", params.calldata),
     }),
   });
 }

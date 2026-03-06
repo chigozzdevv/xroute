@@ -222,6 +222,12 @@ pub struct ExecutionPlan {
     pub steps: Vec<PlanStep>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct XcmWeight {
+    pub ref_time: u64,
+    pub proof_size: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanStep {
     LockAsset {
@@ -266,15 +272,32 @@ pub enum XcmInstruction {
         asset: AssetKey,
         amount: u128,
     },
-    ExchangeAsset {
-        asset_in: AssetKey,
-        asset_out: AssetKey,
-        min_amount_out: u128,
+    Transact {
+        adapter: DestinationAdapter,
+        encoded_call: String,
+        fallback_weight: XcmWeight,
     },
     DepositAsset {
         asset: AssetKey,
         recipient: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DestinationAdapter {
+    HydrationSwapV1,
+    HydrationStakeV1,
+    HydrationCallV1,
+}
+
+impl DestinationAdapter {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::HydrationSwapV1 => "hydration-swap-v1",
+            Self::HydrationStakeV1 => "hydration-stake-v1",
+            Self::HydrationCallV1 => "hydration-call-v1",
+        }
+    }
 }
 
 pub fn pow10(exponent: u8) -> u128 {

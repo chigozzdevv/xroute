@@ -204,7 +204,6 @@ export function buildVersionedXcmMessage({ quote }) {
         buildRemoteInstruction({
           instruction,
           sendStep,
-          transferAmount,
         }),
       ),
     }),
@@ -236,7 +235,6 @@ function getInstruction(sendStep, instructionType) {
 function buildRemoteInstruction({
   instruction,
   sendStep,
-  transferAmount,
 }) {
   switch (instruction.type) {
     case "buy-execution":
@@ -248,23 +246,11 @@ function buildRemoteInstruction({
         }),
         weight_limit: Enum("Unlimited", undefined),
       });
-    case "exchange-asset":
-      return Enum("ExchangeAsset", {
-        give: Enum("Definite", [
-          buildAsset({
-            chainKey: sendStep.destination,
-            assetKey: instruction.assetIn,
-            amount: transferAmount,
-          }),
-        ]),
-        want: [
-          buildAsset({
-            chainKey: sendStep.destination,
-            assetKey: instruction.assetOut,
-            amount: toBigInt(instruction.minAmountOut, "exchange-asset.minAmountOut"),
-          }),
-        ],
-        maximal: true,
+    case "transact":
+      return Enum("Transact", {
+        origin_kind: Enum("SovereignAccount", undefined),
+        fallback_max_weight: buildWeight(instruction.fallbackWeight),
+        call: Binary.fromBytes(hexToBytes(instruction.encodedCall)),
       });
     case "deposit-asset":
       return Enum("DepositAsset", {
@@ -308,6 +294,13 @@ function buildBeneficiaryLocation(address) {
   };
 }
 
+function buildWeight(weight) {
+  return {
+    ref_time: toBigInt(weight.refTime, "transact.fallbackWeight.refTime"),
+    proof_size: toBigInt(weight.proofSize, "transact.fallbackWeight.proofSize"),
+  };
+}
+
 function buildInterior(interior) {
   switch (interior.type) {
     case "here":
@@ -336,4 +329,8 @@ function buildJunction(junction) {
     default:
       throw new Error(`unsupported XCM junction type: ${junction.type}`);
   }
+}
+
+function hexToBytes(value) {
+  return Uint8Array.from(Buffer.from(assertHexString("encodedCall", value).slice(2), "hex"));
 }

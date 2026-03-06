@@ -6,8 +6,8 @@ mod registry;
 pub use engine::{EngineSettings, RouteEngine};
 pub use error::RouteError;
 pub use model::{
-    AssetAmount, AssetKey, CallIntent, ChainKey, ExecutionPlan, FeeBreakdown, FeeType, Intent,
-    IntentAction, PlanStep, Quote, StakeIntent, SubmissionAction, SubmissionTerms, SwapIntent,
-    TransferIntent, XcmInstruction,
+    AssetAmount, AssetKey, CallIntent, ChainKey, DestinationAdapter, ExecutionPlan,
+    FeeBreakdown, FeeType, Intent, IntentAction, PlanStep, Quote, StakeIntent, SubmissionAction,
+    SubmissionTerms, SwapIntent, TransferIntent, XcmInstruction, XcmWeight,
 };
-pub use registry::{RouteRegistry, SwapRoute, TransferRoute};
+pub use registry::{CallRoute, RouteRegistry, StakeRoute, SwapRoute, TransferRoute};

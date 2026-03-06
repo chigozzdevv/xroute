@@ -89,6 +89,15 @@ export function assertHexString(name, value) {
   return normalized;
 }
 
+export function assertAddress(name, value) {
+  const normalized = assertHexString(name, value);
+  if (normalized.length !== 42) {
+    throw new Error(`${name} must be a 20-byte 0x-prefixed hex address`);
+  }
+
+  return normalized;
+}
+
 export function serializeForHash(value) {
   return JSON.stringify(sortValue(value));
 }

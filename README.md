@@ -52,8 +52,8 @@ The real implementation should be split like this:
 - `route engine`
   - computes route
   - estimates fees
-  - builds SCALE/XCM payloads
-  - knows destination-specific logic like Hydration swap execution
+  - builds destination adapter calldata and XCM execution plans
+  - knows destination-specific logic like Hydration swap, stake, and call execution
 - `status indexer`
   - tracks submission, dispatch, destination execution, and final status
 - `sdk`
@@ -113,7 +113,7 @@ xroute/
 - `packages/xroute-types`
   - shared types
 - `packages/xroute-xcm`
-  - metadata-backed XCM payload encoding from route plans
+  - metadata-backed XCM payload encoding from route plans and adapter calls
 - `services/route-engine`
   - Rust quote and payload builder
 - `services/status-indexer`
@@ -123,16 +123,16 @@ xroute/
 
 ## What we should implement first
 
-The first real vertical slice should be:
+The current core vertical slice is:
 
-1. define `transfer` and `swap` intents
+1. define `transfer`, `swap`, `stake`, and `call` intents
 2. implement the Hub router contract surface
-3. implement the Rust route engine for `polkadot-hub -> hydration swap`
+3. implement the Rust route engine for `polkadot-hub -> hydration` adapter-driven execution
 4. expose that through a minimal SDK
 5. track result status with the indexer
 6. demo it in the studio app
 
-`stake` and generic `call` should use the same intent model, but come after the swap path is solid.
+`transfer` is the simple delivery path. `swap`, `stake`, and generic `call` now share the same adapter-driven destination execution model.
 
 ## References I used
 

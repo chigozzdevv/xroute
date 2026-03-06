@@ -15,12 +15,28 @@ pub enum RouteError {
         asset_in: AssetKey,
         asset_out: AssetKey,
     },
+    UnsupportedStakeRoute {
+        source: ChainKey,
+        destination: ChainKey,
+        asset: AssetKey,
+    },
+    UnsupportedCallRoute {
+        source: ChainKey,
+        destination: ChainKey,
+        asset: AssetKey,
+    },
     UnsupportedAction {
         action: &'static str,
     },
     MinOutputTooHigh {
         requested: u128,
         expected: u128,
+    },
+    InvalidHex {
+        field: &'static str,
+    },
+    InvalidAddress {
+        field: &'static str,
     },
     ArithmeticOverflow,
 }
@@ -52,6 +68,28 @@ impl Display for RouteError {
                 asset_in.symbol(),
                 asset_out.symbol()
             ),
+            Self::UnsupportedStakeRoute {
+                source,
+                destination,
+                asset,
+            } => write!(
+                f,
+                "unsupported stake route: {} -> {} for {}",
+                source.as_str(),
+                destination.as_str(),
+                asset.symbol()
+            ),
+            Self::UnsupportedCallRoute {
+                source,
+                destination,
+                asset,
+            } => write!(
+                f,
+                "unsupported call route: {} -> {} for {}",
+                source.as_str(),
+                destination.as_str(),
+                asset.symbol()
+            ),
             Self::UnsupportedAction { action } => {
                 write!(f, "unsupported action: {action}")
             }
@@ -62,6 +100,8 @@ impl Display for RouteError {
                 f,
                 "requested minimum output {requested} exceeds estimated output {expected}"
             ),
+            Self::InvalidHex { field } => write!(f, "{field} must be a valid 0x-prefixed hex string"),
+            Self::InvalidAddress { field } => write!(f, "{field} must be a 20-byte 0x-prefixed hex address"),
             Self::ArithmeticOverflow => write!(f, "arithmetic overflow while building quote"),
         }
     }

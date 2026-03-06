@@ -1,9 +1,13 @@
 use crate::error::RouteError;
 use crate::model::{
-    AssetAmount, FeeBreakdown, FeeType, Intent, IntentAction, PlanStep, Quote, SubmissionAction,
-    SubmissionTerms, XcmInstruction,
+    AssetAmount, AssetKey, FeeBreakdown, FeeType, Intent, IntentAction, PlanStep, Quote,
+    SubmissionAction, SubmissionTerms, XcmInstruction,
 };
-use crate::registry::{RouteRegistry, SwapRoute, TransferRoute};
+use crate::registry::{CallRoute, RouteRegistry, StakeRoute, SwapRoute, TransferRoute};
+
+const HYDRATION_SWAP_SELECTOR: [u8; 4] = [0x67, 0x0b, 0x1f, 0x29];
+const HYDRATION_STAKE_SELECTOR: [u8; 4] = [0xdf, 0xab, 0xdd, 0xe3];
+const HYDRATION_CALL_SELECTOR: [u8; 4] = [0x7d, 0xb7, 0xdb, 0xf6];
 
 #[derive(Debug, Clone, Copy)]
 pub struct EngineSettings {
@@ -119,8 +123,82 @@ impl RouteEngine {
                     execution_plan,
                 })
             }
-            IntentAction::Stake(_) => Err(RouteError::UnsupportedAction { action: "stake" }),
-            IntentAction::Call(_) => Err(RouteError::UnsupportedAction { action: "call" }),
+            IntentAction::Stake(stake) => {
+                let route = self
+                    .registry
+                    .stake_route(
+                        intent.source_chain,
+                        intent.destination_chain,
+                        stake.asset,
+                    )
+                    .ok_or(RouteError::UnsupportedStakeRoute {
+                        source: intent.source_chain,
+                        destination: intent.destination_chain,
+                        asset: stake.asset,
+                    })?;
+
+                let fees = self.fee_breakdown(
+                    intent.principal_amount().amount,
+                    route.xcm_fee,
+                    route.destination_fee,
+                )?;
+                let execution_plan = build_stake_plan(&intent, route, &fees)?;
+
+                Ok(Quote {
+                    quote_id,
+                    route: execution_plan.route.clone(),
+                    fees,
+                    expected_output: AssetAmount::new(stake.asset, stake.amount),
+                    min_output: None,
+                    submission: SubmissionTerms {
+                        action: SubmissionAction::Stake,
+                        asset: stake.asset,
+                        amount: stake.amount,
+                        xcm_fee: route.xcm_fee.amount,
+                        destination_fee: route.destination_fee.amount,
+                        min_output_amount: 0,
+                    },
+                    execution_plan,
+                })
+            }
+            IntentAction::Call(call) => {
+                let route = self
+                    .registry
+                    .call_route(
+                        intent.source_chain,
+                        intent.destination_chain,
+                        call.asset,
+                    )
+                    .ok_or(RouteError::UnsupportedCallRoute {
+                        source: intent.source_chain,
+                        destination: intent.destination_chain,
+                        asset: call.asset,
+                    })?;
+
+                let fees = self.fee_breakdown(
+                    intent.principal_amount().amount,
+                    route.xcm_fee,
+                    route.destination_fee,
+                )?;
+                let execution_plan = build_call_plan(&intent, route, &fees)?;
+
+                Ok(Quote {
+                    quote_id,
+                    route: execution_plan.route.clone(),
+                    fees,
+                    expected_output: AssetAmount::new(call.asset, 0),
+                    min_output: None,
+                    submission: SubmissionTerms {
+                        action: SubmissionAction::Call,
+                        asset: call.asset,
+                        amount: call.amount,
+                        xcm_fee: route.xcm_fee.amount,
+                        destination_fee: route.destination_fee.amount,
+                        min_output_amount: 0,
+                    },
+                    execution_plan,
+                })
+            }
         }
     }
 
@@ -267,10 +345,16 @@ fn build_swap_plan(
                             asset: fees.destination_fee.asset,
                             amount: fees.destination_fee.amount,
                         },
-                        XcmInstruction::ExchangeAsset {
-                            asset_in: swap.asset_in,
-                            asset_out: swap.asset_out,
-                            min_amount_out: swap.min_amount_out,
+                        XcmInstruction::Transact {
+                            adapter: route.adapter,
+                            encoded_call: encode_swap_adapter_call(
+                                swap.asset_in,
+                                swap.asset_out,
+                                swap.amount_in,
+                                swap.min_amount_out,
+                                &swap.recipient,
+                            ),
+                            fallback_weight: route.transact_weight,
                         },
                         XcmInstruction::DepositAsset {
                             asset: swap.asset_out,
@@ -284,6 +368,148 @@ fn build_swap_plan(
                 asset: swap.asset_out,
                 recipient: swap.recipient.clone(),
                 minimum_amount: Some(swap.min_amount_out),
+            },
+        ],
+    })
+}
+
+fn build_stake_plan(
+    intent: &Intent,
+    route: &StakeRoute,
+    fees: &FeeBreakdown,
+) -> Result<crate::model::ExecutionPlan, RouteError> {
+    let principal = intent.principal_amount();
+    let locked = principal
+        .amount
+        .checked_add(fees.total_fee.amount)
+        .ok_or(RouteError::ArithmeticOverflow)?;
+
+    let stake = match &intent.action {
+        IntentAction::Stake(stake) => stake,
+        _ => unreachable!(),
+    };
+
+    Ok(crate::model::ExecutionPlan {
+        route: vec![route.source, route.destination],
+        steps: vec![
+            PlanStep::LockAsset {
+                chain: route.source,
+                asset: route.asset,
+                amount: locked,
+            },
+            PlanStep::ChargeFee {
+                fee_type: FeeType::Platform,
+                asset: fees.platform_fee.asset,
+                amount: fees.platform_fee.amount,
+            },
+            PlanStep::ChargeFee {
+                fee_type: FeeType::Xcm,
+                asset: fees.xcm_fee.asset,
+                amount: fees.xcm_fee.amount,
+            },
+            PlanStep::ChargeFee {
+                fee_type: FeeType::Destination,
+                asset: fees.destination_fee.asset,
+                amount: fees.destination_fee.amount,
+            },
+            PlanStep::SendXcm {
+                origin: route.source,
+                destination: route.destination,
+                instructions: vec![XcmInstruction::TransferReserveAsset {
+                    asset: route.asset,
+                    amount: stake.amount,
+                    destination: route.destination,
+                    remote_instructions: vec![
+                        XcmInstruction::BuyExecution {
+                            asset: fees.destination_fee.asset,
+                            amount: fees.destination_fee.amount,
+                        },
+                        XcmInstruction::Transact {
+                            adapter: route.adapter,
+                            encoded_call: encode_stake_adapter_call(
+                                stake.asset,
+                                stake.amount,
+                                &stake.validator,
+                                &stake.recipient,
+                            ),
+                            fallback_weight: route.transact_weight,
+                        },
+                    ],
+                }],
+            },
+            PlanStep::ExpectSettlement {
+                chain: route.destination,
+                asset: stake.asset,
+                recipient: stake.recipient.clone(),
+                minimum_amount: None,
+            },
+        ],
+    })
+}
+
+fn build_call_plan(
+    intent: &Intent,
+    route: &CallRoute,
+    fees: &FeeBreakdown,
+) -> Result<crate::model::ExecutionPlan, RouteError> {
+    let principal = intent.principal_amount();
+    let locked = principal
+        .amount
+        .checked_add(fees.total_fee.amount)
+        .ok_or(RouteError::ArithmeticOverflow)?;
+
+    let call = match &intent.action {
+        IntentAction::Call(call) => call,
+        _ => unreachable!(),
+    };
+
+    Ok(crate::model::ExecutionPlan {
+        route: vec![route.source, route.destination],
+        steps: vec![
+            PlanStep::LockAsset {
+                chain: route.source,
+                asset: route.asset,
+                amount: locked,
+            },
+            PlanStep::ChargeFee {
+                fee_type: FeeType::Platform,
+                asset: fees.platform_fee.asset,
+                amount: fees.platform_fee.amount,
+            },
+            PlanStep::ChargeFee {
+                fee_type: FeeType::Xcm,
+                asset: fees.xcm_fee.asset,
+                amount: fees.xcm_fee.amount,
+            },
+            PlanStep::ChargeFee {
+                fee_type: FeeType::Destination,
+                asset: fees.destination_fee.asset,
+                amount: fees.destination_fee.amount,
+            },
+            PlanStep::SendXcm {
+                origin: route.source,
+                destination: route.destination,
+                instructions: vec![XcmInstruction::TransferReserveAsset {
+                    asset: route.asset,
+                    amount: call.amount,
+                    destination: route.destination,
+                    remote_instructions: vec![
+                        XcmInstruction::BuyExecution {
+                            asset: fees.destination_fee.asset,
+                            amount: fees.destination_fee.amount,
+                        },
+                        XcmInstruction::Transact {
+                            adapter: route.adapter,
+                            encoded_call: encode_call_adapter_call(
+                                call.asset,
+                                call.amount,
+                                &call.target,
+                                &call.calldata,
+                            )?,
+                            fallback_weight: route.transact_weight,
+                        },
+                    ],
+                }],
             },
         ],
     })
@@ -318,5 +544,183 @@ fn percentage_fee(amount: u128, bps: u16) -> u128 {
         1
     } else {
         fee
+    }
+}
+
+fn encode_swap_adapter_call(
+    asset_in: AssetKey,
+    asset_out: AssetKey,
+    amount_in: u128,
+    min_amount_out: u128,
+    recipient: &str,
+) -> String {
+    abi_encode_call(
+        HYDRATION_SWAP_SELECTOR,
+        &[
+            AbiToken::Bytes32(encode_asset_id(asset_in)),
+            AbiToken::Bytes32(encode_asset_id(asset_out)),
+            AbiToken::Uint(amount_in),
+            AbiToken::Uint(min_amount_out),
+            AbiToken::Bytes(recipient.as_bytes().to_vec()),
+        ],
+    )
+}
+
+fn encode_stake_adapter_call(
+    asset: AssetKey,
+    amount: u128,
+    validator: &str,
+    recipient: &str,
+) -> String {
+    abi_encode_call(
+        HYDRATION_STAKE_SELECTOR,
+        &[
+            AbiToken::Bytes32(encode_asset_id(asset)),
+            AbiToken::Uint(amount),
+            AbiToken::Bytes(validator.as_bytes().to_vec()),
+            AbiToken::Bytes(recipient.as_bytes().to_vec()),
+        ],
+    )
+}
+
+fn encode_call_adapter_call(
+    asset: AssetKey,
+    amount: u128,
+    target: &str,
+    calldata: &str,
+) -> Result<String, RouteError> {
+    Ok(abi_encode_call(
+        HYDRATION_CALL_SELECTOR,
+        &[
+            AbiToken::Bytes32(encode_asset_id(asset)),
+            AbiToken::Uint(amount),
+            AbiToken::Address(parse_evm_address("call.target", target)?),
+            AbiToken::Bytes(parse_hex_bytes("call.calldata", calldata)?),
+        ],
+    ))
+}
+
+#[derive(Debug, Clone)]
+enum AbiToken {
+    Bytes32([u8; 32]),
+    Uint(u128),
+    Address([u8; 20]),
+    Bytes(Vec<u8>),
+}
+
+fn abi_encode_call(selector: [u8; 4], tokens: &[AbiToken]) -> String {
+    let head_size = tokens.len() * 32;
+    let mut encoded = Vec::with_capacity(4 + head_size + 128);
+    encoded.extend_from_slice(&selector);
+
+    let mut head = Vec::with_capacity(head_size);
+    let mut tail = Vec::new();
+
+    for token in tokens {
+        match token {
+            AbiToken::Bytes32(value) => head.extend_from_slice(value),
+            AbiToken::Uint(value) => head.extend_from_slice(&encode_u128_word(*value)),
+            AbiToken::Address(value) => head.extend_from_slice(&encode_address_word(value)),
+            AbiToken::Bytes(value) => {
+                head.extend_from_slice(&encode_u128_word((head_size + tail.len()) as u128));
+                tail.extend_from_slice(&encode_u128_word(value.len() as u128));
+                tail.extend_from_slice(value);
+
+                let padded_length = padded_len(value.len());
+                if padded_length > value.len() {
+                    tail.resize(tail.len() + padded_length - value.len(), 0);
+                }
+            }
+        }
+    }
+
+    encoded.extend_from_slice(&head);
+    encoded.extend_from_slice(&tail);
+    hex_encode(&encoded)
+}
+
+fn encode_asset_id(asset: AssetKey) -> [u8; 32] {
+    let mut word = [0u8; 32];
+    let symbol = asset.symbol().as_bytes();
+    word[..symbol.len()].copy_from_slice(symbol);
+    word
+}
+
+fn encode_u128_word(value: u128) -> [u8; 32] {
+    let mut word = [0u8; 32];
+    word[16..].copy_from_slice(&value.to_be_bytes());
+    word
+}
+
+fn encode_address_word(value: &[u8; 20]) -> [u8; 32] {
+    let mut word = [0u8; 32];
+    word[12..].copy_from_slice(value);
+    word
+}
+
+fn parse_evm_address(field: &'static str, value: &str) -> Result<[u8; 20], RouteError> {
+    let bytes = parse_hex_bytes(field, value)?;
+    if bytes.len() != 20 {
+        return Err(RouteError::InvalidAddress { field });
+    }
+
+    let mut address = [0u8; 20];
+    address.copy_from_slice(&bytes);
+    Ok(address)
+}
+
+fn parse_hex_bytes(field: &'static str, value: &str) -> Result<Vec<u8>, RouteError> {
+    if !value.starts_with("0x") || value.len() % 2 != 0 {
+        return Err(RouteError::InvalidHex { field });
+    }
+
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity((bytes.len() - 2) / 2);
+    let mut index = 2usize;
+    while index < bytes.len() {
+        let high = decode_nibble(bytes[index]).ok_or(RouteError::InvalidHex { field })?;
+        let low = decode_nibble(bytes[index + 1]).ok_or(RouteError::InvalidHex { field })?;
+        decoded.push((high << 4) | low);
+        index += 2;
+    }
+
+    Ok(decoded)
+}
+
+fn decode_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn padded_len(length: usize) -> usize {
+    let remainder = length % 32;
+    if remainder == 0 {
+        length
+    } else {
+        length + (32 - remainder)
+    }
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut encoded = String::with_capacity(2 + bytes.len() * 2);
+    encoded.push_str("0x");
+
+    for byte in bytes {
+        encoded.push(hex_char(byte >> 4));
+        encoded.push(hex_char(byte & 0x0f));
+    }
+
+    encoded
+}
+
+fn hex_char(value: u8) -> char {
+    match value {
+        0..=9 => (b'0' + value) as char,
+        10..=15 => (b'a' + (value - 10)) as char,
+        _ => unreachable!(),
     }
 }

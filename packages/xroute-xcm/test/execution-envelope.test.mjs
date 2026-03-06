@@ -3,7 +3,12 @@ import assert from "node:assert/strict";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createTransferIntent, createSwapIntent } from "../../xroute-intents/index.mjs";
+import {
+  createCallIntent,
+  createStakeIntent,
+  createSwapIntent,
+  createTransferIntent,
+} from "../../xroute-intents/index.mjs";
 import { createRouteEngineQuoteProvider } from "../../xroute-sdk/index.mjs";
 import { buildExecutionEnvelope, getDefaultXcmCodecContext } from "../index.mjs";
 
@@ -40,7 +45,7 @@ test("buildExecutionEnvelope encodes a transfer reserve XCM payload", async () =
   assert.equal(decoded.value[1].value.xcm[1].type, "DepositAsset");
 });
 
-test("buildExecutionEnvelope encodes the hydration remote swap path", async () => {
+test("buildExecutionEnvelope encodes the hydration swap adapter path", async () => {
   const intent = createSwapIntent({
     sourceChain: "polkadot-hub",
     destinationChain: "hydration",
@@ -64,7 +69,70 @@ test("buildExecutionEnvelope encodes the hydration remote swap path", async () =
   assert.equal(decoded.type, "V5");
   assert.equal(decoded.value[1].type, "TransferReserveAsset");
   assert.equal(remoteInstructions[0].type, "BuyExecution");
-  assert.equal(remoteInstructions[1].type, "ExchangeAsset");
+  assert.equal(remoteInstructions[1].type, "Transact");
   assert.equal(remoteInstructions[2].type, "DepositAsset");
-  assert.equal(remoteInstructions[1].value.maximal, true);
+  assert.equal(remoteInstructions[1].value.origin_kind.type, "SovereignAccount");
+  assert.equal(remoteInstructions[1].value.fallback_max_weight.ref_time, 3500000000n);
+  assert.equal(remoteInstructions[1].value.fallback_max_weight.proof_size, 120000n);
+  assert.ok(toHex(remoteInstructions[1].value.call).startsWith("0x670b1f29"));
 });
+
+test("buildExecutionEnvelope encodes the hydration stake adapter path", async () => {
+  const intent = createStakeIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    refundAddress: bobAddress,
+    deadline: 1_773_185_200,
+    params: {
+      asset: "DOT",
+      amount: "400000000000",
+      validator: "validator-01",
+      recipient: aliceAddress,
+    },
+  });
+  const quote = await quoteProvider.quote(intent);
+
+  const envelope = buildExecutionEnvelope({ intent, quote });
+  const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
+  const remoteInstructions = decoded.value[1].value.xcm;
+
+  assert.equal(remoteInstructions[0].type, "BuyExecution");
+  assert.equal(remoteInstructions[1].type, "Transact");
+  assert.ok(toHex(remoteInstructions[1].value.call).startsWith("0xdfabdde3"));
+});
+
+test("buildExecutionEnvelope encodes the hydration generic call adapter path", async () => {
+  const intent = createCallIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    refundAddress: bobAddress,
+    deadline: 1_773_185_200,
+    params: {
+      asset: "DOT",
+      amount: "50000000000",
+      target: "0x1111111111111111111111111111111111111111",
+      calldata: "0xdeadbeef",
+    },
+  });
+  const quote = await quoteProvider.quote(intent);
+
+  const envelope = buildExecutionEnvelope({ intent, quote });
+  const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
+  const remoteInstructions = decoded.value[1].value.xcm;
+
+  assert.equal(remoteInstructions[0].type, "BuyExecution");
+  assert.equal(remoteInstructions[1].type, "Transact");
+  assert.ok(toHex(remoteInstructions[1].value.call).startsWith("0x7db7dbf6"));
+});
+
+function toHex(value) {
+  if (typeof value === "string") {
+    return value.toLowerCase();
+  }
+
+  if (value?.asHex) {
+    return value.asHex().toLowerCase();
+  }
+
+  return `0x${Buffer.from(value).toString("hex")}`;
+}
