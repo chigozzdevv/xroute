@@ -33,9 +33,10 @@ The design goal is simple:
 Current supported vertical slices:
 
 - `polkadot-hub -> asset-hub` native `transfer`
-- `polkadot-hub -> hydration` `swap`
-- `polkadot-hub -> hydration` `stake`
-- `polkadot-hub -> hydration` generic `call`
+- `polkadot-hub -> asset-hub -> hydration` native `transfer`
+- `polkadot-hub -> asset-hub -> hydration` `swap`
+- `polkadot-hub -> asset-hub -> hydration` `stake`
+- `polkadot-hub -> asset-hub -> hydration` generic `call`
 
 Current implemented layers:
 
@@ -79,11 +80,11 @@ const { intent, quote } = await client.quote({
 The Rust route engine:
 
 - validates the intent
-- selects the supported route
+- searches the supported route graph
 - estimates `xcmFee`, `destinationFee`, and `platformFee`
 - resolves the deployment profile
 - emits destination adapter target addresses and calldata
-- builds the execution plan consumed by the XCM layer
+- builds nested multihop execution plans consumed by the XCM layer
 
 `3. Hub router`
 
@@ -118,10 +119,10 @@ Important distinction:
 Typical swap flow:
 
 1. User creates a `swap` intent on `polkadot-hub`.
-2. The route engine returns a quote and execution plan for `hydration`.
-3. The SDK converts that plan into the committed router request and XCM envelope.
+2. The route engine resolves the multihop path `polkadot-hub -> asset-hub -> hydration`.
+3. The SDK converts that nested plan into the committed router request and XCM envelope.
 4. The router escrows funds and dispatches the exact payload.
-5. The destination adapter executes the action.
+5. The XCM message executes across the intermediate hop and reaches the destination adapter.
 6. The executor records `settled` or `failed` onchain.
 7. If needed, the executor records a `refund`.
 

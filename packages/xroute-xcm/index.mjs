@@ -192,31 +192,16 @@ export function buildVersionedXcmMessage({ quote }) {
     quote?.deploymentProfile ?? DEFAULT_DEPLOYMENT_PROFILE,
   );
   const sendStep = getExecutionStep(quote, "send-xcm");
-  const transferInstruction = getInstruction(sendStep, "transfer-reserve-asset");
-  const transferAmount = toBigInt(
-    transferInstruction.amount,
-    "executionPlan.instructions.transfer-reserve-asset.amount",
-  );
 
   return Enum("V5", [
     Enum("SetFeesMode", { jit_withdraw: true }),
-    Enum("TransferReserveAsset", {
-      assets: [
-        buildAsset({
-          chainKey: sendStep.origin,
-          assetKey: transferInstruction.asset,
-          amount: transferAmount,
-        }),
-      ],
-      dest: buildParachainLocation(sendStep.destination),
-      xcm: transferInstruction.remoteInstructions.map((instruction) =>
-        buildRemoteInstruction({
-          instruction,
-          sendStep,
-          deploymentProfile,
-        }),
-      ),
-    }),
+    ...sendStep.instructions.map((instruction) =>
+      buildInstruction({
+        instruction,
+        currentChain: sendStep.origin,
+        deploymentProfile,
+      }),
+    ),
   ]);
 }
 
@@ -230,28 +215,37 @@ function getExecutionStep(quote, stepType) {
   return step;
 }
 
-function getInstruction(sendStep, instructionType) {
-  const instruction = sendStep.instructions?.find(
-    (candidate) => candidate.type === instructionType,
-  );
-
-  if (!instruction) {
-    throw new Error(`missing XCM instruction: ${instructionType}`);
-  }
-
-  return instruction;
-}
-
-function buildRemoteInstruction({
+function buildInstruction({
   instruction,
-  sendStep,
+  currentChain,
   deploymentProfile,
 }) {
   switch (instruction.type) {
+    case "transfer-reserve-asset":
+      return Enum("TransferReserveAsset", {
+        assets: [
+          buildAsset({
+            chainKey: currentChain,
+            assetKey: instruction.asset,
+            amount: toBigInt(
+              instruction.amount,
+              "executionPlan.instructions.transfer-reserve-asset.amount",
+            ),
+          }),
+        ],
+        dest: buildParachainLocation(instruction.destination),
+        xcm: instruction.remoteInstructions.map((nestedInstruction) =>
+          buildInstruction({
+            instruction: nestedInstruction,
+            currentChain: instruction.destination,
+            deploymentProfile,
+          }),
+        ),
+      });
     case "buy-execution":
       return Enum("BuyExecution", {
         fees: buildAsset({
-          chainKey: sendStep.destination,
+          chainKey: currentChain,
           assetKey: instruction.asset,
           amount: toBigInt(instruction.amount, "buy-execution.amount"),
         }),
@@ -260,7 +254,7 @@ function buildRemoteInstruction({
     case "transact":
       assertPublishedAdapterInvocation({
         adapterId: instruction.adapter,
-        chainKey: sendStep.destination,
+        chainKey: currentChain,
         deploymentProfile,
         targetAddress: instruction.targetAddress,
         contractCall: instruction.contractCall,

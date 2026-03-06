@@ -128,10 +128,12 @@ test("route engine quote provider returns adapter-backed remote calls", async ()
   });
 
   const quote = normalizeQuote(await provider.quote(intent));
-  const remoteInstructions = quote.executionPlan.steps[4].instructions[0].remoteInstructions;
+  const remoteInstructions = finalRemoteInstructions(quote);
 
   assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.LOCAL);
+  assert.deepEqual(quote.route, ["polkadot-hub", "asset-hub", "hydration"]);
   assert.equal(quote.submission.action, "call");
+  assert.equal(remoteInstructions[0].type, "buy-execution");
   assert.equal(remoteInstructions[1].type, "transact");
   assert.equal(remoteInstructions[1].adapter, "hydration-call-v1");
   assert.equal(remoteInstructions[1].targetAddress, "0x0000000000000000000000000000000000001003");
@@ -157,7 +159,7 @@ test("route engine quote provider selects published testnet deployments", async 
   });
 
   const quote = normalizeQuote(await provider.quote(intent));
-  const remoteInstructions = quote.executionPlan.steps[4].instructions[0].remoteInstructions;
+  const remoteInstructions = finalRemoteInstructions(quote);
 
   assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.TESTNET);
   assert.equal(remoteInstructions[1].targetAddress, "0x0000000000000000000000000000000000002003");
@@ -221,3 +223,11 @@ test("http quote provider forwards normalized intents and returns quotes", async
   assert.equal(quote.submission.action, "transfer");
   assert.equal(quote.fees.totalFee.amount, 370000000n);
 });
+
+function finalRemoteInstructions(quote) {
+  const sendStep = quote.executionPlan.steps.find((step) => step.type === "send-xcm");
+  const outerTransfer = sendStep.instructions[0];
+  const innerTransfer = outerTransfer.remoteInstructions[1];
+
+  return innerTransfer.remoteInstructions;
+}

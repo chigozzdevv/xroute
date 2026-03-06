@@ -19,6 +19,7 @@ import {
 } from "../xroute-precompile-interfaces/index.mjs";
 
 const execFileAsync = promisify(execFile);
+let serializedCommandQueue = Promise.resolve();
 
 export function createXRouteClient({
   quoteProvider,
@@ -185,6 +186,7 @@ export function createRouteEngineQuoteProvider({
   cwd,
   env,
   deploymentProfile = DEFAULT_DEPLOYMENT_PROFILE,
+  serializeCommands = command === "cargo",
 } = {}) {
   const normalizedDeploymentProfile = normalizeDeploymentProfile(deploymentProfile);
 
@@ -196,10 +198,12 @@ export function createRouteEngineQuoteProvider({
       );
 
       try {
-        const { stdout } = await execFileAsync(command, args, {
+        const { stdout } = await execSerializedCommand({
+          command,
+          args,
           cwd,
           env,
-          maxBuffer: 1024 * 1024,
+          serializeCommands,
         });
         return {
           ...JSON.parse(stdout),
@@ -368,8 +372,31 @@ function buildRouteEngineQuoteArgs(
         intent.action.params.calldata,
       ]);
     default:
-      throw new Error(`unsupported action type: ${intent.action.type}`);
+          throw new Error(`unsupported action type: ${intent.action.type}`);
   }
+}
+
+function execSerializedCommand({
+  command,
+  args,
+  cwd,
+  env,
+  serializeCommands,
+}) {
+  const invoke = () =>
+    execFileAsync(command, args, {
+      cwd,
+      env,
+      maxBuffer: 1024 * 1024,
+    });
+
+  if (!serializeCommands) {
+    return invoke();
+  }
+
+  const queued = serializedCommandQueue.then(invoke);
+  serializedCommandQueue = queued.catch(() => {});
+  return queued;
 }
 
 export {

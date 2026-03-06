@@ -13,4 +13,4 @@ pub use model::{
     ExecutionPlan, FeeBreakdown, FeeType, Intent, IntentAction, PlanStep, Quote, StakeIntent,
     SubmissionAction, SubmissionTerms, SwapIntent, TransferIntent, XcmInstruction, XcmWeight,
 };
-pub use registry::{CallRoute, RouteRegistry, StakeRoute, SwapRoute, TransferRoute};
+pub use registry::{CallRoute, RouteRegistry, StakeRoute, SwapRoute, TransferEdge, TransferPath};

@@ -88,10 +88,19 @@ export const ASSETS = Object.freeze({
   }),
 });
 
-export const ROUTES = Object.freeze([
+const USER_ROUTES = Object.freeze([
+  Object.freeze({
+    sourceChain: "polkadot-hub",
+    destinationChain: "asset-hub",
+    path: Object.freeze(["polkadot-hub", "asset-hub"]),
+    actions: Object.freeze([ACTION_TYPES.TRANSFER]),
+    transferableAssets: Object.freeze(["DOT"]),
+    swapPairs: Object.freeze([]),
+  }),
   Object.freeze({
     sourceChain: "polkadot-hub",
     destinationChain: "hydration",
+    path: Object.freeze(["polkadot-hub", "asset-hub", "hydration"]),
     actions: Object.freeze([
       ACTION_TYPES.TRANSFER,
       ACTION_TYPES.SWAP,
@@ -100,13 +109,8 @@ export const ROUTES = Object.freeze([
     ]),
     transferableAssets: Object.freeze(["DOT"]),
     swapPairs: Object.freeze([{ assetIn: "DOT", assetOut: "USDT" }]),
-  }),
-  Object.freeze({
-    sourceChain: "polkadot-hub",
-    destinationChain: "asset-hub",
-    actions: Object.freeze([ACTION_TYPES.TRANSFER]),
-    transferableAssets: Object.freeze(["DOT"]),
-    swapPairs: Object.freeze([]),
+    stakeAssets: Object.freeze(["DOT"]),
+    callAssets: Object.freeze(["DOT"]),
   }),
 ]);
 
@@ -147,14 +151,14 @@ export function getAssetLocation(assetKey, chainKey) {
 }
 
 export function listRoutes() {
-  return ROUTES.slice();
+  return USER_ROUTES.slice();
 }
 
 export function getRoute(sourceChain, destinationChain) {
   const normalizedSource = getChain(sourceChain).key;
   const normalizedDestination = getChain(destinationChain).key;
 
-  const route = ROUTES.find(
+  const route = USER_ROUTES.find(
     (candidate) =>
       candidate.sourceChain === normalizedSource &&
       candidate.destinationChain === normalizedDestination,
@@ -193,6 +197,34 @@ export function assertSwapRoute(sourceChain, destinationChain, assetInKey, asset
   if (!supported) {
     throw new Error(
       `swap ${assetIn.symbol} -> ${assetOut.symbol} is not supported on ${route.sourceChain} -> ${route.destinationChain}`,
+    );
+  }
+
+  return route;
+}
+
+export function assertStakeRoute(sourceChain, destinationChain, assetKey) {
+  const route = getRoute(sourceChain, destinationChain);
+  assertIncluded("action", ACTION_TYPES.STAKE, route.actions);
+  const asset = getAsset(assetKey);
+
+  if (!route.stakeAssets?.includes(asset.symbol)) {
+    throw new Error(
+      `stake ${asset.symbol} is not supported on ${route.sourceChain} -> ${route.destinationChain}`,
+    );
+  }
+
+  return route;
+}
+
+export function assertCallRoute(sourceChain, destinationChain, assetKey) {
+  const route = getRoute(sourceChain, destinationChain);
+  assertIncluded("action", ACTION_TYPES.CALL, route.actions);
+  const asset = getAsset(assetKey);
+
+  if (!route.callAssets?.includes(asset.symbol)) {
+    throw new Error(
+      `call ${asset.symbol} is not supported on ${route.sourceChain} -> ${route.destinationChain}`,
     );
   }
 

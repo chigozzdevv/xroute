@@ -10,10 +10,11 @@ import {
   toPlainObject,
 } from "../xroute-types/index.mjs";
 import {
+  assertCallRoute,
+  assertStakeRoute,
   assertSwapRoute,
   assertTransferRoute,
   getChain,
-  getRoute,
 } from "../xroute-chain-registry/index.mjs";
 
 export function createTransferIntent(input) {
@@ -153,15 +154,13 @@ function normalizeSwap(sourceChain, destinationChain, params) {
 }
 
 function normalizeStake(sourceChain, destinationChain, params) {
-  const route = getRoute(sourceChain, destinationChain);
-  if (!route.actions.includes(ACTION_TYPES.STAKE)) {
-    throw new Error(`stake is not supported on ${sourceChain} -> ${destinationChain}`);
-  }
+  const asset = assertNonEmptyString("action.params.asset", params.asset).toUpperCase();
+  assertStakeRoute(sourceChain, destinationChain, asset);
 
   return Object.freeze({
     type: ACTION_TYPES.STAKE,
     params: Object.freeze({
-      asset: assertNonEmptyString("action.params.asset", params.asset).toUpperCase(),
+      asset,
       amount: assertPositiveBigInt("action.params.amount", params.amount),
       validator: assertNonEmptyString("action.params.validator", params.validator),
       recipient: assertNonEmptyString("action.params.recipient", params.recipient),
@@ -170,15 +169,13 @@ function normalizeStake(sourceChain, destinationChain, params) {
 }
 
 function normalizeCall(sourceChain, destinationChain, params) {
-  const route = getRoute(sourceChain, destinationChain);
-  if (!route.actions.includes(ACTION_TYPES.CALL)) {
-    throw new Error(`call is not supported on ${sourceChain} -> ${destinationChain}`);
-  }
+  const asset = assertNonEmptyString("action.params.asset", params.asset).toUpperCase();
+  assertCallRoute(sourceChain, destinationChain, asset);
 
   return Object.freeze({
     type: ACTION_TYPES.CALL,
     params: Object.freeze({
-      asset: assertNonEmptyString("action.params.asset", params.asset).toUpperCase(),
+      asset,
       amount: assertPositiveBigInt("action.params.amount", params.amount),
       target: assertAddress("action.params.target", params.target),
       calldata: assertHexString("action.params.calldata", params.calldata),

@@ -5,7 +5,7 @@ use route_engine::{
 };
 
 #[test]
-fn quotes_hydration_swap_and_builds_adapter_transact_plan() {
+fn quotes_hydration_swap_over_a_multihop_path() {
     let engine = RouteEngine::default();
     let intent = Intent {
         source_chain: ChainKey::PolkadotHub,
@@ -26,20 +26,20 @@ fn quotes_hydration_swap_and_builds_adapter_transact_plan() {
     assert_eq!(quote.deployment_profile, DeploymentProfile::Local);
     assert_eq!(
         quote.route,
-        vec![ChainKey::PolkadotHub, ChainKey::Hydration]
+        vec![ChainKey::PolkadotHub, ChainKey::AssetHub, ChainKey::Hydration]
     );
-    assert_eq!(quote.fees.xcm_fee.amount, 150_000_000);
-    assert_eq!(quote.fees.destination_fee.amount, 100_000_000);
+    assert_eq!(quote.fees.xcm_fee.amount, 180_000_000);
+    assert_eq!(quote.fees.destination_fee.amount, 120_000_000);
     assert_eq!(quote.fees.platform_fee.amount, 1_000_000_000);
-    assert_eq!(quote.fees.total_fee.amount, 1_250_000_000);
+    assert_eq!(quote.fees.total_fee.amount, 1_300_000_000);
     assert_eq!(quote.expected_output.asset, AssetKey::Usdt);
     assert_eq!(quote.expected_output.amount, 493_515_000);
     assert_eq!(quote.min_output.expect("min output").amount, 490_000_000);
     assert_eq!(quote.submission.action, SubmissionAction::Swap);
     assert_eq!(quote.submission.asset, AssetKey::Dot);
     assert_eq!(quote.submission.amount, 1_000_000_000_000);
-    assert_eq!(quote.submission.xcm_fee, 150_000_000);
-    assert_eq!(quote.submission.destination_fee, 100_000_000);
+    assert_eq!(quote.submission.xcm_fee, 180_000_000);
+    assert_eq!(quote.submission.destination_fee, 120_000_000);
     assert_eq!(quote.submission.min_output_amount, 490_000_000);
 
     assert_eq!(
@@ -47,7 +47,7 @@ fn quotes_hydration_swap_and_builds_adapter_transact_plan() {
         PlanStep::LockAsset {
             chain: ChainKey::PolkadotHub,
             asset: AssetKey::Dot,
-            amount: 1_001_250_000_000,
+            amount: 1_001_300_000_000,
         }
     );
     assert_eq!(
@@ -59,66 +59,53 @@ fn quotes_hydration_swap_and_builds_adapter_transact_plan() {
         }
     );
 
-    match &quote.execution_plan.steps[4] {
-        PlanStep::SendXcm {
-            origin,
-            destination,
-            instructions,
-        } => {
-            assert_eq!(*origin, ChainKey::PolkadotHub);
-            assert_eq!(*destination, ChainKey::Hydration);
-            assert_eq!(instructions.len(), 1);
-
-            match &instructions[0] {
-                XcmInstruction::TransferReserveAsset {
-                    asset,
-                    amount,
-                    destination,
-                    remote_instructions,
-                } => {
-                    assert_eq!(*asset, AssetKey::Dot);
-                    assert_eq!(*amount, 1_000_000_000_000);
-                    assert_eq!(*destination, ChainKey::Hydration);
-                    assert_eq!(remote_instructions.len(), 3);
-                    assert_eq!(
-                        remote_instructions[0],
-                        XcmInstruction::BuyExecution {
-                            asset: AssetKey::Dot,
-                            amount: 100_000_000,
-                        }
-                    );
-                    assert_eq!(
-                        remote_instructions[1],
-                        XcmInstruction::Transact {
-                            adapter: DestinationAdapter::HydrationSwapV1,
-                            target_address: "0x0000000000000000000000000000000000001001".to_owned(),
-                            contract_call: remote_instructions[1]
-                                .contract_call()
-                                .expect("swap contract call")
-                                .to_owned(),
-                            fallback_weight: XcmWeight {
-                                ref_time: 3_500_000_000,
-                                proof_size: 120_000,
-                            },
-                        }
-                    );
-                    assert!(remote_instructions[1]
-                        .contract_call()
-                        .expect("swap contract call")
-                        .starts_with("0x670b1f29"));
-                    assert_eq!(
-                        remote_instructions[2],
-                        XcmInstruction::DepositAsset {
-                            asset: AssetKey::Usdt,
-                            recipient: "5FswapRecipient".to_owned(),
-                        }
-                    );
-                }
-                other => panic!("unexpected instruction: {other:?}"),
-            }
+    let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
+    assert_eq!(outer_transfer.destination(), ChainKey::AssetHub);
+    assert_eq!(outer_transfer.amount(), 1_000_000_000_000);
+    assert_eq!(
+        outer_transfer.remote_instructions()[0],
+        XcmInstruction::BuyExecution {
+            asset: AssetKey::Dot,
+            amount: 20_000_000,
         }
-        other => panic!("unexpected plan step: {other:?}"),
-    }
+    );
+
+    let inner_transfer = nested_transfer_instruction(outer_transfer.remote_instructions(), 1);
+    assert_eq!(inner_transfer.destination(), ChainKey::Hydration);
+    assert_eq!(inner_transfer.amount(), 1_000_000_000_000);
+    assert_eq!(
+        inner_transfer.remote_instructions()[0],
+        XcmInstruction::BuyExecution {
+            asset: AssetKey::Dot,
+            amount: 100_000_000,
+        }
+    );
+    assert_eq!(
+        inner_transfer.remote_instructions()[1],
+        XcmInstruction::Transact {
+            adapter: DestinationAdapter::HydrationSwapV1,
+            target_address: "0x0000000000000000000000000000000000001001".to_owned(),
+            contract_call: inner_transfer.remote_instructions()[1]
+                .contract_call()
+                .expect("swap contract call")
+                .to_owned(),
+            fallback_weight: XcmWeight {
+                ref_time: 3_500_000_000,
+                proof_size: 120_000,
+            },
+        }
+    );
+    assert!(inner_transfer.remote_instructions()[1]
+        .contract_call()
+        .expect("swap contract call")
+        .starts_with("0x670b1f29"));
+    assert_eq!(
+        inner_transfer.remote_instructions()[2],
+        XcmInstruction::DepositAsset {
+            asset: AssetKey::Usdt,
+            recipient: "5FswapRecipient".to_owned(),
+        }
+    );
 }
 
 #[test]
@@ -152,49 +139,25 @@ fn quotes_asset_transfer_and_builds_delivery_plan() {
     assert_eq!(quote.submission.destination_fee, 20_000_000);
     assert_eq!(quote.submission.min_output_amount, 250_000_000_000);
 
-    match &quote.execution_plan.steps[4] {
-        PlanStep::SendXcm {
-            origin,
-            destination,
-            instructions,
-        } => {
-            assert_eq!(*origin, ChainKey::PolkadotHub);
-            assert_eq!(*destination, ChainKey::AssetHub);
-            assert_eq!(instructions.len(), 1);
-
-            match &instructions[0] {
-                XcmInstruction::TransferReserveAsset {
-                    asset,
-                    amount,
-                    destination,
-                    remote_instructions,
-                } => {
-                    assert_eq!(*asset, AssetKey::Dot);
-                    assert_eq!(*amount, 250_000_000_000);
-                    assert_eq!(*destination, ChainKey::AssetHub);
-                    assert_eq!(
-                        remote_instructions,
-                        &vec![
-                            XcmInstruction::BuyExecution {
-                                asset: AssetKey::Dot,
-                                amount: 20_000_000,
-                            },
-                            XcmInstruction::DepositAsset {
-                                asset: AssetKey::Dot,
-                                recipient: "5FtransferRecipient".to_owned(),
-                            },
-                        ]
-                    );
-                }
-                other => panic!("unexpected instruction: {other:?}"),
-            }
-        }
-        other => panic!("unexpected plan step: {other:?}"),
-    }
+    let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
+    assert_eq!(outer_transfer.destination(), ChainKey::AssetHub);
+    assert_eq!(
+        outer_transfer.remote_instructions(),
+        &vec![
+            XcmInstruction::BuyExecution {
+                asset: AssetKey::Dot,
+                amount: 20_000_000,
+            },
+            XcmInstruction::DepositAsset {
+                asset: AssetKey::Dot,
+                recipient: "5FtransferRecipient".to_owned(),
+            },
+        ]
+    );
 }
 
 #[test]
-fn quotes_hydration_stake_and_builds_adapter_transact_plan() {
+fn quotes_hydration_stake_over_a_multihop_path() {
     let engine = RouteEngine::default();
     let intent = Intent {
         source_chain: ChainKey::PolkadotHub,
@@ -212,45 +175,42 @@ fn quotes_hydration_stake_and_builds_adapter_transact_plan() {
     let quote = engine.quote(intent).expect("stake quote should build");
 
     assert_eq!(quote.deployment_profile, DeploymentProfile::Local);
+    assert_eq!(
+        quote.route,
+        vec![ChainKey::PolkadotHub, ChainKey::AssetHub, ChainKey::Hydration]
+    );
     assert_eq!(quote.submission.action, SubmissionAction::Stake);
+    assert_eq!(quote.submission.xcm_fee, 180_000_000);
+    assert_eq!(quote.submission.destination_fee, 120_000_000);
     assert_eq!(quote.submission.min_output_amount, 0);
     assert!(quote.min_output.is_none());
 
-    match &quote.execution_plan.steps[4] {
-        PlanStep::SendXcm { instructions, .. } => match &instructions[0] {
-            XcmInstruction::TransferReserveAsset {
-                remote_instructions,
-                ..
-            } => {
-                assert_eq!(remote_instructions.len(), 2);
-                assert_eq!(
-                    remote_instructions[1],
-                    XcmInstruction::Transact {
-                        adapter: DestinationAdapter::HydrationStakeV1,
-                        target_address: "0x0000000000000000000000000000000000001002".to_owned(),
-                        contract_call: remote_instructions[1]
-                            .contract_call()
-                            .expect("stake contract call")
-                            .to_owned(),
-                        fallback_weight: XcmWeight {
-                            ref_time: 4_000_000_000,
-                            proof_size: 140_000,
-                        },
-                    }
-                );
-                assert!(remote_instructions[1]
-                    .contract_call()
-                    .expect("stake contract call")
-                    .starts_with("0xdfabdde3"));
-            }
-            other => panic!("unexpected instruction: {other:?}"),
-        },
-        other => panic!("unexpected plan step: {other:?}"),
-    }
+    let inner_transfer =
+        nested_transfer_instruction(first_transfer_instruction(&quote.execution_plan.steps[4]).remote_instructions(), 1);
+    assert_eq!(inner_transfer.remote_instructions().len(), 2);
+    assert_eq!(
+        inner_transfer.remote_instructions()[1],
+        XcmInstruction::Transact {
+            adapter: DestinationAdapter::HydrationStakeV1,
+            target_address: "0x0000000000000000000000000000000000001002".to_owned(),
+            contract_call: inner_transfer.remote_instructions()[1]
+                .contract_call()
+                .expect("stake contract call")
+                .to_owned(),
+            fallback_weight: XcmWeight {
+                ref_time: 4_000_000_000,
+                proof_size: 140_000,
+            },
+        }
+    );
+    assert!(inner_transfer.remote_instructions()[1]
+        .contract_call()
+        .expect("stake contract call")
+        .starts_with("0xdfabdde3"));
 }
 
 #[test]
-fn quotes_hydration_call_and_builds_adapter_transact_plan() {
+fn quotes_hydration_call_over_a_multihop_path() {
     let engine = RouteEngine::default();
     let intent = Intent {
         source_chain: ChainKey::PolkadotHub,
@@ -268,54 +228,38 @@ fn quotes_hydration_call_and_builds_adapter_transact_plan() {
     let quote = engine.quote(intent).expect("call quote should build");
 
     assert_eq!(quote.deployment_profile, DeploymentProfile::Local);
+    assert_eq!(
+        quote.route,
+        vec![ChainKey::PolkadotHub, ChainKey::AssetHub, ChainKey::Hydration]
+    );
     assert_eq!(quote.submission.action, SubmissionAction::Call);
+    assert_eq!(quote.submission.xcm_fee, 180_000_000);
+    assert_eq!(quote.submission.destination_fee, 120_000_000);
     assert_eq!(quote.submission.min_output_amount, 0);
     assert_eq!(quote.expected_output.amount, 0);
 
-    match &quote.execution_plan.steps[4] {
-        PlanStep::SendXcm { instructions, .. } => match &instructions[0] {
-            XcmInstruction::TransferReserveAsset {
-                remote_instructions,
-                ..
-            } => {
-                assert_eq!(remote_instructions.len(), 2);
-                assert_eq!(
-                    remote_instructions[1],
-                    XcmInstruction::Transact {
-                        adapter: DestinationAdapter::HydrationCallV1,
-                        target_address: "0x0000000000000000000000000000000000001003".to_owned(),
-                        contract_call: remote_instructions[1]
-                            .contract_call()
-                            .expect("call contract call")
-                            .to_owned(),
-                        fallback_weight: XcmWeight {
-                            ref_time: 3_000_000_000,
-                            proof_size: 110_000,
-                        },
-                    }
-                );
-                assert!(remote_instructions[1]
-                    .contract_call()
-                    .expect("call contract call")
-                    .starts_with("0x7db7dbf6"));
-            }
-            other => panic!("unexpected instruction: {other:?}"),
-        },
-        other => panic!("unexpected plan step: {other:?}"),
-    }
-}
-
-trait InstructionExt {
-    fn contract_call(&self) -> Option<&str>;
-}
-
-impl InstructionExt for XcmInstruction {
-    fn contract_call(&self) -> Option<&str> {
-        match self {
-            XcmInstruction::Transact { contract_call, .. } => Some(contract_call.as_str()),
-            _ => None,
+    let inner_transfer =
+        nested_transfer_instruction(first_transfer_instruction(&quote.execution_plan.steps[4]).remote_instructions(), 1);
+    assert_eq!(inner_transfer.remote_instructions().len(), 2);
+    assert_eq!(
+        inner_transfer.remote_instructions()[1],
+        XcmInstruction::Transact {
+            adapter: DestinationAdapter::HydrationCallV1,
+            target_address: "0x0000000000000000000000000000000000001003".to_owned(),
+            contract_call: inner_transfer.remote_instructions()[1]
+                .contract_call()
+                .expect("call contract call")
+                .to_owned(),
+            fallback_weight: XcmWeight {
+                ref_time: 3_000_000_000,
+                proof_size: 110_000,
+            },
         }
-    }
+    );
+    assert!(inner_transfer.remote_instructions()[1]
+        .contract_call()
+        .expect("call contract call")
+        .starts_with("0x7db7dbf6"));
 }
 
 #[test]
@@ -347,19 +291,74 @@ fn quotes_hydration_swap_against_testnet_deployments() {
 
     assert_eq!(quote.deployment_profile, DeploymentProfile::Testnet);
 
-    match &quote.execution_plan.steps[4] {
+    let inner_transfer =
+        nested_transfer_instruction(first_transfer_instruction(&quote.execution_plan.steps[4]).remote_instructions(), 1);
+    match &inner_transfer.remote_instructions()[1] {
+        XcmInstruction::Transact { target_address, .. } => {
+            assert_eq!(target_address, "0x0000000000000000000000000000000000002001");
+        }
+        other => panic!("unexpected instruction: {other:?}"),
+    }
+}
+
+trait InstructionExt {
+    fn contract_call(&self) -> Option<&str>;
+}
+
+impl InstructionExt for XcmInstruction {
+    fn contract_call(&self) -> Option<&str> {
+        match self {
+            XcmInstruction::Transact { contract_call, .. } => Some(contract_call.as_str()),
+            _ => None,
+        }
+    }
+}
+
+fn first_transfer_instruction(step: &PlanStep) -> &XcmInstruction {
+    match step {
         PlanStep::SendXcm { instructions, .. } => match &instructions[0] {
-            XcmInstruction::TransferReserveAsset {
-                remote_instructions,
-                ..
-            } => match &remote_instructions[1] {
-                XcmInstruction::Transact { target_address, .. } => {
-                    assert_eq!(target_address, "0x0000000000000000000000000000000000002001");
-                }
-                other => panic!("unexpected instruction: {other:?}"),
-            },
+            instruction @ XcmInstruction::TransferReserveAsset { .. } => instruction,
             other => panic!("unexpected instruction: {other:?}"),
         },
         other => panic!("unexpected plan step: {other:?}"),
+    }
+}
+
+fn nested_transfer_instruction(instructions: &[XcmInstruction], index: usize) -> &XcmInstruction {
+    match &instructions[index] {
+        instruction @ XcmInstruction::TransferReserveAsset { .. } => instruction,
+        other => panic!("unexpected nested instruction: {other:?}"),
+    }
+}
+
+trait TransferInstructionExt {
+    fn destination(&self) -> ChainKey;
+    fn amount(&self) -> u128;
+    fn remote_instructions(&self) -> &[XcmInstruction];
+}
+
+impl TransferInstructionExt for XcmInstruction {
+    fn destination(&self) -> ChainKey {
+        match self {
+            XcmInstruction::TransferReserveAsset { destination, .. } => *destination,
+            _ => panic!("instruction is not a reserve transfer"),
+        }
+    }
+
+    fn amount(&self) -> u128 {
+        match self {
+            XcmInstruction::TransferReserveAsset { amount, .. } => *amount,
+            _ => panic!("instruction is not a reserve transfer"),
+        }
+    }
+
+    fn remote_instructions(&self) -> &[XcmInstruction] {
+        match self {
+            XcmInstruction::TransferReserveAsset {
+                remote_instructions,
+                ..
+            } => remote_instructions.as_slice(),
+            _ => panic!("instruction is not a reserve transfer"),
+        }
     }
 }

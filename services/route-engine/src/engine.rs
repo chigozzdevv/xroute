@@ -5,7 +5,7 @@ use crate::model::{
     AssetAmount, AssetKey, DeploymentProfile, DestinationAdapter, FeeBreakdown, FeeType, Intent,
     IntentAction, PlanStep, Quote, SubmissionAction, SubmissionTerms, XcmInstruction,
 };
-use crate::registry::{CallRoute, RouteRegistry, StakeRoute, SwapRoute, TransferRoute};
+use crate::registry::{CallRoute, RouteRegistry, StakeRoute, SwapRoute, TransferPath};
 
 #[derive(Debug, Clone, Copy)]
 pub struct EngineSettings {
@@ -38,13 +38,9 @@ impl RouteEngine {
 
         match &intent.action {
             IntentAction::Transfer(transfer) => {
-                let route = self
+                let path = self
                     .registry
-                    .transfer_route(
-                        intent.source_chain,
-                        intent.destination_chain,
-                        transfer.asset,
-                    )
+                    .best_transfer_path(intent.source_chain, intent.destination_chain, transfer.asset)
                     .ok_or(RouteError::UnsupportedTransferRoute {
                         source: intent.source_chain,
                         destination: intent.destination_chain,
@@ -53,10 +49,10 @@ impl RouteEngine {
 
                 let fees = self.fee_breakdown(
                     intent.principal_amount().amount,
-                    route.xcm_fee,
-                    route.destination_fee,
+                    path.xcm_fee,
+                    path.destination_fee,
                 )?;
-                let execution_plan = build_transfer_plan(&intent, route, &fees)?;
+                let execution_plan = build_transfer_plan(&intent, &path, &fees)?;
 
                 Ok(Quote {
                     quote_id,
@@ -69,22 +65,26 @@ impl RouteEngine {
                         action: SubmissionAction::Transfer,
                         asset: transfer.asset,
                         amount: transfer.amount,
-                        xcm_fee: route.xcm_fee.amount,
-                        destination_fee: route.destination_fee.amount,
+                        xcm_fee: path.xcm_fee.amount,
+                        destination_fee: path.destination_fee.amount,
                         min_output_amount: transfer.amount,
                     },
                     execution_plan,
                 })
             }
             IntentAction::Swap(swap) => {
+                let path = self
+                    .registry
+                    .best_transfer_path(intent.source_chain, intent.destination_chain, swap.asset_in)
+                    .ok_or(RouteError::UnsupportedSwapRoute {
+                        source: intent.source_chain,
+                        destination: intent.destination_chain,
+                        asset_in: swap.asset_in,
+                        asset_out: swap.asset_out,
+                    })?;
                 let route = self
                     .registry
-                    .swap_route(
-                        intent.source_chain,
-                        intent.destination_chain,
-                        swap.asset_in,
-                        swap.asset_out,
-                    )
+                    .swap_route(intent.destination_chain, swap.asset_in, swap.asset_out)
                     .ok_or(RouteError::UnsupportedSwapRoute {
                         source: intent.source_chain,
                         destination: intent.destination_chain,
@@ -92,7 +92,7 @@ impl RouteEngine {
                         asset_out: swap.asset_out,
                     })?;
 
-                let expected_output = quote_swap_output(route, swap.amount_in)?;
+                let expected_output = quote_swap_output(&route, swap.amount_in)?;
                 if swap.min_amount_out > expected_output.amount {
                     return Err(RouteError::MinOutputTooHigh {
                         requested: swap.min_amount_out,
@@ -102,11 +102,11 @@ impl RouteEngine {
 
                 let fees = self.fee_breakdown(
                     intent.principal_amount().amount,
-                    route.xcm_fee,
-                    route.destination_fee,
+                    path.xcm_fee,
+                    path.destination_fee,
                 )?;
                 let execution_plan =
-                    build_swap_plan(&intent, route, &fees, self.settings.deployment_profile)?;
+                    build_swap_plan(&intent, &path, &route, &fees, self.settings.deployment_profile)?;
 
                 Ok(Quote {
                     quote_id,
@@ -119,17 +119,25 @@ impl RouteEngine {
                         action: SubmissionAction::Swap,
                         asset: swap.asset_in,
                         amount: swap.amount_in,
-                        xcm_fee: route.xcm_fee.amount,
-                        destination_fee: route.destination_fee.amount,
+                        xcm_fee: path.xcm_fee.amount,
+                        destination_fee: path.destination_fee.amount,
                         min_output_amount: swap.min_amount_out,
                     },
                     execution_plan,
                 })
             }
             IntentAction::Stake(stake) => {
+                let path = self
+                    .registry
+                    .best_transfer_path(intent.source_chain, intent.destination_chain, stake.asset)
+                    .ok_or(RouteError::UnsupportedStakeRoute {
+                        source: intent.source_chain,
+                        destination: intent.destination_chain,
+                        asset: stake.asset,
+                    })?;
                 let route = self
                     .registry
-                    .stake_route(intent.source_chain, intent.destination_chain, stake.asset)
+                    .stake_route(intent.destination_chain, stake.asset)
                     .ok_or(RouteError::UnsupportedStakeRoute {
                         source: intent.source_chain,
                         destination: intent.destination_chain,
@@ -138,11 +146,11 @@ impl RouteEngine {
 
                 let fees = self.fee_breakdown(
                     intent.principal_amount().amount,
-                    route.xcm_fee,
-                    route.destination_fee,
+                    path.xcm_fee,
+                    path.destination_fee,
                 )?;
                 let execution_plan =
-                    build_stake_plan(&intent, route, &fees, self.settings.deployment_profile)?;
+                    build_stake_plan(&intent, &path, &route, &fees, self.settings.deployment_profile)?;
 
                 Ok(Quote {
                     quote_id,
@@ -155,17 +163,25 @@ impl RouteEngine {
                         action: SubmissionAction::Stake,
                         asset: stake.asset,
                         amount: stake.amount,
-                        xcm_fee: route.xcm_fee.amount,
-                        destination_fee: route.destination_fee.amount,
+                        xcm_fee: path.xcm_fee.amount,
+                        destination_fee: path.destination_fee.amount,
                         min_output_amount: 0,
                     },
                     execution_plan,
                 })
             }
             IntentAction::Call(call) => {
+                let path = self
+                    .registry
+                    .best_transfer_path(intent.source_chain, intent.destination_chain, call.asset)
+                    .ok_or(RouteError::UnsupportedCallRoute {
+                        source: intent.source_chain,
+                        destination: intent.destination_chain,
+                        asset: call.asset,
+                    })?;
                 let route = self
                     .registry
-                    .call_route(intent.source_chain, intent.destination_chain, call.asset)
+                    .call_route(intent.destination_chain, call.asset)
                     .ok_or(RouteError::UnsupportedCallRoute {
                         source: intent.source_chain,
                         destination: intent.destination_chain,
@@ -174,11 +190,11 @@ impl RouteEngine {
 
                 let fees = self.fee_breakdown(
                     intent.principal_amount().amount,
-                    route.xcm_fee,
-                    route.destination_fee,
+                    path.xcm_fee,
+                    path.destination_fee,
                 )?;
                 let execution_plan =
-                    build_call_plan(&intent, route, &fees, self.settings.deployment_profile)?;
+                    build_call_plan(&intent, &path, &route, &fees, self.settings.deployment_profile)?;
 
                 Ok(Quote {
                     quote_id,
@@ -191,8 +207,8 @@ impl RouteEngine {
                         action: SubmissionAction::Call,
                         asset: call.asset,
                         amount: call.amount,
-                        xcm_fee: route.xcm_fee.amount,
-                        destination_fee: route.destination_fee.amount,
+                        xcm_fee: path.xcm_fee.amount,
+                        destination_fee: path.destination_fee.amount,
                         min_output_amount: 0,
                     },
                     execution_plan,
@@ -227,7 +243,7 @@ impl RouteEngine {
 
 fn build_transfer_plan(
     intent: &Intent,
-    route: &TransferRoute,
+    path: &TransferPath,
     fees: &FeeBreakdown,
 ) -> Result<crate::model::ExecutionPlan, RouteError> {
     let principal = intent.principal_amount();
@@ -240,13 +256,17 @@ fn build_transfer_plan(
         IntentAction::Transfer(transfer) => transfer.recipient.clone(),
         _ => unreachable!(),
     };
+    let final_remote_instructions = vec![XcmInstruction::DepositAsset {
+        asset: principal.asset,
+        recipient: recipient.clone(),
+    }];
 
     Ok(crate::model::ExecutionPlan {
-        route: vec![route.source, route.destination],
+        route: path.route.clone(),
         steps: vec![
             PlanStep::LockAsset {
-                chain: route.source,
-                asset: route.asset,
+                chain: intent.source_chain,
+                asset: principal.asset,
                 amount: locked,
             },
             PlanStep::ChargeFee {
@@ -265,27 +285,21 @@ fn build_transfer_plan(
                 amount: fees.destination_fee.amount,
             },
             PlanStep::SendXcm {
-                origin: route.source,
-                destination: route.destination,
-                instructions: vec![XcmInstruction::TransferReserveAsset {
-                    asset: route.asset,
-                    amount: principal.amount,
-                    destination: route.destination,
-                    remote_instructions: vec![
-                        XcmInstruction::BuyExecution {
-                            asset: fees.destination_fee.asset,
-                            amount: fees.destination_fee.amount,
-                        },
-                        XcmInstruction::DepositAsset {
-                            asset: route.asset,
-                            recipient: recipient.clone(),
-                        },
-                    ],
-                }],
+                origin: intent.source_chain,
+                destination: *path
+                    .route
+                    .get(1)
+                    .ok_or(RouteError::ArithmeticOverflow)?,
+                instructions: vec![build_multihop_transfer_instruction(
+                    &path.hops,
+                    0,
+                    principal.amount,
+                    final_remote_instructions,
+                )],
             },
             PlanStep::ExpectSettlement {
-                chain: route.destination,
-                asset: route.asset,
+                chain: intent.destination_chain,
+                asset: principal.asset,
                 recipient,
                 minimum_amount: Some(principal.amount),
             },
@@ -295,6 +309,7 @@ fn build_transfer_plan(
 
 fn build_swap_plan(
     intent: &Intent,
+    path: &TransferPath,
     route: &SwapRoute,
     fees: &FeeBreakdown,
     deployment_profile: DeploymentProfile,
@@ -309,12 +324,36 @@ fn build_swap_plan(
         IntentAction::Swap(swap) => swap,
         _ => unreachable!(),
     };
+    let final_remote_instructions = vec![
+        XcmInstruction::Transact {
+            adapter: route.adapter,
+            target_address: destination_adapter_address(
+                route.adapter,
+                route.destination,
+                deployment_profile,
+            )?
+            .to_owned(),
+            contract_call: encode_swap_adapter_call(
+                route.adapter,
+                swap.asset_in,
+                swap.asset_out,
+                swap.amount_in,
+                swap.min_amount_out,
+                &swap.recipient,
+            )?,
+            fallback_weight: route.transact_weight,
+        },
+        XcmInstruction::DepositAsset {
+            asset: swap.asset_out,
+            recipient: swap.recipient.clone(),
+        },
+    ];
 
     Ok(crate::model::ExecutionPlan {
-        route: vec![route.source, route.destination],
+        route: path.route.clone(),
         steps: vec![
             PlanStep::LockAsset {
-                chain: route.source,
+                chain: intent.source_chain,
                 asset: route.asset_in,
                 amount: locked,
             },
@@ -334,41 +373,17 @@ fn build_swap_plan(
                 amount: fees.destination_fee.amount,
             },
             PlanStep::SendXcm {
-                origin: route.source,
-                destination: route.destination,
-                instructions: vec![XcmInstruction::TransferReserveAsset {
-                    asset: route.asset_in,
-                    amount: swap.amount_in,
-                    destination: route.destination,
-                    remote_instructions: vec![
-                        XcmInstruction::BuyExecution {
-                            asset: fees.destination_fee.asset,
-                            amount: fees.destination_fee.amount,
-                        },
-                        XcmInstruction::Transact {
-                            adapter: route.adapter,
-                            target_address: destination_adapter_address(
-                                route.adapter,
-                                route.destination,
-                                deployment_profile,
-                            )?
-                            .to_owned(),
-                            contract_call: encode_swap_adapter_call(
-                                route.adapter,
-                                swap.asset_in,
-                                swap.asset_out,
-                                swap.amount_in,
-                                swap.min_amount_out,
-                                &swap.recipient,
-                            )?,
-                            fallback_weight: route.transact_weight,
-                        },
-                        XcmInstruction::DepositAsset {
-                            asset: swap.asset_out,
-                            recipient: swap.recipient.clone(),
-                        },
-                    ],
-                }],
+                origin: intent.source_chain,
+                destination: *path
+                    .route
+                    .get(1)
+                    .ok_or(RouteError::ArithmeticOverflow)?,
+                instructions: vec![build_multihop_transfer_instruction(
+                    &path.hops,
+                    0,
+                    swap.amount_in,
+                    final_remote_instructions,
+                )],
             },
             PlanStep::ExpectSettlement {
                 chain: route.destination,
@@ -382,6 +397,7 @@ fn build_swap_plan(
 
 fn build_stake_plan(
     intent: &Intent,
+    path: &TransferPath,
     route: &StakeRoute,
     fees: &FeeBreakdown,
     deployment_profile: DeploymentProfile,
@@ -396,12 +412,29 @@ fn build_stake_plan(
         IntentAction::Stake(stake) => stake,
         _ => unreachable!(),
     };
+    let final_remote_instructions = vec![XcmInstruction::Transact {
+        adapter: route.adapter,
+        target_address: destination_adapter_address(
+            route.adapter,
+            route.destination,
+            deployment_profile,
+        )?
+        .to_owned(),
+        contract_call: encode_stake_adapter_call(
+            route.adapter,
+            stake.asset,
+            stake.amount,
+            &stake.validator,
+            &stake.recipient,
+        )?,
+        fallback_weight: route.transact_weight,
+    }];
 
     Ok(crate::model::ExecutionPlan {
-        route: vec![route.source, route.destination],
+        route: path.route.clone(),
         steps: vec![
             PlanStep::LockAsset {
-                chain: route.source,
+                chain: intent.source_chain,
                 asset: route.asset,
                 amount: locked,
             },
@@ -421,36 +454,17 @@ fn build_stake_plan(
                 amount: fees.destination_fee.amount,
             },
             PlanStep::SendXcm {
-                origin: route.source,
-                destination: route.destination,
-                instructions: vec![XcmInstruction::TransferReserveAsset {
-                    asset: route.asset,
-                    amount: stake.amount,
-                    destination: route.destination,
-                    remote_instructions: vec![
-                        XcmInstruction::BuyExecution {
-                            asset: fees.destination_fee.asset,
-                            amount: fees.destination_fee.amount,
-                        },
-                        XcmInstruction::Transact {
-                            adapter: route.adapter,
-                            target_address: destination_adapter_address(
-                                route.adapter,
-                                route.destination,
-                                deployment_profile,
-                            )?
-                            .to_owned(),
-                            contract_call: encode_stake_adapter_call(
-                                route.adapter,
-                                stake.asset,
-                                stake.amount,
-                                &stake.validator,
-                                &stake.recipient,
-                            )?,
-                            fallback_weight: route.transact_weight,
-                        },
-                    ],
-                }],
+                origin: intent.source_chain,
+                destination: *path
+                    .route
+                    .get(1)
+                    .ok_or(RouteError::ArithmeticOverflow)?,
+                instructions: vec![build_multihop_transfer_instruction(
+                    &path.hops,
+                    0,
+                    stake.amount,
+                    final_remote_instructions,
+                )],
             },
             PlanStep::ExpectSettlement {
                 chain: route.destination,
@@ -464,6 +478,7 @@ fn build_stake_plan(
 
 fn build_call_plan(
     intent: &Intent,
+    path: &TransferPath,
     route: &CallRoute,
     fees: &FeeBreakdown,
     deployment_profile: DeploymentProfile,
@@ -478,12 +493,29 @@ fn build_call_plan(
         IntentAction::Call(call) => call,
         _ => unreachable!(),
     };
+    let final_remote_instructions = vec![XcmInstruction::Transact {
+        adapter: route.adapter,
+        target_address: destination_adapter_address(
+            route.adapter,
+            route.destination,
+            deployment_profile,
+        )?
+        .to_owned(),
+        contract_call: encode_call_adapter_call(
+            route.adapter,
+            call.asset,
+            call.amount,
+            &call.target,
+            &call.calldata,
+        )?,
+        fallback_weight: route.transact_weight,
+    }];
 
     Ok(crate::model::ExecutionPlan {
-        route: vec![route.source, route.destination],
+        route: path.route.clone(),
         steps: vec![
             PlanStep::LockAsset {
-                chain: route.source,
+                chain: intent.source_chain,
                 asset: route.asset,
                 amount: locked,
             },
@@ -503,39 +535,51 @@ fn build_call_plan(
                 amount: fees.destination_fee.amount,
             },
             PlanStep::SendXcm {
-                origin: route.source,
-                destination: route.destination,
-                instructions: vec![XcmInstruction::TransferReserveAsset {
-                    asset: route.asset,
-                    amount: call.amount,
-                    destination: route.destination,
-                    remote_instructions: vec![
-                        XcmInstruction::BuyExecution {
-                            asset: fees.destination_fee.asset,
-                            amount: fees.destination_fee.amount,
-                        },
-                        XcmInstruction::Transact {
-                            adapter: route.adapter,
-                            target_address: destination_adapter_address(
-                                route.adapter,
-                                route.destination,
-                                deployment_profile,
-                            )?
-                            .to_owned(),
-                            contract_call: encode_call_adapter_call(
-                                route.adapter,
-                                call.asset,
-                                call.amount,
-                                &call.target,
-                                &call.calldata,
-                            )?,
-                            fallback_weight: route.transact_weight,
-                        },
-                    ],
-                }],
+                origin: intent.source_chain,
+                destination: *path
+                    .route
+                    .get(1)
+                    .ok_or(RouteError::ArithmeticOverflow)?,
+                instructions: vec![build_multihop_transfer_instruction(
+                    &path.hops,
+                    0,
+                    call.amount,
+                    final_remote_instructions,
+                )],
             },
         ],
     })
+}
+
+fn build_multihop_transfer_instruction(
+    hops: &[crate::registry::TransferEdge],
+    index: usize,
+    amount: u128,
+    final_remote_instructions: Vec<XcmInstruction>,
+) -> XcmInstruction {
+    let hop = hops[index];
+    let mut remote_instructions = vec![XcmInstruction::BuyExecution {
+        asset: hop.buy_execution_fee.asset,
+        amount: hop.buy_execution_fee.amount,
+    }];
+
+    if index + 1 < hops.len() {
+        remote_instructions.push(build_multihop_transfer_instruction(
+            hops,
+            index + 1,
+            amount,
+            final_remote_instructions,
+        ));
+    } else {
+        remote_instructions.extend(final_remote_instructions);
+    }
+
+    XcmInstruction::TransferReserveAsset {
+        asset: hop.asset,
+        amount,
+        destination: hop.destination,
+        remote_instructions,
+    }
 }
 
 fn quote_swap_output(route: &SwapRoute, amount_in: u128) -> Result<AssetAmount, RouteError> {
