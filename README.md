@@ -34,11 +34,7 @@ const { intent, quote } = await router.quote({
 await router.execute({
   intent,
   quote,
-  owner: userAddress,
-  envelope: {
-    mode: "execute",
-    message: "0x1234"
-  }
+  owner: userAddress
 });
 ```
 
@@ -117,7 +113,7 @@ xroute/
 - `packages/xroute-types`
   - shared types
 - `packages/xroute-xcm`
-  - shared execution-plan models and decode helpers
+  - metadata-backed XCM payload encoding from route plans
 - `services/route-engine`
   - Rust quote and payload builder
 - `services/status-indexer`

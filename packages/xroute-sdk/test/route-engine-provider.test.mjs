@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createTransferIntent } from "../../xroute-intents/index.mjs";
-import { createRouteEngineQuoteProvider, normalizeQuote } from "../index.mjs";
+import { createSwapIntent, createTransferIntent } from "../../xroute-intents/index.mjs";
+import { createRouteEngineQuoteProvider, createXRouteClient, normalizeQuote } from "../index.mjs";
 
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+const aliceAddress = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
 
 test("route engine quote provider bridges the rust planner", async () => {
   const provider = createRouteEngineQuoteProvider({
@@ -31,4 +32,69 @@ test("route engine quote provider bridges the rust planner", async () => {
   assert.equal(quote.submission.action, "transfer");
   assert.equal(quote.submission.amount, 250000000000n);
   assert.equal(quote.fees.totalFee.amount, 370000000n);
+});
+
+test("sdk execute derives the XCM envelope from the route-engine quote", async () => {
+  const provider = createRouteEngineQuoteProvider({
+    cwd: workspaceRoot,
+  });
+
+  class MemoryRouterAdapter {
+    async submitIntent({ request }) {
+      this.submitted = request;
+      return {
+        intentId: "0xintent",
+        request,
+      };
+    }
+
+    async dispatchIntent({ request }) {
+      this.dispatched = request;
+      return {
+        intentId: "0xintent",
+        request,
+      };
+    }
+  }
+
+  const routerAdapter = new MemoryRouterAdapter();
+  const client = createXRouteClient({
+    quoteProvider: provider,
+    routerAdapter,
+    statusProvider: {
+      getStatus() {
+        return null;
+      },
+      getTimeline() {
+        return [];
+      },
+      subscribe() {
+        return () => {};
+      },
+    },
+    assetAddressResolver: async () => "0x0000000000000000000000000000000000000401",
+  });
+  const intent = createSwapIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    refundAddress: aliceAddress,
+    deadline: 1_773_185_200,
+    params: {
+      assetIn: "DOT",
+      assetOut: "USDT",
+      amountIn: "1000000000000",
+      minAmountOut: "490000000",
+      recipient: aliceAddress,
+    },
+  });
+
+  const execution = await client.execute({
+    intent,
+    owner: aliceAddress,
+  });
+
+  assert.equal(execution.submitted.request.actionType, 1);
+  assert.match(execution.submitted.request.executionHash, /^0x[0-9a-f]{64}$/);
+  assert.equal(routerAdapter.dispatched.mode, 0);
+  assert.match(routerAdapter.dispatched.message, /^0x[0-9a-f]+$/);
 });

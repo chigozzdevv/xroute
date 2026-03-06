@@ -9,5 +9,9 @@
     "test:node": "node --test packages/*/test/*.test.mjs services/status-indexer/test/*.test.mjs",
     "test:rust": "cargo test -p route-engine",
     "test:solidity": "forge test --root contracts/polkadot-hub-router"
+  },
+  "dependencies": {
+    "@polkadot-api/descriptors": "^0.0.1",
+    "polkadot-api": "^1.23.3"
   }
 }

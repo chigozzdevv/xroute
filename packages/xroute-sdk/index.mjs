@@ -8,6 +8,7 @@ import {
   assertIncluded,
 } from "../xroute-types/index.mjs";
 import {
+  buildExecutionEnvelope,
   buildDispatchRequest,
   buildRouterIntentRequest,
   createDispatchEnvelope,
@@ -20,6 +21,7 @@ export function createXRouteClient({
   routerAdapter,
   statusProvider,
   assetAddressResolver,
+  xcmEnvelopeBuilder = buildExecutionEnvelope,
   castBin = "cast",
 }) {
   if (!quoteProvider?.quote) {
@@ -49,7 +51,9 @@ export function createXRouteClient({
   async function submitIntent({ intent, quote, envelope, owner }) {
     const normalizedIntent = intent.quoteId ? intent : createIntent(intent);
     const normalizedQuote = normalizeQuote(quote);
-    const normalizedEnvelope = createDispatchEnvelope(envelope);
+    const normalizedEnvelope = createDispatchEnvelope(
+      envelope ?? xcmEnvelopeBuilder({ intent: normalizedIntent, quote: normalizedQuote }),
+    );
     const assetAddress = await assetAddressResolver({
       chainKey: normalizedIntent.sourceChain,
       assetKey: normalizedQuote.submission.asset,
@@ -89,15 +93,17 @@ export function createXRouteClient({
       throw new Error("quote id must match the normalized intent quote id");
     }
 
+    const resolvedEnvelope =
+      envelope ?? xcmEnvelopeBuilder({ intent: quoted.intent, quote: quoted.quote });
     const submitted = await submitIntent({
       intent: quoted.intent,
       quote: quoted.quote,
-      envelope,
+      envelope: resolvedEnvelope,
       owner,
     });
     const dispatched = await dispatchIntent({
       intentId: submitted.intentId,
-      envelope,
+      envelope: resolvedEnvelope,
     });
 
     return {

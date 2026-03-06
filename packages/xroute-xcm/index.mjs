@@ -1,5 +1,16 @@
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
+import {
+  AccountId,
+  Binary,
+  Enum,
+  metadata,
+  unifyMetadata,
+} from "@polkadot-api/substrate-bindings";
+import { getDynamicBuilder, getLookupFn } from "@polkadot-api/metadata-builders";
+
+import { getAssetLocation, getParachainId } from "../xroute-chain-registry/index.mjs";
 import {
   DISPATCH_MODES,
   assertHexString,
@@ -12,6 +23,15 @@ import {
   ACTION_TO_CONTRACT_ENUM,
   DISPATCH_MODE_TO_CONTRACT_ENUM,
 } from "../xroute-precompile-interfaces/index.mjs";
+
+const VERSIONED_LOCATION_TYPE_ID = 164;
+const VERSIONED_XCM_TYPE_ID = 270;
+const DEFAULT_METADATA_HEX = readFileSync(
+  new URL("./metadata/polkadot-asset-hub.hex", import.meta.url),
+  "utf8",
+).trim();
+
+let defaultCodecContext;
 
 export function createDispatchEnvelope({
   mode,
@@ -35,6 +55,56 @@ export function createDispatchEnvelope({
     mode: normalizedMode,
     destinationHex: normalizedDestinationHex,
     messageHex: normalizedMessageHex,
+  });
+}
+
+export function createXcmCodecContext({
+  metadataHex = DEFAULT_METADATA_HEX,
+  versionedLocationTypeId = VERSIONED_LOCATION_TYPE_ID,
+  versionedXcmTypeId = VERSIONED_XCM_TYPE_ID,
+} = {}) {
+  const decodedMetadata = unifyMetadata(metadata.dec(metadataHex));
+  const dynamicBuilder = getDynamicBuilder(getLookupFn(decodedMetadata));
+  const locationCodec = dynamicBuilder.buildDefinition(versionedLocationTypeId);
+  const xcmCodec = dynamicBuilder.buildDefinition(versionedXcmTypeId);
+
+  return Object.freeze({
+    encodeVersionedLocation(value) {
+      return Binary.fromBytes(locationCodec.enc(value)).asHex();
+    },
+
+    decodeVersionedLocation(value) {
+      return locationCodec.dec(value);
+    },
+
+    encodeVersionedXcm(value) {
+      return Binary.fromBytes(xcmCodec.enc(value)).asHex();
+    },
+
+    decodeVersionedXcm(value) {
+      return xcmCodec.dec(value);
+    },
+  });
+}
+
+export function getDefaultXcmCodecContext() {
+  if (!defaultCodecContext) {
+    defaultCodecContext = createXcmCodecContext();
+  }
+
+  return defaultCodecContext;
+}
+
+export function buildExecutionEnvelope({
+  intent,
+  quote,
+  codecContext = getDefaultXcmCodecContext(),
+}) {
+  const message = buildVersionedXcmMessage({ quote });
+
+  return createDispatchEnvelope({
+    mode: DISPATCH_MODES.EXECUTE,
+    messageHex: codecContext.encodeVersionedXcm(message),
   });
 }
 
@@ -109,4 +179,161 @@ export function buildExplorerLabel({ sourceChain, destinationChain, mode }) {
   assertIncluded("mode", mode, Object.values(DISPATCH_MODES));
 
   return `${sourceChain} -> ${destinationChain} (${mode})`;
+}
+
+export function buildVersionedXcmMessage({ quote }) {
+  const sendStep = getExecutionStep(quote, "send-xcm");
+  const transferInstruction = getInstruction(sendStep, "transfer-reserve-asset");
+  const transferAmount = toBigInt(
+    transferInstruction.amount,
+    "executionPlan.instructions.transfer-reserve-asset.amount",
+  );
+
+  return Enum("V5", [
+    Enum("SetFeesMode", { jit_withdraw: true }),
+    Enum("TransferReserveAsset", {
+      assets: [
+        buildAsset({
+          chainKey: sendStep.origin,
+          assetKey: transferInstruction.asset,
+          amount: transferAmount,
+        }),
+      ],
+      dest: buildParachainLocation(sendStep.destination),
+      xcm: transferInstruction.remoteInstructions.map((instruction) =>
+        buildRemoteInstruction({
+          instruction,
+          sendStep,
+          transferAmount,
+        }),
+      ),
+    }),
+  ]);
+}
+
+function getExecutionStep(quote, stepType) {
+  const step = quote?.executionPlan?.steps?.find((candidate) => candidate.type === stepType);
+
+  if (!step) {
+    throw new Error(`missing execution plan step: ${stepType}`);
+  }
+
+  return step;
+}
+
+function getInstruction(sendStep, instructionType) {
+  const instruction = sendStep.instructions?.find(
+    (candidate) => candidate.type === instructionType,
+  );
+
+  if (!instruction) {
+    throw new Error(`missing XCM instruction: ${instructionType}`);
+  }
+
+  return instruction;
+}
+
+function buildRemoteInstruction({
+  instruction,
+  sendStep,
+  transferAmount,
+}) {
+  switch (instruction.type) {
+    case "buy-execution":
+      return Enum("BuyExecution", {
+        fees: buildAsset({
+          chainKey: sendStep.destination,
+          assetKey: instruction.asset,
+          amount: toBigInt(instruction.amount, "buy-execution.amount"),
+        }),
+        weight_limit: Enum("Unlimited", undefined),
+      });
+    case "exchange-asset":
+      return Enum("ExchangeAsset", {
+        give: Enum("Definite", [
+          buildAsset({
+            chainKey: sendStep.destination,
+            assetKey: instruction.assetIn,
+            amount: transferAmount,
+          }),
+        ]),
+        want: [
+          buildAsset({
+            chainKey: sendStep.destination,
+            assetKey: instruction.assetOut,
+            amount: toBigInt(instruction.minAmountOut, "exchange-asset.minAmountOut"),
+          }),
+        ],
+        maximal: true,
+      });
+    case "deposit-asset":
+      return Enum("DepositAsset", {
+        assets: Enum("Wild", Enum("AllCounted", 1)),
+        beneficiary: buildBeneficiaryLocation(instruction.recipient),
+      });
+    default:
+      throw new Error(`unsupported remote XCM instruction: ${instruction.type}`);
+  }
+}
+
+function buildAsset({ chainKey, assetKey, amount }) {
+  const location = getAssetLocation(assetKey, chainKey);
+
+  return {
+    id: {
+      parents: location.parents,
+      interior: buildInterior(location.interior),
+    },
+    fun: Enum("Fungible", amount),
+  };
+}
+
+function buildParachainLocation(chainKey) {
+  return {
+    parents: 1,
+    interior: Enum("X1", Enum("Parachain", getParachainId(chainKey))),
+  };
+}
+
+function buildBeneficiaryLocation(address) {
+  return {
+    parents: 0,
+    interior: Enum(
+      "X1",
+      Enum("AccountId32", {
+        network: undefined,
+        id: Binary.fromBytes(AccountId().enc(address)),
+      }),
+    ),
+  };
+}
+
+function buildInterior(interior) {
+  switch (interior.type) {
+    case "here":
+      return Enum("Here", undefined);
+    case "x1":
+      return Enum("X1", buildJunction(interior.value));
+    case "x2":
+      return Enum("X2", interior.value.map(buildJunction));
+    case "x3":
+      return Enum("X3", interior.value.map(buildJunction));
+    case "x4":
+      return Enum("X4", interior.value.map(buildJunction));
+    default:
+      throw new Error(`unsupported XCM interior type: ${interior.type}`);
+  }
+}
+
+function buildJunction(junction) {
+  switch (junction.type) {
+    case "parachain":
+      return Enum("Parachain", junction.value);
+    case "pallet-instance":
+      return Enum("PalletInstance", junction.value);
+    case "general-index":
+      return Enum("GeneralIndex", toBigInt(junction.value, "junction.value"));
+    default:
+      throw new Error(`unsupported XCM junction type: ${junction.type}`);
+  }
 }

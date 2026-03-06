@@ -4,6 +4,7 @@ export const CHAINS = Object.freeze({
   "polkadot-hub": Object.freeze({
     key: "polkadot-hub",
     label: "Polkadot Hub",
+    parachainId: 1000,
     supportedActions: Object.freeze([
       ACTION_TYPES.TRANSFER,
       ACTION_TYPES.SWAP,
@@ -14,6 +15,7 @@ export const CHAINS = Object.freeze({
   hydration: Object.freeze({
     key: "hydration",
     label: "Hydration",
+    parachainId: 2034,
     supportedActions: Object.freeze([
       ACTION_TYPES.TRANSFER,
       ACTION_TYPES.SWAP,
@@ -23,6 +25,7 @@ export const CHAINS = Object.freeze({
   "asset-hub": Object.freeze({
     key: "asset-hub",
     label: "Asset Hub",
+    parachainId: 1000,
     supportedActions: Object.freeze([ACTION_TYPES.TRANSFER]),
   }),
 });
@@ -32,16 +35,55 @@ export const ASSETS = Object.freeze({
     symbol: "DOT",
     decimals: 10,
     supportedChains: Object.freeze(["polkadot-hub", "hydration", "asset-hub"]),
+    xcmLocations: Object.freeze({
+      "polkadot-hub": Object.freeze({
+        parents: 1,
+        interior: Object.freeze({ type: "here" }),
+      }),
+      hydration: Object.freeze({
+        parents: 1,
+        interior: Object.freeze({ type: "here" }),
+      }),
+      "asset-hub": Object.freeze({
+        parents: 1,
+        interior: Object.freeze({ type: "here" }),
+      }),
+    }),
   }),
   USDT: Object.freeze({
     symbol: "USDT",
     decimals: 6,
     supportedChains: Object.freeze(["hydration", "asset-hub"]),
+    xcmLocations: Object.freeze({
+      hydration: Object.freeze({
+        parents: 1,
+        interior: Object.freeze({
+          type: "x3",
+          value: Object.freeze([
+            Object.freeze({ type: "parachain", value: 1000 }),
+            Object.freeze({ type: "pallet-instance", value: 50 }),
+            Object.freeze({ type: "general-index", value: 1984n }),
+          ]),
+        }),
+      }),
+    }),
   }),
   HDX: Object.freeze({
     symbol: "HDX",
     decimals: 12,
     supportedChains: Object.freeze(["hydration"]),
+    xcmLocations: Object.freeze({
+      hydration: Object.freeze({
+        parents: 0,
+        interior: Object.freeze({
+          type: "x1",
+          value: Object.freeze({
+            type: "general-index",
+            value: 0n,
+          }),
+        }),
+      }),
+    }),
   }),
 });
 
@@ -84,6 +126,22 @@ export function getAsset(assetKey) {
   }
 
   return asset;
+}
+
+export function getParachainId(chainKey) {
+  return getChain(chainKey).parachainId;
+}
+
+export function getAssetLocation(assetKey, chainKey) {
+  const asset = getAsset(assetKey);
+  const normalizedChain = getChain(chainKey).key;
+  const location = asset.xcmLocations?.[normalizedChain];
+
+  if (!location) {
+    throw new Error(`missing XCM location for ${asset.symbol} on ${normalizedChain}`);
+  }
+
+  return location;
 }
 
 export function listRoutes() {
