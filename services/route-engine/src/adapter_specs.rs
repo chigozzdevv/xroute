@@ -8,6 +8,7 @@ const DESTINATION_ADAPTER_SPECS: &str =
 pub struct DestinationAdapterSpec<'a> {
     pub id: &'a str,
     pub target_kind: &'a str,
+    pub implementation_contract: &'a str,
     pub signature: &'a str,
     pub selector: [u8; 4],
 }
@@ -26,6 +27,7 @@ pub fn lookup_destination_adapter_spec(
         let mut fields = trimmed.split('|');
         let id = fields.next();
         let target_kind = fields.next();
+        let implementation_contract = fields.next();
         let signature = fields.next();
         let selector = fields.next();
 
@@ -33,13 +35,19 @@ pub fn lookup_destination_adapter_spec(
             return Err(RouteError::InvalidDestinationAdapterSpec { adapter: adapter_id });
         }
 
-        if let (Some(id), Some(target_kind), Some(signature), Some(selector)) =
-            (id, target_kind, signature, selector)
+        if let (
+            Some(id),
+            Some(target_kind),
+            Some(implementation_contract),
+            Some(signature),
+            Some(selector),
+        ) = (id, target_kind, implementation_contract, signature, selector)
         {
             if id == adapter_id {
                 return Ok(DestinationAdapterSpec {
                     id,
                     target_kind,
+                    implementation_contract,
                     signature,
                     selector: parse_selector(adapter_id, selector)?,
                 });

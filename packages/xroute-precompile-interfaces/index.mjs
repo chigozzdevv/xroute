@@ -53,8 +53,9 @@ function parseDestinationAdapterSpecs() {
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith("#"))
     .map((line) => {
-      const [adapterId, targetKind, signature, selector, extra] = line.split("|");
-      if (!adapterId || !targetKind || !signature || !selector || extra) {
+      const [adapterId, targetKind, implementationContract, signature, selector, extra] =
+        line.split("|");
+      if (!adapterId || !targetKind || !implementationContract || !signature || !selector || extra) {
         throw new Error(`invalid destination adapter spec line: ${line}`);
       }
 
@@ -66,6 +67,10 @@ function parseDestinationAdapterSpecs() {
             "targetKind",
             targetKind,
             Object.values(DESTINATION_ADAPTER_TARGET_KINDS),
+          ),
+          implementationContract: assertNonEmptyString(
+            "implementationContract",
+            implementationContract,
           ),
           signature: assertNonEmptyString("signature", signature),
           selector: normalizeSelector(selector),

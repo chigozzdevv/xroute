@@ -13,6 +13,7 @@ test("destination adapter specs are published with supported target kinds", () =
 
   assert.equal(swap.id, "hydration-swap-v1");
   assert.equal(swap.targetKind, DESTINATION_ADAPTER_TARGET_KINDS.EVM_CONTRACT);
+  assert.equal(swap.implementationContract, "HydrationSwapAdapterV1");
   assert.equal(swap.selector, "0x670b1f29");
 });
 

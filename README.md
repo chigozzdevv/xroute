@@ -108,7 +108,7 @@ xroute/
 - `packages/xroute-intents`
   - `transfer`, `swap`, `stake`, `call` schemas
 - `packages/xroute-precompile-interfaces`
-  - Solidity interfaces and published specs for Hub precompiles and destination adapters
+  - Solidity interfaces, concrete adapter contracts, and published specs for Hub precompiles and destination adapters
 - `packages/xroute-sdk`
   - developer-facing client and route-engine bridge
 - `packages/xroute-types`
