@@ -1,0 +1,12 @@
+node_modules
+.turbo
+dist
+coverage
+.DS_Store
+target
+ignition/deployments
+.env
+.env.*
+!.env.example
+contracts/polkadot-hub-router/cache
+contracts/polkadot-hub-router/out
