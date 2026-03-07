@@ -1,14 +1,19 @@
+import { AccountId } from "@polkadot-api/substrate-bindings";
+
 import {
   ACTION_TYPES,
   EXECUTION_TYPES,
   RUNTIME_CALL_ORIGIN_KINDS,
+  VTOKEN_ORDER_OPERATIONS,
   assertAddress,
+  assertBytes32Hex,
   assertInteger,
   assertIncluded,
   assertHexString,
   assertNonEmptyString,
   assertPositiveBigInt,
   deterministicId,
+  toBigInt,
   toPlainObject,
 } from "../xroute-types/index.mjs";
 import {
@@ -156,6 +161,10 @@ function normalizeExecute(sourceChain, destinationChain, params) {
   switch (executionType) {
     case EXECUTION_TYPES.RUNTIME_CALL:
       return normalizeRuntimeCall(sourceChain, destinationChain, params);
+    case EXECUTION_TYPES.EVM_CONTRACT_CALL:
+      return normalizeEvmContractCall(sourceChain, destinationChain, params);
+    case EXECUTION_TYPES.VTOKEN_ORDER:
+      return normalizeVtokenOrder(sourceChain, destinationChain, params);
     default:
       throw new Error(`unsupported execution type: ${executionType}`);
   }
@@ -201,4 +210,128 @@ function normalizeRuntimeCall(sourceChain, destinationChain, params) {
       }),
     }),
   });
+}
+
+function normalizeEvmContractCall(sourceChain, destinationChain, params) {
+  const asset = assertNonEmptyString("action.params.asset", params.asset).toUpperCase();
+  assertExecuteRoute(
+    sourceChain,
+    destinationChain,
+    asset,
+    EXECUTION_TYPES.EVM_CONTRACT_CALL,
+  );
+
+  return Object.freeze({
+    type: ACTION_TYPES.EXECUTE,
+    params: Object.freeze({
+      executionType: EXECUTION_TYPES.EVM_CONTRACT_CALL,
+      asset,
+      maxPaymentAmount: assertPositiveBigInt(
+        "action.params.maxPaymentAmount",
+        params.maxPaymentAmount,
+      ),
+      contractAddress: assertAddress(
+        "action.params.contractAddress",
+        params.contractAddress,
+      ),
+      calldata: assertHexString("action.params.calldata", params.calldata),
+      value: params.value === undefined ? 0n : assertPositiveOrZeroBigInt("action.params.value", params.value),
+      gasLimit: assertPositiveBigInt("action.params.gasLimit", params.gasLimit),
+      fallbackWeight: Object.freeze({
+        refTime: assertInteger(
+          "action.params.fallbackWeight.refTime",
+          params.fallbackWeight?.refTime,
+        ),
+        proofSize: assertInteger(
+          "action.params.fallbackWeight.proofSize",
+          params.fallbackWeight?.proofSize,
+        ),
+      }),
+    }),
+  });
+}
+
+function normalizeVtokenOrder(sourceChain, destinationChain, params) {
+  const asset = assertNonEmptyString("action.params.asset", params.asset).toUpperCase();
+  assertExecuteRoute(
+    sourceChain,
+    destinationChain,
+    asset,
+    EXECUTION_TYPES.VTOKEN_ORDER,
+  );
+
+  const operation = assertIncluded(
+    "action.params.operation",
+    params.operation,
+    Object.values(VTOKEN_ORDER_OPERATIONS),
+  );
+  const recipient = assertNonEmptyString("action.params.recipient", params.recipient);
+
+  return Object.freeze({
+    type: ACTION_TYPES.EXECUTE,
+    params: Object.freeze({
+      executionType: EXECUTION_TYPES.VTOKEN_ORDER,
+      asset,
+      amount: assertPositiveBigInt("action.params.amount", params.amount),
+      maxPaymentAmount: assertPositiveBigInt(
+        "action.params.maxPaymentAmount",
+        params.maxPaymentAmount,
+      ),
+      operation,
+      recipient,
+      recipientAccountIdHex: encodeAccountIdHex(
+        "action.params.recipient",
+        recipient,
+      ),
+      channelId:
+        params.channelId === undefined
+          ? 0
+          : assertInteger("action.params.channelId", params.channelId),
+      remark: normalizeRemark(params.remark),
+      fallbackWeight: Object.freeze({
+        refTime: assertInteger(
+          "action.params.fallbackWeight.refTime",
+          params.fallbackWeight?.refTime,
+        ),
+        proofSize: assertInteger(
+          "action.params.fallbackWeight.proofSize",
+          params.fallbackWeight?.proofSize,
+        ),
+      }),
+    }),
+  });
+}
+
+function encodeAccountIdHex(name, value) {
+  if (typeof value === "string" && /^0x[0-9a-fA-F]{64}$/.test(value.trim())) {
+    return assertBytes32Hex(name, value);
+  }
+
+  try {
+    return `0x${Buffer.from(AccountId().enc(value)).toString("hex")}`;
+  } catch {
+    throw new Error(`${name} must be a valid SS58 or 32-byte hex account id`);
+  }
+}
+
+function assertPositiveOrZeroBigInt(name, value) {
+  const normalized = toBigInt(value, name);
+  if (normalized < 0n) {
+    throw new Error(`${name} must be zero or greater`);
+  }
+
+  return normalized;
+}
+
+function normalizeRemark(value) {
+  if (value === undefined) {
+    return "";
+  }
+
+  const normalized = String(value);
+  if (Buffer.byteLength(normalized, "utf8") > 32) {
+    throw new Error("action.params.remark must be at most 32 bytes");
+  }
+
+  return normalized;
 }

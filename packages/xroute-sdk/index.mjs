@@ -385,28 +385,79 @@ function buildRouteEngineQuoteArgs(
         intent.action.params.settlementChain,
       ]);
     case ACTION_TYPES.EXECUTE:
-      if (intent.action.params.executionType !== EXECUTION_TYPES.RUNTIME_CALL) {
-        throw new Error(`unsupported execution type: ${intent.action.params.executionType}`);
-      }
-
-      return shared.concat([
-        "--execution-type",
-        intent.action.params.executionType,
-        "--asset",
-        intent.action.params.asset,
-        "--max-payment-amount",
-        intent.action.params.maxPaymentAmount.toString(),
-        "--call-data",
-        intent.action.params.callData,
-        "--origin-kind",
-        intent.action.params.originKind,
-        "--fallback-ref-time",
-        String(intent.action.params.fallbackWeight.refTime),
-        "--fallback-proof-size",
-        String(intent.action.params.fallbackWeight.proofSize),
-      ]);
+      return buildExecuteQuoteArgs(shared, intent.action.params);
     default:
       throw new Error(`unsupported action type: ${intent.action.type}`);
+  }
+}
+
+function buildExecuteQuoteArgs(shared, params) {
+  switch (params.executionType) {
+    case EXECUTION_TYPES.RUNTIME_CALL:
+      return shared.concat([
+        "--execution-type",
+        params.executionType,
+        "--asset",
+        params.asset,
+        "--max-payment-amount",
+        params.maxPaymentAmount.toString(),
+        "--call-data",
+        params.callData,
+        "--origin-kind",
+        params.originKind,
+        "--fallback-ref-time",
+        String(params.fallbackWeight.refTime),
+        "--fallback-proof-size",
+        String(params.fallbackWeight.proofSize),
+      ]);
+    case EXECUTION_TYPES.EVM_CONTRACT_CALL:
+      return shared.concat([
+        "--execution-type",
+        params.executionType,
+        "--asset",
+        params.asset,
+        "--max-payment-amount",
+        params.maxPaymentAmount.toString(),
+        "--contract-address",
+        params.contractAddress,
+        "--calldata",
+        params.calldata,
+        "--value",
+        params.value.toString(),
+        "--gas-limit",
+        params.gasLimit.toString(),
+        "--fallback-ref-time",
+        String(params.fallbackWeight.refTime),
+        "--fallback-proof-size",
+        String(params.fallbackWeight.proofSize),
+      ]);
+    case EXECUTION_TYPES.VTOKEN_ORDER:
+      return shared.concat([
+        "--execution-type",
+        params.executionType,
+        "--asset",
+        params.asset,
+        "--amount",
+        params.amount.toString(),
+        "--max-payment-amount",
+        params.maxPaymentAmount.toString(),
+        "--operation",
+        params.operation,
+        "--recipient",
+        params.recipient,
+        "--recipient-account-id",
+        params.recipientAccountIdHex,
+        "--channel-id",
+        String(params.channelId),
+        "--remark",
+        params.remark,
+        "--fallback-ref-time",
+        String(params.fallbackWeight.refTime),
+        "--fallback-proof-size",
+        String(params.fallbackWeight.proofSize),
+      ]);
+    default:
+      throw new Error(`unsupported execution type: ${params.executionType}`);
   }
 }
 

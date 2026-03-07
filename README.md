@@ -6,7 +6,7 @@ It gives developers a higher-level SDK for three live actions:
 
 - `transfer`: move native assets across supported chains
 - `swap`: execute a Hydration swap and optionally settle the output on another chain
-- `execute`: fund and dispatch a typed destination runtime call
+- `execute`: fund and dispatch a typed destination execution request
 
 The current live route graph uses a Hub-centered star topology:
 
@@ -44,6 +44,8 @@ Live runtime surface:
 - `execute/runtime-call` from `polkadot-hub` to `hydration`
 - `execute/runtime-call` from `polkadot-hub` to `moonbeam`
 - `execute/runtime-call` from `polkadot-hub` to `bifrost`
+- `execute/evm-contract-call` from `polkadot-hub` to `moonbeam`
+- `execute/vtoken-order` from `polkadot-hub` to `bifrost`
 - onchain intent lifecycle persistence
 - offchain status projection for app-facing reads
 
@@ -113,6 +115,15 @@ For live runtime execution, the planner emits:
 - `BuyExecution`
 - `Transact`
 
+Destination execution types:
+
+- `runtime-call`
+  - raw destination runtime call bytes
+- `evm-contract-call`
+  - Moonbeam `ethereumXcm.transact(V2)` payload generation
+- `vtoken-order`
+  - Bifrost `Slpx::mint` order generation for `vDOT`
+
 ### 3. XCM Builder
 
 The XCM layer turns the route-engine plan into the exact payload committed by the router contract.
@@ -164,6 +175,8 @@ Examples:
 - direct execute/runtime-call: `polkadot-hub -> hydration`
 - direct execute/runtime-call: `polkadot-hub -> moonbeam`
 - direct execute/runtime-call: `polkadot-hub -> bifrost`
+- direct execute/evm-contract-call: `polkadot-hub -> moonbeam`
+- direct execute/vtoken-order: `polkadot-hub -> bifrost`
 - remote-settlement swap: `polkadot-hub -> hydration -> polkadot-hub`
 
 That means the route engine does not just hardcode one destination action. It models:
@@ -352,6 +365,8 @@ Runtime notes:
 - `routerAddress` is the deployed Hub router address
 - `refundAddress` and `owner` are EVM addresses
 - `recipient` is the destination or settlement-chain beneficiary
+- `execute/vtoken-order` currently supports the Bifrost `mint` flow
+- `execute/evm-contract-call` builds a Moonbeam Ethereum XCM call; `value` spends the destination EVM account balance
 
 Runtime-call example:
 
@@ -372,6 +387,61 @@ const { intent, quote } = await client.quote({
       fallbackWeight: {
         refTime: 4_000_000_000,
         proofSize: 64_000,
+      },
+    },
+  },
+});
+```
+
+Moonbeam EVM contract call example:
+
+```ts
+const { intent, quote } = await client.quote({
+  sourceChain: "polkadot-hub",
+  destinationChain: "moonbeam",
+  refundAddress: "0x1111111111111111111111111111111111111111",
+  deadline: Math.floor(Date.now() / 1000) + 1800,
+  action: {
+    type: "execute",
+    params: {
+      executionType: "evm-contract-call",
+      asset: "DOT",
+      maxPaymentAmount: "110000000",
+      contractAddress: "0x1111111111111111111111111111111111111111",
+      calldata: "0xdeadbeef",
+      value: "0",
+      gasLimit: "250000",
+      fallbackWeight: {
+        refTime: 650_000_000,
+        proofSize: 12_288,
+      },
+    },
+  },
+});
+```
+
+Bifrost vToken order example:
+
+```ts
+const { intent, quote } = await client.quote({
+  sourceChain: "polkadot-hub",
+  destinationChain: "bifrost",
+  refundAddress: "0x1111111111111111111111111111111111111111",
+  deadline: Math.floor(Date.now() / 1000) + 1800,
+  action: {
+    type: "execute",
+    params: {
+      executionType: "vtoken-order",
+      asset: "DOT",
+      amount: "250000000000",
+      maxPaymentAmount: "100000000",
+      operation: "mint",
+      recipient: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+      channelId: 7,
+      remark: "xroute",
+      fallbackWeight: {
+        refTime: 600_000_000,
+        proofSize: 12_288,
       },
     },
   },

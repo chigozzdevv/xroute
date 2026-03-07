@@ -51,6 +51,7 @@ pub enum AssetKey {
     Dot,
     Usdt,
     Hdx,
+    Vdot,
 }
 
 impl AssetKey {
@@ -59,6 +60,7 @@ impl AssetKey {
             Self::Dot => "DOT",
             Self::Usdt => "USDT",
             Self::Hdx => "HDX",
+            Self::Vdot => "VDOT",
         }
     }
 
@@ -67,6 +69,7 @@ impl AssetKey {
             Self::Dot => 10,
             Self::Usdt => 6,
             Self::Hdx => 12,
+            Self::Vdot => 10,
         }
     }
 
@@ -75,6 +78,7 @@ impl AssetKey {
             Self::Dot => ChainKey::PolkadotHub,
             Self::Usdt => ChainKey::PolkadotHub,
             Self::Hdx => ChainKey::Hydration,
+            Self::Vdot => ChainKey::Bifrost,
         }
     }
 
@@ -135,16 +139,11 @@ impl Intent {
                 self.deadline
             ),
             IntentAction::Execute(execute) => format!(
-                "execute|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+                "execute|{}|{}|{}|{}|{}|{}",
                 self.source_chain.as_str(),
                 self.destination_chain.as_str(),
-                execute.execution_type.as_str(),
-                execute.asset.symbol(),
-                execute.max_payment_amount,
-                execute.call_data,
-                execute.origin_kind.as_str(),
-                execute.fallback_weight.ref_time,
-                execute.fallback_weight.proof_size,
+                execute.execution_type().as_str(),
+                execute.canonical_fields(),
                 self.refund_address,
                 self.deadline
             ),
@@ -157,7 +156,7 @@ impl Intent {
         match &self.action {
             IntentAction::Transfer(transfer) => AssetAmount::new(transfer.asset, transfer.amount),
             IntentAction::Swap(swap) => AssetAmount::new(swap.asset_in, swap.amount_in),
-            IntentAction::Execute(execute) => AssetAmount::new(execute.asset, 0),
+            IntentAction::Execute(execute) => execute.principal_amount(),
         }
     }
 }
@@ -187,8 +186,131 @@ pub struct SwapIntent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExecuteIntent {
-    pub execution_type: ExecutionType,
+pub enum ExecuteIntent {
+    RuntimeCall(RuntimeCallExecuteIntent),
+    EvmContractCall(EvmContractCallExecuteIntent),
+    VtokenOrder(VtokenOrderExecuteIntent),
+}
+
+impl ExecuteIntent {
+    pub fn execution_type(&self) -> ExecutionType {
+        match self {
+            Self::RuntimeCall(_) => ExecutionType::RuntimeCall,
+            Self::EvmContractCall(_) => ExecutionType::EvmContractCall,
+            Self::VtokenOrder(_) => ExecutionType::VtokenOrder,
+        }
+    }
+
+    pub fn asset(&self) -> AssetKey {
+        match self {
+            Self::RuntimeCall(intent) => intent.asset,
+            Self::EvmContractCall(intent) => intent.asset,
+            Self::VtokenOrder(intent) => intent.asset,
+        }
+    }
+
+    pub fn max_payment_amount(&self) -> u128 {
+        match self {
+            Self::RuntimeCall(intent) => intent.max_payment_amount,
+            Self::EvmContractCall(intent) => intent.max_payment_amount,
+            Self::VtokenOrder(intent) => intent.max_payment_amount,
+        }
+    }
+
+    pub fn origin_kind(&self) -> RuntimeCallOriginKind {
+        match self {
+            Self::RuntimeCall(intent) => intent.origin_kind,
+            Self::EvmContractCall(_) | Self::VtokenOrder(_) => {
+                RuntimeCallOriginKind::SovereignAccount
+            }
+        }
+    }
+
+    pub fn fallback_weight(&self) -> XcmWeight {
+        match self {
+            Self::RuntimeCall(intent) => intent.fallback_weight,
+            Self::EvmContractCall(intent) => intent.fallback_weight,
+            Self::VtokenOrder(intent) => intent.fallback_weight,
+        }
+    }
+
+    pub fn principal_amount(&self) -> AssetAmount {
+        match self {
+            Self::RuntimeCall(intent) => AssetAmount::new(intent.asset, 0),
+            Self::EvmContractCall(intent) => AssetAmount::new(intent.asset, 0),
+            Self::VtokenOrder(intent) => AssetAmount::new(intent.asset, intent.amount),
+        }
+    }
+
+    pub fn submission_amount(&self, execution_budget: u128) -> u128 {
+        match self {
+            Self::RuntimeCall(_) | Self::EvmContractCall(_) => execution_budget,
+            Self::VtokenOrder(intent) => intent.amount,
+        }
+    }
+
+    pub fn destination_fee_amount(&self, execution_budget: u128) -> u128 {
+        match self {
+            Self::RuntimeCall(_) | Self::EvmContractCall(_) => 0,
+            Self::VtokenOrder(_) => execution_budget,
+        }
+    }
+
+    pub fn transfer_amount(&self, execution_budget: u128) -> u128 {
+        match self {
+            Self::RuntimeCall(_) | Self::EvmContractCall(_) => execution_budget,
+            Self::VtokenOrder(intent) => intent.amount.saturating_add(execution_budget),
+        }
+    }
+
+    pub fn expected_output(&self) -> AssetAmount {
+        match self {
+            Self::RuntimeCall(intent) => AssetAmount::new(intent.asset, 0),
+            Self::EvmContractCall(intent) => AssetAmount::new(intent.asset, 0),
+            Self::VtokenOrder(intent) => AssetAmount::new(AssetKey::Vdot, intent.amount),
+        }
+    }
+
+    fn canonical_fields(&self) -> String {
+        match self {
+            Self::RuntimeCall(intent) => format!(
+                "{}|{}|{}|{}|{}|{}",
+                intent.asset.symbol(),
+                intent.max_payment_amount,
+                intent.call_data,
+                intent.origin_kind.as_str(),
+                intent.fallback_weight.ref_time,
+                intent.fallback_weight.proof_size
+            ),
+            Self::EvmContractCall(intent) => format!(
+                "{}|{}|{}|{}|{}|{}|{}|{}",
+                intent.asset.symbol(),
+                intent.max_payment_amount,
+                intent.contract_address,
+                intent.calldata,
+                intent.value,
+                intent.gas_limit,
+                intent.fallback_weight.ref_time,
+                intent.fallback_weight.proof_size
+            ),
+            Self::VtokenOrder(intent) => format!(
+                "{}|{}|{}|{}|{}|{}|{}|{}|{}",
+                intent.asset.symbol(),
+                intent.amount,
+                intent.max_payment_amount,
+                intent.operation.as_str(),
+                intent.recipient_account_id_hex,
+                intent.channel_id,
+                intent.remark,
+                intent.fallback_weight.ref_time,
+                intent.fallback_weight.proof_size
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeCallExecuteIntent {
     pub asset: AssetKey,
     pub max_payment_amount: u128,
     pub call_data: String,
@@ -196,15 +318,56 @@ pub struct ExecuteIntent {
     pub fallback_weight: XcmWeight,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvmContractCallExecuteIntent {
+    pub asset: AssetKey,
+    pub max_payment_amount: u128,
+    pub contract_address: String,
+    pub calldata: String,
+    pub value: u128,
+    pub gas_limit: u64,
+    pub fallback_weight: XcmWeight,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VtokenOrderExecuteIntent {
+    pub asset: AssetKey,
+    pub amount: u128,
+    pub max_payment_amount: u128,
+    pub operation: VtokenOrderOperation,
+    pub recipient: String,
+    pub recipient_account_id_hex: String,
+    pub channel_id: u32,
+    pub remark: String,
+    pub fallback_weight: XcmWeight,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VtokenOrderOperation {
+    Mint,
+}
+
+impl VtokenOrderOperation {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Mint => "mint",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionType {
     RuntimeCall,
+    EvmContractCall,
+    VtokenOrder,
 }
 
 impl ExecutionType {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::RuntimeCall => "runtime-call",
+            Self::EvmContractCall => "evm-contract-call",
+            Self::VtokenOrder => "vtoken-order",
         }
     }
 }

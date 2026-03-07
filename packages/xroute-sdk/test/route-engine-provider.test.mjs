@@ -137,6 +137,82 @@ test("route engine quote provider builds a moonbeam runtime-call quote", async (
   assert.equal(remoteInstructions[1].callData, "0x05060708");
 });
 
+test("route engine quote provider builds an execute/evm-contract-call quote", async () => {
+  const provider = createRouteEngineQuoteProvider({
+    cwd: workspaceRoot,
+  });
+  const intent = createExecuteIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "moonbeam",
+    refundAddress: walletAddress,
+    deadline: 1_773_185_200,
+    params: {
+      executionType: "evm-contract-call",
+      asset: "DOT",
+      maxPaymentAmount: "110000000",
+      contractAddress: "0x1111111111111111111111111111111111111111",
+      calldata: "0xdeadbeef",
+      value: "0",
+      gasLimit: "250000",
+      fallbackWeight: {
+        refTime: 650000000,
+        proofSize: 12288,
+      },
+    },
+  });
+
+  const quote = normalizeQuote(await provider.quote(intent));
+  const remoteInstructions = finalRemoteInstructions(quote);
+
+  assert.deepEqual(quote.route, ["polkadot-hub", "moonbeam"]);
+  assert.equal(quote.submission.action, "execute");
+  assert.equal(quote.submission.amount, 110000000n);
+  assert.equal(remoteInstructions[1].type, "transact");
+  assert.match(remoteInstructions[1].callData, /^0x260001/);
+  assert.match(remoteInstructions[1].callData, /1111111111111111111111111111111111111111/);
+});
+
+test("route engine quote provider builds an execute/vtoken-order quote", async () => {
+  const provider = createRouteEngineQuoteProvider({
+    cwd: workspaceRoot,
+  });
+  const intent = createExecuteIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "bifrost",
+    refundAddress: walletAddress,
+    deadline: 1_773_185_200,
+    params: {
+      executionType: "vtoken-order",
+      asset: "DOT",
+      amount: "250000000000",
+      maxPaymentAmount: "100000000",
+      operation: "mint",
+      recipient: recipientAddress,
+      channelId: 7,
+      remark: "xroute",
+      fallbackWeight: {
+        refTime: 600000000,
+        proofSize: 12288,
+      },
+    },
+  });
+
+  const quote = normalizeQuote(await provider.quote(intent));
+  const remoteInstructions = finalRemoteInstructions(quote);
+
+  assert.deepEqual(quote.route, ["polkadot-hub", "bifrost"]);
+  assert.equal(quote.submission.action, "execute");
+  assert.equal(quote.submission.amount, 250000000000n);
+  assert.equal(quote.submission.destinationFee, 100000000n);
+  assert.deepEqual(quote.expectedOutput, {
+    asset: "VDOT",
+    amount: 250000000000n,
+  });
+  assert.equal(remoteInstructions[1].type, "transact");
+  assert.match(remoteInstructions[1].callData, /^0x7d000800/);
+  assert.match(remoteInstructions[1].callData, /1878726f75746507000000$/);
+});
+
 test("sdk execute derives the XCM envelope from the route-engine quote", async () => {
   const provider = createRouteEngineQuoteProvider({
     cwd: workspaceRoot,

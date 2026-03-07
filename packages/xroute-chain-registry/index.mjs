@@ -180,7 +180,10 @@ const DIRECT_ROUTES = Object.freeze([
     transferableAssets: Object.freeze(["DOT"]),
     swapPairs: Object.freeze([]),
     executeAssets: Object.freeze(["DOT"]),
-    executeTypes: Object.freeze([EXECUTION_TYPES.RUNTIME_CALL]),
+    executeTypes: Object.freeze([
+      EXECUTION_TYPES.RUNTIME_CALL,
+      EXECUTION_TYPES.EVM_CONTRACT_CALL,
+    ]),
   }),
   Object.freeze({
     sourceChain: "moonbeam",
@@ -200,7 +203,10 @@ const DIRECT_ROUTES = Object.freeze([
     transferableAssets: Object.freeze(["DOT"]),
     swapPairs: Object.freeze([]),
     executeAssets: Object.freeze(["DOT"]),
-    executeTypes: Object.freeze([EXECUTION_TYPES.RUNTIME_CALL]),
+    executeTypes: Object.freeze([
+      EXECUTION_TYPES.RUNTIME_CALL,
+      EXECUTION_TYPES.VTOKEN_ORDER,
+    ]),
   }),
   Object.freeze({
     sourceChain: "bifrost",

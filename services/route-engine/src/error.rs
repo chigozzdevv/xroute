@@ -1,4 +1,4 @@
-use crate::model::{AssetKey, ChainKey};
+use crate::model::{AssetKey, ChainKey, ExecutionType};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
@@ -19,6 +19,7 @@ pub enum RouteError {
         source: ChainKey,
         destination: ChainKey,
         asset: AssetKey,
+        execution_type: ExecutionType,
     },
     UnsupportedSettlementRoute {
         execution: ChainKey,
@@ -42,6 +43,13 @@ pub enum RouteError {
     },
     InvalidAddress {
         field: &'static str,
+    },
+    InvalidBytes32 {
+        field: &'static str,
+    },
+    InvalidExecutionTarget {
+        execution_type: ExecutionType,
+        destination: ChainKey,
     },
     ArithmeticOverflow,
 }
@@ -77,11 +85,13 @@ impl Display for RouteError {
                 source,
                 destination,
                 asset,
+                execution_type,
             } => write!(
                 f,
-                "unsupported execute route: {} -> {} for {}",
+                "unsupported execute route: {} -> {} for {} on {}",
                 source.as_str(),
                 destination.as_str(),
+                execution_type.as_str(),
                 asset.symbol()
             ),
             Self::UnsupportedSettlementRoute {
@@ -122,6 +132,18 @@ impl Display for RouteError {
             Self::InvalidAddress { field } => {
                 write!(f, "{field} must be a 20-byte 0x-prefixed hex address")
             }
+            Self::InvalidBytes32 { field } => {
+                write!(f, "{field} must be a 32-byte 0x-prefixed hex value")
+            }
+            Self::InvalidExecutionTarget {
+                execution_type,
+                destination,
+            } => write!(
+                f,
+                "{} is not supported on {}",
+                execution_type.as_str(),
+                destination.as_str()
+            ),
             Self::ArithmeticOverflow => write!(f, "arithmetic overflow while building quote"),
         }
     }

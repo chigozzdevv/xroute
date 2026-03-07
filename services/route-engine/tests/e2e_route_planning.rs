@@ -1,8 +1,9 @@
 use route_engine::{
-    AssetAmount, AssetKey, ChainKey, DeploymentProfile, EngineSettings, ExecuteIntent,
-    ExecutionType, FeeType, Intent, IntentAction, PlanStep, RouteEngine, RouteRegistry,
-    RouteSegmentKind, RuntimeCallOriginKind, SubmissionAction, SwapIntent, TransferIntent,
-    XcmInstruction, XcmWeight,
+    AssetAmount, AssetKey, ChainKey, DeploymentProfile, EngineSettings,
+    EvmContractCallExecuteIntent, ExecuteIntent, FeeType, Intent, IntentAction,
+    PlanStep, RouteEngine, RouteRegistry, RouteSegmentKind, RuntimeCallExecuteIntent,
+    RuntimeCallOriginKind, SubmissionAction, SwapIntent, TransferIntent,
+    VtokenOrderExecuteIntent, VtokenOrderOperation, XcmInstruction, XcmWeight,
 };
 
 const REFUND_ADDRESS: &str = "0x1111111111111111111111111111111111111111";
@@ -312,8 +313,7 @@ fn quotes_execute_runtime_call_on_hydration() {
     let intent = Intent {
         source_chain: ChainKey::PolkadotHub,
         destination_chain: ChainKey::Hydration,
-        action: IntentAction::Execute(ExecuteIntent {
-            execution_type: ExecutionType::RuntimeCall,
+        action: IntentAction::Execute(ExecuteIntent::RuntimeCall(RuntimeCallExecuteIntent {
             asset: AssetKey::Dot,
             max_payment_amount: 90_000_000,
             call_data: "0x01020304".to_owned(),
@@ -322,7 +322,7 @@ fn quotes_execute_runtime_call_on_hydration() {
                 ref_time: 250_000_000,
                 proof_size: 4_096,
             },
-        }),
+        })),
         refund_address: REFUND_ADDRESS.to_owned(),
         deadline: 1_773_185_200,
     };
@@ -377,8 +377,7 @@ fn quotes_execute_runtime_call_on_moonbeam() {
     let intent = Intent {
         source_chain: ChainKey::PolkadotHub,
         destination_chain: ChainKey::Moonbeam,
-        action: IntentAction::Execute(ExecuteIntent {
-            execution_type: ExecutionType::RuntimeCall,
+        action: IntentAction::Execute(ExecuteIntent::RuntimeCall(RuntimeCallExecuteIntent {
             asset: AssetKey::Dot,
             max_payment_amount: 110_000_000,
             call_data: "0x05060708".to_owned(),
@@ -387,7 +386,7 @@ fn quotes_execute_runtime_call_on_moonbeam() {
                 ref_time: 500_000_000,
                 proof_size: 8_192,
             },
-        }),
+        })),
         refund_address: REFUND_ADDRESS.to_owned(),
         deadline: 1_773_185_200,
     };
@@ -426,6 +425,98 @@ fn quotes_execute_runtime_call_on_moonbeam() {
             call_data: "0x05060708".to_owned(),
         }
     );
+}
+
+#[test]
+fn quotes_execute_evm_contract_call_on_moonbeam() {
+    let engine = RouteEngine::default();
+    let intent = Intent {
+        source_chain: ChainKey::PolkadotHub,
+        destination_chain: ChainKey::Moonbeam,
+        action: IntentAction::Execute(ExecuteIntent::EvmContractCall(
+            EvmContractCallExecuteIntent {
+                asset: AssetKey::Dot,
+                max_payment_amount: 110_000_000,
+                contract_address: "0x1111111111111111111111111111111111111111".to_owned(),
+                calldata: "0xdeadbeef".to_owned(),
+                value: 0,
+                gas_limit: 250_000,
+                fallback_weight: XcmWeight {
+                    ref_time: 650_000_000,
+                    proof_size: 12_288,
+                },
+            },
+        )),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let quote = engine.quote(intent).expect("evm contract quote should build");
+
+    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Moonbeam]);
+    assert_eq!(quote.submission.action, SubmissionAction::Execute);
+    assert_eq!(quote.submission.amount, 110_000_000);
+    assert_eq!(quote.submission.destination_fee, 0);
+    assert_eq!(quote.expected_output, AssetAmount::new(AssetKey::Dot, 0));
+
+    let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
+    assert_eq!(outer_transfer.amount(), 110_000_000);
+    match &outer_transfer.remote_instructions()[1] {
+        XcmInstruction::Transact { call_data, .. } => {
+            assert!(call_data.starts_with("0x260001"));
+            assert!(call_data.contains("1111111111111111111111111111111111111111"));
+            assert!(call_data.ends_with("10deadbeef00"));
+        }
+        other => panic!("expected transact instruction, got {other:?}"),
+    }
+}
+
+#[test]
+fn quotes_execute_vtoken_order_on_bifrost() {
+    let engine = RouteEngine::default();
+    let intent = Intent {
+        source_chain: ChainKey::PolkadotHub,
+        destination_chain: ChainKey::Bifrost,
+        action: IntentAction::Execute(ExecuteIntent::VtokenOrder(VtokenOrderExecuteIntent {
+            asset: AssetKey::Dot,
+            amount: AssetKey::Dot.units(25),
+            max_payment_amount: 100_000_000,
+            operation: VtokenOrderOperation::Mint,
+            recipient: "5FbifrostRecipient".to_owned(),
+            recipient_account_id_hex:
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    .to_owned(),
+            channel_id: 7,
+            remark: "xroute".to_owned(),
+            fallback_weight: XcmWeight {
+                ref_time: 600_000_000,
+                proof_size: 12_288,
+            },
+        })),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let quote = engine.quote(intent).expect("vtoken order quote should build");
+
+    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Bifrost]);
+    assert_eq!(quote.submission.action, SubmissionAction::Execute);
+    assert_eq!(quote.submission.amount, AssetKey::Dot.units(25));
+    assert_eq!(quote.submission.destination_fee, 100_000_000);
+    assert_eq!(quote.expected_output, AssetAmount::new(AssetKey::Vdot, AssetKey::Dot.units(25)));
+
+    let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
+    assert_eq!(outer_transfer.amount(), AssetKey::Dot.units(25) + 100_000_000);
+    match &outer_transfer.remote_instructions()[1] {
+        XcmInstruction::Transact { call_data, .. } => {
+            assert!(call_data.starts_with("0x7d000800"));
+            assert!(call_data.contains(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ));
+            assert!(call_data.ends_with("1878726f75746507000000"));
+        }
+        other => panic!("expected transact instruction, got {other:?}"),
+    }
 }
 
 fn first_transfer_instruction(step: &PlanStep) -> &XcmInstruction {

@@ -1,4 +1,4 @@
-use crate::model::{AssetAmount, AssetKey, ChainKey, RouteHop};
+use crate::model::{AssetAmount, AssetKey, ChainKey, ExecutionType, RouteHop};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
@@ -33,6 +33,7 @@ pub struct SwapRoute {
 pub struct RouteRegistry {
     transfer_edges: Vec<TransferEdge>,
     swap_routes: Vec<SwapRoute>,
+    execute_capabilities: Vec<ExecuteCapability>,
 }
 
 impl Default for RouteRegistry {
@@ -114,6 +115,38 @@ impl Default for RouteRegistry {
                     dex_fee_bps: 25,
                 },
             ],
+            execute_capabilities: vec![
+                ExecuteCapability {
+                    source: ChainKey::PolkadotHub,
+                    destination: ChainKey::Hydration,
+                    asset: AssetKey::Dot,
+                    execution_type: ExecutionType::RuntimeCall,
+                },
+                ExecuteCapability {
+                    source: ChainKey::PolkadotHub,
+                    destination: ChainKey::Moonbeam,
+                    asset: AssetKey::Dot,
+                    execution_type: ExecutionType::RuntimeCall,
+                },
+                ExecuteCapability {
+                    source: ChainKey::PolkadotHub,
+                    destination: ChainKey::Moonbeam,
+                    asset: AssetKey::Dot,
+                    execution_type: ExecutionType::EvmContractCall,
+                },
+                ExecuteCapability {
+                    source: ChainKey::PolkadotHub,
+                    destination: ChainKey::Bifrost,
+                    asset: AssetKey::Dot,
+                    execution_type: ExecutionType::RuntimeCall,
+                },
+                ExecuteCapability {
+                    source: ChainKey::PolkadotHub,
+                    destination: ChainKey::Bifrost,
+                    asset: AssetKey::Dot,
+                    execution_type: ExecutionType::VtokenOrder,
+                },
+            ],
         }
     }
 }
@@ -177,6 +210,21 @@ impl RouteRegistry {
         })
     }
 
+    pub fn supports_execute(
+        &self,
+        source: ChainKey,
+        destination: ChainKey,
+        asset: AssetKey,
+        execution_type: ExecutionType,
+    ) -> bool {
+        self.execute_capabilities.iter().any(|capability| {
+            capability.source == source
+                && capability.destination == destination
+                && capability.asset == asset
+                && capability.execution_type == execution_type
+        })
+    }
+
 }
 
 impl TransferPath {
@@ -213,6 +261,14 @@ impl TransferEdge {
             buy_execution_fee: self.buy_execution_fee,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecuteCapability {
+    pub source: ChainKey,
+    pub destination: ChainKey,
+    pub asset: AssetKey,
+    pub execution_type: ExecutionType,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

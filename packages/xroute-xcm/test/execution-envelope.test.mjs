@@ -165,6 +165,69 @@ test("buildExecutionEnvelope encodes a moonbeam runtime call via Transact", asyn
   assert.equal(remoteInstructions[1].value.call.asHex(), "0x05060708");
 });
 
+test("buildExecutionEnvelope encodes a moonbeam evm contract call via Transact", async () => {
+  const intent = createExecuteIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "moonbeam",
+    refundAddress,
+    deadline: 1_773_185_200,
+    params: {
+      executionType: "evm-contract-call",
+      asset: "DOT",
+      maxPaymentAmount: "110000000",
+      contractAddress: "0x1111111111111111111111111111111111111111",
+      calldata: "0xdeadbeef",
+      value: "0",
+      gasLimit: "250000",
+      fallbackWeight: {
+        refTime: 650000000,
+        proofSize: 12288,
+      },
+    },
+  });
+  const quote = await testnetQuoteProvider.quote(intent);
+
+  const envelope = buildExecutionEnvelope({ intent, quote });
+  const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
+  const remoteInstructions = decoded.value[1].value.xcm;
+
+  assert.equal(remoteInstructions[1].type, "Transact");
+  assert.match(remoteInstructions[1].value.call.asHex(), /^0x260001/);
+  assert.match(remoteInstructions[1].value.call.asHex(), /1111111111111111111111111111111111111111/);
+});
+
+test("buildExecutionEnvelope encodes a bifrost vtoken order via Transact", async () => {
+  const intent = createExecuteIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "bifrost",
+    refundAddress,
+    deadline: 1_773_185_200,
+    params: {
+      executionType: "vtoken-order",
+      asset: "DOT",
+      amount: "250000000000",
+      maxPaymentAmount: "100000000",
+      operation: "mint",
+      recipient: aliceAddress,
+      channelId: 7,
+      remark: "xroute",
+      fallbackWeight: {
+        refTime: 600000000,
+        proofSize: 12288,
+      },
+    },
+  });
+  const quote = await testnetQuoteProvider.quote(intent);
+
+  const envelope = buildExecutionEnvelope({ intent, quote });
+  const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
+  const remoteInstructions = decoded.value[1].value.xcm;
+
+  assert.equal(remoteInstructions[1].type, "Transact");
+  assert.match(remoteInstructions[1].value.call.asHex(), /^0x7d000800/);
+  assert.match(remoteInstructions[1].value.call.asHex(), /1878726f75746507000000$/);
+});
+
 function hydrationRemoteInstructions(decoded) {
   const outerTransfer = decoded.value[1];
   const nestedTransfer = outerTransfer.value.xcm.find(

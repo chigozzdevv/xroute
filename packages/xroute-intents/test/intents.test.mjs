@@ -104,3 +104,61 @@ test("createExecuteIntent supports a runtime call on moonbeam", () => {
   assert.equal(intent.action.params.executionType, "runtime-call");
   assert.equal(intent.action.params.asset, "DOT");
 });
+
+test("createExecuteIntent normalizes a moonbeam evm contract call", () => {
+  const intent = createExecuteIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "moonbeam",
+    refundAddress: "0x1111111111111111111111111111111111111111",
+    deadline: 1_773_185_200,
+    params: {
+      executionType: "evm-contract-call",
+      asset: "dot",
+      maxPaymentAmount: "110000000",
+      contractAddress: "0x1111111111111111111111111111111111111111",
+      calldata: "0xdeadbeef",
+      value: "0",
+      gasLimit: "250000",
+      fallbackWeight: {
+        refTime: 500000000,
+        proofSize: 8192,
+      },
+    },
+  });
+
+  assert.equal(intent.action.params.executionType, "evm-contract-call");
+  assert.equal(intent.action.params.contractAddress, "0x1111111111111111111111111111111111111111");
+  assert.equal(intent.action.params.calldata, "0xdeadbeef");
+  assert.equal(intent.action.params.value, 0n);
+  assert.equal(intent.action.params.gasLimit, 250000n);
+});
+
+test("createExecuteIntent normalizes a bifrost vtoken order", () => {
+  const intent = createExecuteIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "bifrost",
+    refundAddress: "0x1111111111111111111111111111111111111111",
+    deadline: 1_773_185_200,
+    params: {
+      executionType: "vtoken-order",
+      asset: "dot",
+      amount: "250000000000",
+      maxPaymentAmount: "100000000",
+      operation: "mint",
+      recipient: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+      channelId: 7,
+      remark: "xroute",
+      fallbackWeight: {
+        refTime: 600000000,
+        proofSize: 12288,
+      },
+    },
+  });
+
+  assert.equal(intent.action.params.executionType, "vtoken-order");
+  assert.equal(intent.action.params.amount, 250000000000n);
+  assert.equal(intent.action.params.operation, "mint");
+  assert.equal(intent.action.params.channelId, 7);
+  assert.equal(intent.action.params.remark, "xroute");
+  assert.match(intent.action.params.recipientAccountIdHex, /^0x[0-9a-f]{64}$/);
+});
