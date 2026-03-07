@@ -30,13 +30,15 @@ XRoute splits that into clean layers:
 - `contracts/polkadot-hub-router`
   - thin onchain trust boundary
 - `services/route-engine`
-  - pathfinding, fee estimation, payload construction
+  - Rust route-planning core
 - `services/quote-service`
-  - hosted quote API with execution policy enforcement
+  - Rust quote API with execution policy enforcement
 - `services/executor-relayer`
-  - authenticated dispatch/finalization/refund operator service
+  - Rust dispatch/finalization/refund operator service
+- `services/shared`
+  - shared Rust API parsing, deployment loading, and policy validation
 - `packages/xroute-sdk`
-  - developer-facing SDK
+  - JS/TS developer-facing SDK
 
 ## Supported Surface
 
@@ -197,17 +199,19 @@ Onchain statuses:
 
 `services/quote-service`
 
-- hosted quote endpoint
+- Rust HTTP quote endpoint
 - optional Moonbeam EVM policy enforcement
 - profile-aware deployment artifact loading
 
 `services/executor-relayer`
 
-- authenticated operator API
+- Rust authenticated operator API
 - persistent dispatch/finalize/refund job store
 - retryable background processing
 - persistent status event stream
 - same execution policy enforcement before dispatch
+
+The SDK builds the exact dispatch request client-side from `intent + quote`, then the relayer only validates policy and submits the committed router call.
 
 ### 6. Status Projection
 
@@ -245,13 +249,15 @@ Main responsibilities:
 - `contracts/polkadot-hub-router`
   - Hub router contract and Solidity tests
 - `services/route-engine`
-  - route planning and destination payload encoding
+  - Rust route planning and destination payload encoding
 - `services/quote-service`
-  - hosted quoting surface
+  - Rust quote API
 - `services/executor-relayer`
-  - operator dispatch/finalization surface
+  - Rust operator dispatch/finalization surface
+- `services/shared`
+  - shared Rust service support code
 - `packages/xroute-sdk`
-  - publishable SDK
+  - publishable JS/TS SDK
 - `packages/xroute-intents`
   - intent creation and validation
 - `packages/xroute-chain-registry`
@@ -394,6 +400,8 @@ const relayer = createHttpExecutorRelayerClient({
   authToken: process.env.XROUTE_RELAYER_TOKEN,
 });
 ```
+
+`createHttpExecutorRelayerClient().dispatch(...)` builds the committed dispatch request in JS from the normalized `intent + quote` pair, then submits that request to the Rust relayer API.
 
 ### Example: Multihop Swap
 

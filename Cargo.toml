@@ -1,5 +1,10 @@
 [workspace]
-members = ["services/route-engine"]
+members = [
+  "services/route-engine",
+  "services/shared",
+  "services/quote-service",
+  "services/executor-relayer",
+]
 resolver = "2"
 
 [workspace.package]

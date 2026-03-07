@@ -1,0 +1,12 @@
+[package]
+name = "quote-service"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+hyper = { version = "0.14.32", features = ["http1", "server", "stream", "tcp"] }
+route-engine = { path = "../route-engine" }
+tokio = { version = "1.48.0", features = ["macros", "net", "rt-multi-thread"] }
+xroute-service-shared = { path = "../shared" }
+serde_json = "1.0.149"

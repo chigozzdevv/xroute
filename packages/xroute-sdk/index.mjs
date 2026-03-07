@@ -294,16 +294,32 @@ export function createHttpExecutorRelayerClient({
       });
     },
 
-    async dispatch({ intentId, intent, quote, envelope } = {}) {
+    async dispatch({ intentId, intent, quote, envelope, request } = {}) {
+      if (!intent) {
+        throw new Error("intent is required");
+      }
+
+      const normalizedIntent = intent.quoteId ? intent : createIntent(intent);
+      const normalizedRequest =
+        request ??
+        buildDispatchRequest(
+          createDispatchEnvelope(
+            envelope ??
+              buildExecutionEnvelope({
+                intent: normalizedIntent,
+                quote: normalizeQuote(quote),
+              }),
+          ),
+        );
+
       return requestJson(`${normalizedEndpoint}/jobs/dispatch`, {
         method: "POST",
         fetchImpl,
         headers: requestHeaders,
         body: {
           intentId,
-          intent: toPlainIntent(intent),
-          quote: toPlainObject(quote),
-          envelope: envelope ?? undefined,
+          intent: toPlainIntent(normalizedIntent),
+          request: toPlainObject(normalizedRequest),
         },
       });
     },

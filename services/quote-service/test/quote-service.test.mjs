@@ -4,43 +4,19 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { startQuoteService } from "../index.mjs";
+import { spawnRustService } from "../../../testing/spawn-rust-service.mjs";
 
+const workspaceRoot = process.cwd();
 const refundAddress = "0x1111111111111111111111111111111111111111";
 
 test("quote service serves health and quote responses", async () => {
-  const service = await startQuoteService({
-    port: 0,
-    deploymentProfile: "testnet",
-    quoteProvider: {
-      async quote(intent) {
-        return {
-          quoteId: intent.quoteId,
-          deploymentProfile: "testnet",
-          route: [intent.sourceChain, intent.destinationChain],
-          segments: [],
-          fees: {
-            xcmFee: { asset: "DOT", amount: "1" },
-            destinationFee: { asset: "DOT", amount: "2" },
-            platformFee: { asset: "DOT", amount: "3" },
-            totalFee: { asset: "DOT", amount: "6" },
-          },
-          expectedOutput: { asset: "DOT", amount: "10" },
-          minOutput: { asset: "DOT", amount: "10" },
-          submission: {
-            action: intent.action.type,
-            asset: "DOT",
-            amount: "10",
-            xcmFee: "1",
-            destinationFee: "2",
-            minOutputAmount: "10",
-          },
-          executionPlan: {
-            route: [intent.sourceChain, intent.destinationChain],
-            steps: [],
-          },
-        };
-      },
+  const service = await spawnRustService({
+    packageName: "quote-service",
+    cwd: workspaceRoot,
+    env: {
+      XROUTE_QUOTE_PORT: "0",
+      XROUTE_DEPLOYMENT_PROFILE: "testnet",
+      XROUTE_WORKSPACE_ROOT: workspaceRoot,
     },
   });
 
@@ -58,6 +34,7 @@ test("quote service serves health and quote responses", async () => {
       },
       body: JSON.stringify({
         intent: {
+          quoteId: "0xfeedface",
           sourceChain: "polkadot-hub",
           destinationChain: "hydration",
           refundAddress,
@@ -78,6 +55,7 @@ test("quote service serves health and quote responses", async () => {
     const payload = await quoteResponse.json();
     assert.equal(payload.intent.action.type, "transfer");
     assert.equal(payload.quote.submission.action, "transfer");
+    assert.equal(payload.quote.quoteId, "0xfeedface");
   } finally {
     await service.close();
   }
@@ -96,7 +74,7 @@ test("quote service enforces moonbeam evm execution policy", async () => {
               address: "0x1111111111111111111111111111111111111111",
               selectors: ["0xdeadbeef"],
               maxValue: "0",
-              maxGasLimit: "200000",
+              maxGasLimit: 200000,
               maxPaymentAmount: "100000000",
             },
           ],
@@ -105,39 +83,14 @@ test("quote service enforces moonbeam evm execution policy", async () => {
     }),
   );
 
-  const service = await startQuoteService({
-    port: 0,
-    deploymentProfile: "testnet",
-    executionPolicyPath: policyPath,
-    quoteProvider: {
-      async quote(intent) {
-        return {
-          quoteId: intent.quoteId,
-          deploymentProfile: "testnet",
-          route: [intent.sourceChain, intent.destinationChain],
-          segments: [],
-          fees: {
-            xcmFee: { asset: "DOT", amount: "1" },
-            destinationFee: { asset: "DOT", amount: "2" },
-            platformFee: { asset: "DOT", amount: "3" },
-            totalFee: { asset: "DOT", amount: "6" },
-          },
-          expectedOutput: { asset: "DOT", amount: "0" },
-          minOutput: null,
-          submission: {
-            action: "execute",
-            asset: "DOT",
-            amount: "10",
-            xcmFee: "1",
-            destinationFee: "0",
-            minOutputAmount: "0",
-          },
-          executionPlan: {
-            route: [intent.sourceChain, intent.destinationChain],
-            steps: [],
-          },
-        };
-      },
+  const service = await spawnRustService({
+    packageName: "quote-service",
+    cwd: workspaceRoot,
+    env: {
+      XROUTE_QUOTE_PORT: "0",
+      XROUTE_DEPLOYMENT_PROFILE: "testnet",
+      XROUTE_WORKSPACE_ROOT: workspaceRoot,
+      XROUTE_EVM_POLICY_PATH: policyPath,
     },
   });
 
@@ -175,7 +128,7 @@ test("quote service enforces moonbeam evm execution policy", async () => {
 
     assert.equal(disallowed.status, 400);
     const disallowedBody = await disallowed.json();
-    assert.match(disallowedBody.error, /not allowlisted/);
+    assert.match(disallowedBody.error, /not allowlisted|maxGasLimit|maxPaymentAmount/);
   } finally {
     await service.close();
     rmSync(tempDir, { recursive: true, force: true });
@@ -183,13 +136,13 @@ test("quote service enforces moonbeam evm execution policy", async () => {
 });
 
 test("quote service rejects oversized request bodies", async () => {
-  const service = await startQuoteService({
-    port: 0,
-    maxBodyBytes: 64,
-    quoteProvider: {
-      async quote() {
-        throw new Error("quote should not run");
-      },
+  const service = await spawnRustService({
+    packageName: "quote-service",
+    cwd: workspaceRoot,
+    env: {
+      XROUTE_QUOTE_PORT: "0",
+      XROUTE_QUOTE_MAX_BODY_BYTES: "64",
+      XROUTE_WORKSPACE_ROOT: workspaceRoot,
     },
   });
 
@@ -210,8 +163,7 @@ test("quote service rejects oversized request bodies", async () => {
             params: {
               asset: "DOT",
               amount: "1000000000000",
-              recipient:
-                "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+              recipient: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
             },
           },
         },

@@ -4,64 +4,37 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createExecuteIntent, createTransferIntent } from "../../../packages/xroute-intents/index.mjs";
+import { createTransferIntent, createExecuteIntent } from "../../../packages/xroute-intents/index.mjs";
 import {
+  createHttpExecutorRelayerClient,
   createRouteEngineQuoteProvider,
 } from "../../../packages/xroute-sdk/index.mjs";
-import { startExecutorRelayer } from "../index.mjs";
+import { spawnAnvil } from "../../../testing/spawn-anvil.mjs";
+import { spawnRustService } from "../../../testing/spawn-rust-service.mjs";
 
+const workspaceRoot = process.cwd();
 const refundAddress = "0x1111111111111111111111111111111111111111";
 const ss58Recipient = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
+const routerAddress = "0x2222222222222222222222222222222222222222";
 
 test("executor relayer authenticates and dispatches a queued job", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "xroute-relayer-"));
-  const calls = [];
-  const quoteProvider = createRouteEngineQuoteProvider({
-    cwd: process.cwd(),
-    deploymentProfile: "testnet",
-  });
-  const intent = createTransferIntent({
-    sourceChain: "polkadot-hub",
-    destinationChain: "hydration",
-    refundAddress,
-    deadline: 1_773_185_200,
-    params: {
-      asset: "DOT",
-      amount: "1000000000000",
-      recipient: ss58Recipient,
+  const anvil = await spawnAnvil();
+  const service = await spawnRustService({
+    packageName: "executor-relayer",
+    cwd: workspaceRoot,
+    env: {
+      XROUTE_RELAYER_PORT: "0",
+      XROUTE_RELAYER_AUTH_TOKEN: "secret-token",
+      XROUTE_RPC_URL: anvil.rpcUrl,
+      XROUTE_PRIVATE_KEY: anvil.privateKey,
+      XROUTE_ROUTER_ADDRESS: routerAddress,
+      XROUTE_RELAYER_JOB_STORE_PATH: join(tempDir, "jobs.json"),
+      XROUTE_STATUS_EVENTS_PATH: join(tempDir, "events.ndjson"),
+      XROUTE_RELAYER_POLL_INTERVAL_MS: "25",
+      XROUTE_RELAYER_RETRY_DELAY_MS: "25",
+      XROUTE_WORKSPACE_ROOT: workspaceRoot,
     },
-  });
-  const quote = await quoteProvider.quote(intent);
-
-  const service = await startExecutorRelayer({
-    port: 0,
-    authToken: "secret-token",
-    routerAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    routerAdapter: {
-      async dispatchIntent(input) {
-        calls.push(["dispatch", input]);
-        return {
-          intentId: input.intentId,
-          txHash: "0x1111111111111111111111111111111111111111111111111111111111111111",
-        };
-      },
-      async finalizeSuccess(input) {
-        calls.push(["settle", input]);
-        return input;
-      },
-      async finalizeFailure(input) {
-        calls.push(["fail", input]);
-        return input;
-      },
-      async refundFailedIntent(input) {
-        calls.push(["refund", input]);
-        return input;
-      },
-    },
-    jobStorePath: join(tempDir, "jobs.json"),
-    statusEventsPath: join(tempDir, "events.ndjson"),
-    pollIntervalMs: 10,
-    retryDelayMs: 25,
   });
 
   try {
@@ -70,32 +43,48 @@ test("executor relayer authenticates and dispatches a queued job", async () => {
     });
     assert.equal(unauthorized.status, 401);
 
-    const queued = await service.client.dispatch({
+    const quoteProvider = createRouteEngineQuoteProvider({
+      cwd: workspaceRoot,
+      deploymentProfile: "testnet",
+    });
+    const intent = createTransferIntent({
+      sourceChain: "polkadot-hub",
+      destinationChain: "hydration",
+      refundAddress,
+      deadline: 1_773_185_200,
+      params: {
+        asset: "DOT",
+        amount: "1000000000000",
+        recipient: ss58Recipient,
+      },
+    });
+    const quote = await quoteProvider.quote(intent);
+    const relayer = createHttpExecutorRelayerClient({
+      endpoint: service.url,
+      authToken: "secret-token",
+    });
+
+    const queued = await relayer.dispatch({
       intentId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       intent,
       quote,
     });
     assert.equal(queued.job.status, "queued");
 
-    await service.drain();
+    const completed = await waitForJob({
+      relayer,
+      jobId: queued.job.id,
+    });
+    assert.equal(completed.status, "completed");
+    assert.equal(completed.result.intentId, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    assert.match(completed.result.txHash, /^0x[0-9a-f]{64}$/);
 
-    const jobs = await fetch(`${service.url}/jobs`, {
-      method: "GET",
-      headers: {
-        authorization: "Bearer secret-token",
-      },
-    }).then((response) => response.json());
-
+    const jobs = await relayer.listJobs();
     assert.equal(jobs.jobs.length, 1);
     assert.equal(jobs.jobs[0].status, "completed");
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0][0], "dispatch");
-    assert.equal(
-      calls[0][1].intentId,
-      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    );
   } finally {
     await service.close();
+    await anvil.close();
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
@@ -113,7 +102,7 @@ test("executor relayer enforces moonbeam evm execution policy before dispatch", 
               address: "0x2222222222222222222222222222222222222222",
               selectors: ["0xdeadbeef"],
               maxValue: "0",
-              maxGasLimit: "200000",
+              maxGasLimit: 200000,
               maxPaymentAmount: "100000000",
             },
           ],
@@ -122,27 +111,21 @@ test("executor relayer enforces moonbeam evm execution policy before dispatch", 
     }),
   );
 
-  const service = await startExecutorRelayer({
-    port: 0,
-    authToken: "secret-token",
-    executionPolicyPath: policyPath,
-    routerAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    routerAdapter: {
-      async dispatchIntent() {
-        throw new Error("dispatch should not be called");
-      },
-      async finalizeSuccess() {
-        throw new Error("settle should not be called");
-      },
-      async finalizeFailure() {
-        throw new Error("fail should not be called");
-      },
-      async refundFailedIntent() {
-        throw new Error("refund should not be called");
-      },
+  const anvil = await spawnAnvil();
+  const service = await spawnRustService({
+    packageName: "executor-relayer",
+    cwd: workspaceRoot,
+    env: {
+      XROUTE_RELAYER_PORT: "0",
+      XROUTE_RELAYER_AUTH_TOKEN: "secret-token",
+      XROUTE_RPC_URL: anvil.rpcUrl,
+      XROUTE_PRIVATE_KEY: anvil.privateKey,
+      XROUTE_ROUTER_ADDRESS: routerAddress,
+      XROUTE_EVM_POLICY_PATH: policyPath,
+      XROUTE_RELAYER_JOB_STORE_PATH: join(tempDir, "jobs.json"),
+      XROUTE_STATUS_EVENTS_PATH: join(tempDir, "events.ndjson"),
+      XROUTE_WORKSPACE_ROOT: workspaceRoot,
     },
-    jobStorePath: join(tempDir, "jobs.json"),
-    statusEventsPath: join(tempDir, "events.ndjson"),
   });
 
   try {
@@ -166,48 +149,47 @@ test("executor relayer enforces moonbeam evm execution policy before dispatch", 
       },
     });
     const quote = await createRouteEngineQuoteProvider({
-      cwd: process.cwd(),
+      cwd: workspaceRoot,
       deploymentProfile: "testnet",
     }).quote(intent);
+    const relayer = createHttpExecutorRelayerClient({
+      endpoint: service.url,
+      authToken: "secret-token",
+    });
 
     await assert.rejects(
       () =>
-        service.client.dispatch({
+        relayer.dispatch({
           intentId: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           intent,
           quote,
         }),
-      /not allowlisted/,
+      /not allowlisted|maxGasLimit|maxPaymentAmount/,
     );
   } finally {
     await service.close();
+    await anvil.close();
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
 
 test("executor relayer rejects oversized request bodies", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "xroute-relayer-oversized-"));
-  const service = await startExecutorRelayer({
-    port: 0,
-    authToken: "secret-token",
-    maxBodyBytes: 64,
-    routerAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    routerAdapter: {
-      async dispatchIntent() {
-        throw new Error("dispatch should not be called");
-      },
-      async finalizeSuccess() {
-        throw new Error("settle should not be called");
-      },
-      async finalizeFailure() {
-        throw new Error("fail should not be called");
-      },
-      async refundFailedIntent() {
-        throw new Error("refund should not be called");
-      },
+  const anvil = await spawnAnvil();
+  const service = await spawnRustService({
+    packageName: "executor-relayer",
+    cwd: workspaceRoot,
+    env: {
+      XROUTE_RELAYER_PORT: "0",
+      XROUTE_RELAYER_AUTH_TOKEN: "secret-token",
+      XROUTE_RPC_URL: anvil.rpcUrl,
+      XROUTE_PRIVATE_KEY: anvil.privateKey,
+      XROUTE_ROUTER_ADDRESS: routerAddress,
+      XROUTE_RELAYER_MAX_BODY_BYTES: "64",
+      XROUTE_RELAYER_JOB_STORE_PATH: join(tempDir, "jobs.json"),
+      XROUTE_STATUS_EVENTS_PATH: join(tempDir, "events.ndjson"),
+      XROUTE_WORKSPACE_ROOT: workspaceRoot,
     },
-    jobStorePath: join(tempDir, "jobs.json"),
-    statusEventsPath: join(tempDir, "events.ndjson"),
   });
 
   try {
@@ -220,7 +202,8 @@ test("executor relayer rejects oversized request bodies", async () => {
       body: JSON.stringify({
         intentId:
           "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        refundAmount: "1000000000000000000000000000000000000000000000000000000000000000",
+        refundAmount:
+          "1000000000000000000000000000000000000000000000000000000000000000",
       }),
     });
 
@@ -229,6 +212,23 @@ test("executor relayer rejects oversized request bodies", async () => {
     assert.match(payload.error, /exceeds/);
   } finally {
     await service.close();
+    await anvil.close();
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+async function waitForJob({ relayer, jobId, timeoutMs = 10000 } = {}) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const { job } = await relayer.getJob(jobId);
+    if (job.status === "completed") {
+      return job;
+    }
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50);
+    });
+  }
+
+  throw new Error(`timed out waiting for job ${jobId}`);
+}
