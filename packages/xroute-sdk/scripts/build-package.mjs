@@ -93,26 +93,6 @@ const binaryCopies = [
   {
     from: resolve(
       workspaceRoot,
-      "packages/xroute-precompile-interfaces/generated/destination-adapter-specs.json",
-    ),
-    to: resolve(
-      distRoot,
-      "vendor/xroute-precompile-interfaces/generated/destination-adapter-specs.json",
-    ),
-  },
-  {
-    from: resolve(
-      workspaceRoot,
-      "packages/xroute-precompile-interfaces/generated/destination-adapter-deployments.json",
-    ),
-    to: resolve(
-      distRoot,
-      "vendor/xroute-precompile-interfaces/generated/destination-adapter-deployments.json",
-    ),
-  },
-  {
-    from: resolve(
-      workspaceRoot,
       "packages/xroute-xcm/metadata/polkadot-asset-hub.hex",
     ),
     to: resolve(distRoot, "vendor/xroute-xcm/metadata/polkadot-asset-hub.hex"),

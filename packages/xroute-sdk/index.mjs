@@ -383,30 +383,8 @@ function buildRouteEngineQuoteArgs(
         "--settlement-chain",
         intent.action.params.settlementChain,
       ]);
-    case ACTION_TYPES.STAKE:
-      return shared.concat([
-        "--asset",
-        intent.action.params.asset,
-        "--amount",
-        intent.action.params.amount.toString(),
-        "--validator",
-        intent.action.params.validator,
-        "--recipient",
-        intent.action.params.recipient,
-      ]);
-    case ACTION_TYPES.CALL:
-      return shared.concat([
-        "--asset",
-        intent.action.params.asset,
-        "--amount",
-        intent.action.params.amount.toString(),
-        "--target",
-        intent.action.params.target,
-        "--calldata",
-        intent.action.params.calldata,
-      ]);
     default:
-          throw new Error(`unsupported action type: ${intent.action.type}`);
+      throw new Error(`unsupported action type: ${intent.action.type}`);
   }
 }
 

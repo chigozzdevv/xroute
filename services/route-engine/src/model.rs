@@ -23,7 +23,6 @@ impl Display for ChainKey {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DeploymentProfile {
-    Local,
     Testnet,
     Mainnet,
 }
@@ -31,7 +30,6 @@ pub enum DeploymentProfile {
 impl DeploymentProfile {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Local => "local",
             Self::Testnet => "testnet",
             Self::Mainnet => "mainnet",
         }
@@ -132,28 +130,6 @@ impl Intent {
                 self.refund_address,
                 self.deadline
             ),
-            IntentAction::Stake(stake) => format!(
-                "stake|{}|{}|{}|{}|{}|{}|{}|{}",
-                self.source_chain.as_str(),
-                self.destination_chain.as_str(),
-                stake.asset.symbol(),
-                stake.amount,
-                stake.validator,
-                stake.recipient,
-                self.refund_address,
-                self.deadline
-            ),
-            IntentAction::Call(call) => format!(
-                "call|{}|{}|{}|{}|{}|{}|{}|{}",
-                self.source_chain.as_str(),
-                self.destination_chain.as_str(),
-                call.asset.symbol(),
-                call.amount,
-                call.target,
-                call.calldata,
-                self.refund_address,
-                self.deadline
-            ),
         };
 
         format!("0x{:016x}", fnv1a64(material.as_bytes()))
@@ -163,8 +139,6 @@ impl Intent {
         match &self.action {
             IntentAction::Transfer(transfer) => AssetAmount::new(transfer.asset, transfer.amount),
             IntentAction::Swap(swap) => AssetAmount::new(swap.asset_in, swap.amount_in),
-            IntentAction::Stake(stake) => AssetAmount::new(stake.asset, stake.amount),
-            IntentAction::Call(call) => AssetAmount::new(call.asset, call.amount),
         }
     }
 }
@@ -173,8 +147,6 @@ impl Intent {
 pub enum IntentAction {
     Transfer(TransferIntent),
     Swap(SwapIntent),
-    Stake(StakeIntent),
-    Call(CallIntent),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -192,22 +164,6 @@ pub struct SwapIntent {
     pub min_amount_out: u128,
     pub settlement_chain: ChainKey,
     pub recipient: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StakeIntent {
-    pub asset: AssetKey,
-    pub amount: u128,
-    pub validator: String,
-    pub recipient: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CallIntent {
-    pub asset: AssetKey,
-    pub amount: u128,
-    pub target: String,
-    pub calldata: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -238,8 +194,6 @@ pub struct SubmissionTerms {
 pub enum SubmissionAction {
     Transfer,
     Swap,
-    Stake,
-    Call,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -278,12 +232,6 @@ pub struct RouteHop {
     pub asset: AssetKey,
     pub transport_fee: AssetAmount,
     pub buy_execution_fee: AssetAmount,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct XcmWeight {
-    pub ref_time: u64,
-    pub proof_size: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -347,34 +295,11 @@ pub enum XcmInstruction {
         reserve: ChainKey,
         remote_instructions: Vec<XcmInstruction>,
     },
-    Transact {
-        adapter: DestinationAdapter,
-        target_address: String,
-        contract_call: String,
-        fallback_weight: XcmWeight,
-    },
     DepositAsset {
         asset: AssetKey,
         recipient: String,
         asset_count: u32,
     },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DestinationAdapter {
-    HydrationSwapV1,
-    HydrationStakeV1,
-    HydrationCallV1,
-}
-
-impl DestinationAdapter {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::HydrationSwapV1 => "hydration-swap-v1",
-            Self::HydrationStakeV1 => "hydration-stake-v1",
-            Self::HydrationCallV1 => "hydration-call-v1",
-        }
-    }
 }
 
 pub fn pow10(exponent: u8) -> u128 {

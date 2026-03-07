@@ -1,75 +1,66 @@
 # xroute
 
-`xroute` is an XCM intent router for cross-chain execution on Polkadot.
+`xroute` is a multihop XCM execution router for Polkadot.
 
-It gives developers a higher-level interface for cross-chain actions such as:
+It gives developers a higher-level SDK for two live actions:
 
-- `transfer` native assets across chains
-- `swap` on Hydration from Polkadot Hub
-- local-only `stake` and generic `call` adapter experiments
+- `transfer`: move native assets across supported chains
+- `swap`: execute a Hydration swap and optionally settle the output on another chain
 
-Instead of asking a user or dApp to hand-build low-level XCM, XRoute lets them ask for an outcome and pushes the routing, payload construction, and execution details into dedicated infrastructure.
+The current live route graph is narrow by design, but the routing model is real:
+
+- `polkadot-hub -> hydration`
+- `hydration -> polkadot-hub`
+- `polkadot-hub -> hydration -> polkadot-hub`
+
+This is not a generic router for arbitrary parachains. It is a production-shaped router for the routes and assets it explicitly models.
 
 ## Why XRoute
 
-Polkadot Hub exposes powerful primitives, but they are still low-level from a product perspective:
+Polkadot Hub exposes powerful primitives, but integrating them directly is still low-level:
 
 - XCM dispatch is byte-oriented and runtime-specific
-- fee estimation depends on chain context
-- destination execution needs chain-specific adapters
-- cross-chain UX gets messy fast if every dApp has to learn raw XCM
+- fees depend on the exact route and asset
+- remote execution and settlement logic are easy to get wrong
+- every dApp should not have to build and encode XCM by hand
 
-XRoute exists to solve that gap.
+XRoute pushes that complexity into a small set of clean layers:
 
-The design goal is simple:
-
-- keep the onchain router thin and verifiable
-- keep route planning and payload construction offchain
-- make the developer API look like `quote -> execute -> track`
+- a thin onchain Hub router
+- an offchain route engine
+- an SDK that exposes `quote -> execute -> track`
 
 ## What Is Implemented
 
-Current supported vertical slices:
+Live runtime surface:
 
-- live `polkadot-hub -> hydration` native `transfer`
-- live `hydration -> polkadot-hub` native `transfer`
-- live `polkadot-hub -> hydration` `swap`
-- live `polkadot-hub -> hydration -> polkadot-hub` remote-settlement `swap`
-- local/dev-only `polkadot-hub -> hydration` `stake`
-- local/dev-only `polkadot-hub -> hydration` generic `call`
+- `transfer` between `polkadot-hub` and `hydration`
+- `swap` on `hydration`
+- remote-settlement swaps back to `polkadot-hub`
+- onchain intent lifecycle persistence
+- offchain status projection for app-facing reads
 
-Current swap capabilities:
+Current swap pairs:
 
-- `DOT -> USDT` on Hydration
-- `DOT -> HDX` on Hydration
-- settlement on `hydration` or on `polkadot-hub`
+- `DOT -> USDT`
+- `DOT -> HDX`
 
-Current implemented layers:
+Current profiles:
 
-- Solidity Hub router contract
-- Rust route engine
-- metadata-backed XCM envelope builder
-- publishable SDK package at `@xroute/sdk`
-- destination adapter specs and deployment manifests
-- persistent status indexer
-- Foundry, Rust, and Node end-to-end tests
+- `testnet`
+- `mainnet`
 
 ## How It Works
 
-XRoute is split into four main runtime pieces.
+### 1. Intent
 
-`1. SDK / app layer`
-
-The app creates an intent and asks for a quote.
+The app creates an intent through the SDK.
 
 ```ts
-const refundAddress = "0x1111111111111111111111111111111111111111";
-const recipientAccount = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
-
 const { intent, quote } = await client.quote({
   sourceChain: "polkadot-hub",
   destinationChain: "hydration",
-  refundAddress,
+  refundAddress: "0x1111111111111111111111111111111111111111",
   deadline: Math.floor(Date.now() / 1000) + 1800,
   action: {
     type: "swap",
@@ -79,42 +70,56 @@ const { intent, quote } = await client.quote({
       amountIn: "1000000000000",
       minAmountOut: "493000000",
       settlementChain: "polkadot-hub",
-      recipient: recipientAccount,
+      recipient: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
     },
   },
 });
 ```
 
-Important address distinction:
+Address model:
 
-- `refundAddress` is the source-chain refund recipient on the Hub EVM side, so it must be an EVM hex address
-- `recipient` is the XCM beneficiary on the destination or settlement chain, so it is typically an SS58 account
+- `refundAddress` is an EVM address on the source Hub side
+- `recipient` is the beneficiary account on the destination or settlement chain
 
-`2. Route engine`
+### 2. Route Engine
 
 The Rust route engine:
 
 - validates the intent
 - searches the supported route graph
+- chooses the lowest-cost supported path
 - estimates `xcmFee`, `destinationFee`, and `platformFee`
-- estimates output-side settlement fees for remote-settlement swaps
-- emits explicit execution and settlement route segments with per-hop fee data
-- resolves the deployment profile
-- emits real Hydration runtime `ExchangeAsset` instructions for live swaps
-- uses destination adapters only for local/dev-only `stake` and generic `call`
-- builds nested multihop execution plans consumed by the XCM layer
+- emits explicit multihop route segments
+- builds a concrete execution plan
 
-`3. Hub router`
+For live swaps, the planner emits runtime-oriented XCM instructions such as:
 
-The Hub router contract:
+- `TransferReserveAsset`
+- `BuyExecution`
+- `ExchangeAsset`
+- `DepositAsset`
+- `InitiateReserveWithdraw`
 
-- escrows the source asset
+### 3. XCM Builder
+
+The XCM layer turns the route-engine plan into the exact payload committed by the router contract.
+
+That keeps one important boundary clean:
+
+- the planner decides the route and instructions
+- the router only accepts the exact committed payload hash
+
+### 4. Hub Router
+
+The Solidity router on Polkadot Hub:
+
+- escrows the input asset
 - charges the platform fee
-- verifies the committed dispatch payload hash
-- dispatches the XCM payload through the Hub precompile
-- persists onchain lifecycle state
+- verifies the dispatch payload hash
+- dispatches through the XCM precompile
+- stores the intent lifecycle onchain
 
-Current onchain lifecycle states:
+Onchain statuses:
 
 - `submitted`
 - `dispatched`
@@ -123,45 +128,32 @@ Current onchain lifecycle states:
 - `cancelled`
 - `refunded`
 
-`4. Status tracking`
+### 5. Status Projection
 
-Final execution outcomes can be written back onchain by the executor or relayer, and the SDK indexer maintains an offchain projection for timelines and app-friendly reads.
+The SDK also exposes a persistent offchain indexer for:
 
-Important distinction:
+- timelines
+- app-friendly reads
+- local persistence across restarts
 
-- the router contract is the onchain source of truth for final state
-- the status indexer is an offchain cache and timeline projection
+The contract remains the onchain source of truth for final state.
 
-## Execution Flow
+## Multihop Model
 
-Typical remote-settlement swap flow:
+XRoute is multihop for the routes it explicitly publishes.
 
-1. User creates a `swap` intent on `polkadot-hub`.
-2. The route engine resolves the execution path `polkadot-hub -> hydration`.
-3. If the output should land on another chain, the route engine also resolves the settlement path from the execution chain to the settlement chain.
-4. The route engine builds a real Hydration runtime `ExchangeAsset` step and any required reserve-settlement instructions.
-5. The SDK converts that plan into the committed router request and XCM envelope.
-6. The router escrows funds and dispatches the exact payload.
-7. The XCM message executes across the route and reaches the Hydration runtime.
-8. Hydration executes the swap and either deposits locally or routes the reserve-backed output to the settlement chain.
-9. The executor records `settled` or `failed` onchain.
-10. If needed, the executor records a `refund`.
+Examples:
 
-For live swaps:
+- direct transfer: `polkadot-hub -> hydration`
+- direct swap: `polkadot-hub -> hydration`
+- remote-settlement swap: `polkadot-hub -> hydration -> polkadot-hub`
 
-- `destinationChain` is the execution chain
-- `settlementChain` is where the user finally receives the result
+That means the route engine does not just hardcode one destination action. It models:
 
-For local/dev-only adapter actions:
-
-- `stake` and generic `call` still use destination adapters
-- they are not part of the current live `testnet` or `mainnet` integration surface
-
-Example route shapes:
-
-- `polkadot-hub -> hydration`
-- `hydration -> polkadot-hub`
-- `polkadot-hub -> hydration -> polkadot-hub`
+- execution path
+- settlement path
+- per-hop fee data
+- nested XCM for reserve-based delivery
 
 ## Project Structure
 
@@ -178,88 +170,57 @@ xroute/
     xroute-xcm/
   services/
     route-engine/
-  testing/
-    devnet/
+  scripts/
 ```
 
-What each directory is for:
+Directory roles:
 
 - `contracts/polkadot-hub-router`
-  - Solidity router and local/dev-only adapter contracts
+  - Hub router contract and Solidity tests
 - `services/route-engine`
-  - Rust quote engine and execution-plan builder
+  - Rust route planner and quote engine
 - `packages/xroute-sdk`
   - publishable SDK package
 - `packages/xroute-xcm`
-  - metadata-backed XCM encoding from route-engine output
+  - metadata-backed XCM encoding
 - `packages/xroute-intents`
-  - intent creation and normalization
-- `packages/xroute-precompile-interfaces`
-  - generated adapter specs and deployment manifests
+  - intent creation and validation
 - `packages/xroute-chain-registry`
-  - chain and asset metadata used by the SDK/XCM layer
+  - chain, asset, and supported route metadata
+- `packages/xroute-precompile-interfaces`
+  - shared Hub/XCM integration constants
 - `packages/xroute-types`
-  - shared constants and assertions
-- `testing/devnet`
-  - internal end-to-end verification only
+  - common assertions and constants
+- `scripts`
+  - deployment entrypoints
 
 Compatibility note:
 
 - `asset-hub` is accepted as an input alias and canonicalized to `polkadot-hub`
-- the public route graph and quote output use `polkadot-hub`
 
 ## Setup
 
-The public integration surface is:
-
-- `@xroute/sdk`
-- hosted quote infrastructure
-- deployed router addresses and live chain metadata on `testnet` or `mainnet`
-
-Repo requirements:
+Requirements:
 
 - `Node.js 20+`
 - `cargo`
-- `forge` and `cast`
-- `anvil` only if you want to run the internal devnet harness
+- `forge`
+- `cast`
 
-Install and verify the public repo surface:
+Verification:
 
 ```bash
 npm test
 ```
 
-Run the internal devnet end-to-end harness only when you want to verify the local stack:
-
-```bash
-npm run test:devnet
-```
-
-Run the full maintainer verification suite:
-
-```bash
-npm run check
-```
-
 Useful commands:
 
 ```bash
-npm run generate:manifests
 npm run test:rust
 npm run test:solidity
 npm run test:node
-npm run test:all
-npm run build:sdk-package
+npm run test:package
 npm run build
-```
-
-The SDK package is built from:
-
-- [packages/xroute-sdk/package.json](/Users/chigozzdev/Desktop/xroute/packages/xroute-sdk/package.json)
-
-Dry-run packing:
-
-```bash
 npm pack --dry-run ./packages/xroute-sdk
 ```
 
@@ -267,67 +228,53 @@ npm pack --dry-run ./packages/xroute-sdk
 
 Public deployment entrypoint:
 
-- `scripts/deploy-stack.mjs`
-  - profile-aware deployment for `testnet` or `mainnet`
+- [deploy-stack.mjs](/Users/chigozzdev/Desktop/xroute/scripts/deploy-stack.mjs)
 
-Deployment commands:
+Deployment profiles:
+
+- `testnet`
+- `mainnet`
+
+Example:
 
 ```bash
-XROUTE_ALLOW_LIVE_DEPLOY=true XROUTE_RPC_URL=https://... XROUTE_PRIVATE_KEY=0x... XROUTE_ROUTER_EXECUTOR=0x... XROUTE_ROUTER_TREASURY=0x... XROUTE_XCM_ADDRESS=0x... npm run deploy:testnet
-XROUTE_ALLOW_LIVE_DEPLOY=true XROUTE_RPC_URL=https://... XROUTE_PRIVATE_KEY=0x... XROUTE_ROUTER_EXECUTOR=0x... XROUTE_ROUTER_TREASURY=0x... XROUTE_XCM_ADDRESS=0x... npm run deploy:mainnet
+XROUTE_ALLOW_LIVE_DEPLOY=true \
+XROUTE_DEPLOYMENT_PROFILE=testnet \
+XROUTE_RPC_URL=https://... \
+XROUTE_PRIVATE_KEY=0x... \
+XROUTE_ROUTER_EXECUTOR=0x... \
+XROUTE_ROUTER_TREASURY=0x... \
+XROUTE_XCM_ADDRESS=0x... \
+node scripts/deploy-stack.mjs
 ```
 
-Important environment variables:
+Required variables:
 
-- `XROUTE_RPC_URL`
-  - target EVM RPC for the deployment
-- `XROUTE_PRIVATE_KEY`
-  - deployer key used by `forge create` and `cast send`
-- `XROUTE_DEPLOYMENT_PROFILE`
-  - normally `testnet` or `mainnet`; `local` is reserved for the internal harness
 - `XROUTE_ALLOW_LIVE_DEPLOY`
-  - must be `true` for non-local deployments
-- `XROUTE_XCM_ADDRESS`
-  - required for non-local deployments
+- `XROUTE_RPC_URL`
+- `XROUTE_PRIVATE_KEY`
 - `XROUTE_ROUTER_EXECUTOR`
-  - required for non-local deployments; executor allowed to dispatch and finalize intents on the Hub router
 - `XROUTE_ROUTER_TREASURY`
-  - required for non-local deployments; treasury that receives platform fees
+- `XROUTE_XCM_ADDRESS`
+
+Optional:
+
 - `XROUTE_PLATFORM_FEE_BPS`
-  - router platform fee in basis points
 - `XROUTE_STACK_OUTPUT_PATH`
-  - optional output file for the deployed stack summary
 
-Published adapter deployments consumed by the SDK:
+Deployment artifacts are written under:
 
-- [destination-adapter-deployments.json](/Users/chigozzdev/Desktop/xroute/packages/xroute-precompile-interfaces/generated/destination-adapter-deployments.json)
+- `contracts/polkadot-hub-router/deployments/testnet/`
+- `contracts/polkadot-hub-router/deployments/mainnet/`
 
-Note:
-
-- live Hydration swaps do not depend on a destination EVM adapter deployment
-- the published adapter manifest is still used by the local/dev-only `stake` and `call` paths
-
-Current verification status:
-
-- `testnet` and `mainnet`
-  - these are the intended integration targets
-  - this repo only publishes manifests after a real deployment exists
-
-Internal devnet:
-
-- local/devnet deployment is kept under [testing/devnet](/Users/chigozzdev/Desktop/xroute/testing/devnet)
-- it is used for end-to-end verification only
-- it is not part of the public integration surface
+Only real deployments should be published there.
 
 ## SDK Usage
 
-Use a hosted quote service in production:
+Production quote path:
 
-```js
-import {
-  createHttpQuoteProvider,
-  createXRouteClient,
-} from "@xroute/sdk";
+```ts
+import { createHttpQuoteProvider, createXRouteClient } from "@xroute/sdk";
 import {
   createCastRouterAdapter,
   createStaticAssetAddressResolver,
@@ -338,115 +285,25 @@ const statusProvider = new FileBackedStatusIndexer({
   eventsPath: "./.xroute/status-events.jsonl",
 });
 
-const quoteProvider = createHttpQuoteProvider({
-  endpoint: "https://quotes.example.com/xroute/quote",
-});
-
-const routerAdapter = createCastRouterAdapter({
-  rpcUrl: process.env.XROUTE_RPC_URL,
-  routerAddress: process.env.XROUTE_ROUTER_ADDRESS,
-  privateKey: process.env.XROUTE_PRIVATE_KEY,
-  ownerAddress: process.env.XROUTE_OWNER_ADDRESS,
-  statusIndexer: statusProvider,
-});
-
-const assetAddressResolver = createStaticAssetAddressResolver({
-  "polkadot-hub": {
-    DOT: "0x0000000000000000000000000000000000000401",
-  },
-});
-
 const client = createXRouteClient({
-  quoteProvider,
-  routerAdapter,
+  quoteProvider: createHttpQuoteProvider({
+    endpoint: "https://quotes.example.com/xroute/quote",
+  }),
+  routerAdapter: createCastRouterAdapter({
+    rpcUrl: process.env.XROUTE_RPC_URL,
+    routerAddress: process.env.XROUTE_ROUTER_ADDRESS,
+    privateKey: process.env.XROUTE_PRIVATE_KEY,
+    ownerAddress: process.env.XROUTE_OWNER_ADDRESS,
+    statusIndexer: statusProvider,
+  }),
   statusProvider,
-  assetAddressResolver,
-});
-
-const refundAddress = process.env.XROUTE_OWNER_ADDRESS;
-const recipientAccount = process.env.XROUTE_RECIPIENT_ACCOUNT;
-
-const { intent, quote } = await client.quote({
-  sourceChain: "polkadot-hub",
-  destinationChain: "hydration",
-  refundAddress,
-  deadline: Math.floor(Date.now() / 1000) + 1800,
-  action: {
-    type: "swap",
-    params: {
-      assetIn: "DOT",
-      assetOut: "USDT",
-      amountIn: "1000000000000",
-      minAmountOut: "493000000",
-      settlementChain: "polkadot-hub",
-      recipient: recipientAccount,
+  assetAddressResolver: createStaticAssetAddressResolver({
+    "polkadot-hub": {
+      DOT: "0x0000000000000000000000000000000000000401",
     },
-  },
-});
-
-console.log(quote.route);
-console.log(quote.estimatedSettlementFee);
-
-const execution = await client.execute({
-  intent,
-  quote,
-  owner: process.env.XROUTE_OWNER_ADDRESS,
-});
-
-console.log(execution.submitted.intentId);
-console.log(client.getStatus(execution.submitted.intentId));
-```
-
-Use the local Rust planner only for development, CI, or operator-controlled environments:
-
-```js
-import {
-  createRouteEngineQuoteProvider,
-  createXRouteClient,
-} from "@xroute/sdk";
-```
-
-Record final onchain outcomes:
-
-```js
-await client.settle({
-  intentId: execution.submitted.intentId,
-  outcomeReference: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  resultAssetId: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-  resultAmount: 493515000n,
-});
-
-await client.fail({
-  intentId: execution.submitted.intentId,
-  outcomeReference: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-  failureReasonHash: "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-});
-
-await client.refund({
-  intentId: execution.submitted.intentId,
-  refundAmount: 1000250000000n,
-  refundAsset: "DOT",
+  }),
 });
 ```
-
-## SDK Surface
-
-Main SDK helpers:
-
-- `createXRouteClient(...)`
-- `createRouteEngineQuoteProvider(...)`
-- `createHttpQuoteProvider(...)`
-
-Router adapter helpers:
-
-- `createCastRouterAdapter(...)`
-- `createCastTransactDispatcher(...)`
-- `createStaticAssetAddressResolver(...)`
-
-Status indexing helpers:
-
-- `FileBackedStatusIndexer`
-- `InMemoryStatusIndexer`
 
 Main client methods:
 
@@ -460,29 +317,27 @@ Main client methods:
 - `client.getStatus(...)`
 - `client.getTimeline(...)`
 
-Important runtime notes:
+Runtime notes:
 
-- import router adapters from `@xroute/sdk/router-adapters`
-- import status indexing helpers from `@xroute/sdk/status-indexer`
-- `refundAddress` and router `owner` are EVM hex addresses on the source Hub chain
-- `recipient` is the beneficiary account on the destination or settlement chain and is typically SS58
-- `createRouteEngineQuoteProvider(...)` is a local/dev operator helper because it shells into the Rust route engine
-- `createHttpQuoteProvider(...)` is the production-facing SDK quote path
-- the intended network surface for integrators is `testnet` or `mainnet`
-- swap quotes may include `estimatedSettlementFee` when the final delivery happens off the execution chain
-- live Hydration swaps are encoded as runtime `ExchangeAsset` XCM, not destination EVM adapter calls
-- live `stake` and generic `call` are intentionally not exposed yet because they do not have a real Hydration runtime target
-- the file-backed indexer is persistent, but it is still an offchain projection
+- use `createHttpQuoteProvider(...)` in production
+- `createRouteEngineQuoteProvider(...)` is a local operator/dev helper
+- `routerAddress` is the deployed Hub router address
+- `refundAddress` and `owner` are EVM addresses
+- `recipient` is the destination or settlement-chain beneficiary
 
-## Trust Model
+## Reliability Model
 
-The current implementation uses a trusted executor or relayer for final outcome reporting.
+The current design is intentionally conservative:
 
-That means:
+- the route graph is explicit
+- every quote includes a concrete route and fee breakdown
+- the router commits to the exact dispatch payload hash
+- final success, failure, and refund states are persisted onchain
+- the SDK indexer is a projection layer, not the source of truth
 
-- dispatch payload commitment is onchain
-- escrow and router lifecycle state are onchain
-- final settlement, failure, and refund recording are onchain
-- destination outcome reporting is still trusted, not proof-verified
+Current trust boundary:
 
-So the system is robust within its current trust model, but it is not yet a trustless cross-chain proof system.
+- dispatch, escrow, and final intent state are onchain
+- destination outcome reporting still depends on a trusted executor or relayer
+
+So the system is robust within its current trust model, but it is not a proof-verified cross-chain finality system.

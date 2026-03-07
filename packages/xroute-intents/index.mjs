@@ -10,8 +10,6 @@ import {
   toPlainObject,
 } from "../xroute-types/index.mjs";
 import {
-  assertCallRoute,
-  assertStakeRoute,
   assertSwapRoute,
   assertTransferRoute,
   getChain,
@@ -32,26 +30,6 @@ export function createSwapIntent(input) {
     ...input,
     action: {
       type: ACTION_TYPES.SWAP,
-      params: input.action?.params ?? input.params,
-    },
-  });
-}
-
-export function createStakeIntent(input) {
-  return createIntent({
-    ...input,
-    action: {
-      type: ACTION_TYPES.STAKE,
-      params: input.action?.params ?? input.params,
-    },
-  });
-}
-
-export function createCallIntent(input) {
-  return createIntent({
-    ...input,
-    action: {
-      type: ACTION_TYPES.CALL,
       params: input.action?.params ?? input.params,
     },
   });
@@ -108,10 +86,6 @@ function normalizeAction(actionType, sourceChain, destinationChain, params) {
       return normalizeTransfer(sourceChain, destinationChain, params);
     case ACTION_TYPES.SWAP:
       return normalizeSwap(sourceChain, destinationChain, params);
-    case ACTION_TYPES.STAKE:
-      return normalizeStake(sourceChain, destinationChain, params);
-    case ACTION_TYPES.CALL:
-      return normalizeCall(sourceChain, destinationChain, params);
     default:
       throw new Error(`unsupported action type: ${actionType}`);
   }
@@ -153,36 +127,6 @@ function normalizeSwap(sourceChain, destinationChain, params) {
       minAmountOut,
       settlementChain,
       recipient: assertNonEmptyString("action.params.recipient", params.recipient),
-    }),
-  });
-}
-
-function normalizeStake(sourceChain, destinationChain, params) {
-  const asset = assertNonEmptyString("action.params.asset", params.asset).toUpperCase();
-  assertStakeRoute(sourceChain, destinationChain, asset);
-
-  return Object.freeze({
-    type: ACTION_TYPES.STAKE,
-    params: Object.freeze({
-      asset,
-      amount: assertPositiveBigInt("action.params.amount", params.amount),
-      validator: assertNonEmptyString("action.params.validator", params.validator),
-      recipient: assertNonEmptyString("action.params.recipient", params.recipient),
-    }),
-  });
-}
-
-function normalizeCall(sourceChain, destinationChain, params) {
-  const asset = assertNonEmptyString("action.params.asset", params.asset).toUpperCase();
-  assertCallRoute(sourceChain, destinationChain, asset);
-
-  return Object.freeze({
-    type: ACTION_TYPES.CALL,
-    params: Object.freeze({
-      asset,
-      amount: assertPositiveBigInt("action.params.amount", params.amount),
-      target: assertAddress("action.params.target", params.target),
-      calldata: assertHexString("action.params.calldata", params.calldata),
     }),
   });
 }

@@ -36,7 +36,6 @@ const NEXT_INTENT_NONCE_SIGNATURE = "nextIntentNonce()(uint256)";
 const HASH_INTENT_SIGNATURE =
   "f(address,uint256,uint8,address,address,uint128,uint128,uint128,uint128,uint64,bytes32)";
 const HASH_DISPATCH_SIGNATURE = "f(uint8,bytes,bytes)";
-const DISPATCH_EVM_CALL_SIGNATURE = "dispatchEvmCall(address,bytes)";
 
 export function createCastRouterAdapter({
   rpcUrl,
@@ -422,77 +421,6 @@ export function createStaticAssetAddressResolver(addressesByChain) {
   };
 }
 
-export function createCastTransactDispatcher({
-  rpcUrl,
-  dispatcherAddress,
-  privateKey,
-  castBin = "cast",
-  cwd,
-  env,
-  commandRunner = defaultCommandRunner,
-} = {}) {
-  const normalizedRpcUrl = assertNonEmptyString("rpcUrl", rpcUrl);
-  const normalizedDispatcherAddress = assertAddress("dispatcherAddress", dispatcherAddress);
-  const normalizedPrivateKey = assertHexString("privateKey", privateKey);
-
-  async function dispatchQuote(quote) {
-    const transact = findFirstTransactInstruction(quote);
-    if (!transact) {
-      throw new Error("quote does not contain a transact instruction");
-    }
-
-    const txHash = await sendTransaction(normalizedDispatcherAddress, DISPATCH_EVM_CALL_SIGNATURE, [
-      transact.targetAddress,
-      transact.contractCall,
-    ]);
-
-    return {
-      txHash,
-      instruction: transact,
-      dispatcherAddress: normalizedDispatcherAddress,
-    };
-  }
-
-  return {
-    dispatchQuote,
-  };
-
-  async function sendTransaction(contractAddress, signature, args = []) {
-    const output = await runCast([
-      "send",
-      assertAddress("contractAddress", contractAddress),
-      signature,
-      ...args.map(String),
-      "--rpc-url",
-      normalizedRpcUrl,
-      "--private-key",
-      normalizedPrivateKey,
-      "--json",
-    ]);
-
-    return extractTransactionHash(output);
-  }
-
-  async function runCast(args) {
-    const result = await commandRunner({
-      command: castBin,
-      args,
-      cwd,
-      env,
-    });
-    return String(result?.stdout ?? result ?? "").trim();
-  }
-}
-
-export function findFirstTransactInstruction(quote) {
-  const sendStep = quote?.executionPlan?.steps?.find((step) => step.type === "send-xcm");
-  if (!sendStep) {
-    return null;
-  }
-
-  return findNestedTransact(sendStep.instructions ?? []);
-}
-
 export function encodeAssetIdSymbol(assetSymbol) {
   const normalized = assertNonEmptyString("assetSymbol", assetSymbol).toUpperCase();
   const bytes = Buffer.alloc(32);
@@ -518,21 +446,6 @@ function formatDispatchRequestTuple(request) {
     "request.message",
     request.message,
   )})`;
-}
-
-function findNestedTransact(instructions) {
-  for (const instruction of instructions) {
-    if (instruction?.type === "transact") {
-      return instruction;
-    }
-
-    const nested = findNestedTransact(instruction?.remoteInstructions ?? []);
-    if (nested) {
-      return nested;
-    }
-  }
-
-  return null;
 }
 
 function normalizeDispatchMode(mode) {

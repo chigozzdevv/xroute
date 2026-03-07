@@ -1,8 +1,7 @@
 use route_engine::{
-    AssetAmount, AssetKey, CallIntent, ChainKey, DeploymentProfile, DestinationAdapter,
-    EngineSettings, FeeType, Intent, IntentAction, PlanStep, RouteEngine, RouteRegistry,
-    RouteSegmentKind, StakeIntent, SubmissionAction, SwapIntent, TransferIntent, XcmInstruction,
-    XcmWeight, lookup_destination_adapter_deployment,
+    AssetAmount, AssetKey, ChainKey, DeploymentProfile, EngineSettings, FeeType, Intent,
+    IntentAction, PlanStep, RouteEngine, RouteRegistry, RouteSegmentKind, SubmissionAction,
+    SwapIntent, TransferIntent, XcmInstruction,
 };
 
 const REFUND_ADDRESS: &str = "0x1111111111111111111111111111111111111111";
@@ -27,7 +26,7 @@ fn quotes_hydration_swap_over_a_multihop_path() {
 
     let quote = engine.quote(intent).expect("swap quote should build");
 
-    assert_eq!(quote.deployment_profile, DeploymentProfile::Local);
+    assert_eq!(quote.deployment_profile, DeploymentProfile::Testnet);
     assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Hydration]);
     assert_eq!(quote.segments.len(), 1);
     assert_eq!(quote.segments[0].kind, RouteSegmentKind::Execution);
@@ -199,7 +198,7 @@ fn quotes_asset_transfer_and_builds_delivery_plan() {
 
     let quote = engine.quote(intent).expect("transfer quote should build");
 
-    assert_eq!(quote.deployment_profile, DeploymentProfile::Local);
+    assert_eq!(quote.deployment_profile, DeploymentProfile::Testnet);
     assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Hydration]);
     assert_eq!(quote.segments.len(), 1);
     assert_eq!(quote.fees.xcm_fee.amount, 150_000_000);
@@ -233,106 +232,6 @@ fn quotes_asset_transfer_and_builds_delivery_plan() {
 }
 
 #[test]
-fn quotes_hydration_stake_over_a_multihop_path() {
-    let engine = RouteEngine::default();
-    let intent = Intent {
-        source_chain: ChainKey::PolkadotHub,
-        destination_chain: ChainKey::Hydration,
-        action: IntentAction::Stake(StakeIntent {
-            asset: AssetKey::Dot,
-            amount: AssetKey::Dot.units(40),
-            validator: "validator-01".to_owned(),
-            recipient: "5FstakeRecipient".to_owned(),
-        }),
-        refund_address: REFUND_ADDRESS.to_owned(),
-        deadline: 1_773_185_200,
-    };
-
-    let quote = engine.quote(intent).expect("stake quote should build");
-
-    assert_eq!(quote.deployment_profile, DeploymentProfile::Local);
-    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Hydration]);
-    assert_eq!(quote.submission.action, SubmissionAction::Stake);
-    assert!(quote.estimated_settlement_fee.is_none());
-    assert_eq!(quote.submission.xcm_fee, 150_000_000);
-    assert_eq!(quote.submission.destination_fee, 90_000_000);
-    assert_eq!(quote.submission.min_output_amount, 0);
-    assert!(quote.min_output.is_none());
-
-    let inner_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
-    assert_eq!(inner_transfer.remote_instructions().len(), 2);
-    assert_eq!(
-        inner_transfer.remote_instructions()[1],
-        XcmInstruction::Transact {
-            adapter: DestinationAdapter::HydrationStakeV1,
-            target_address: local_adapter_address(DestinationAdapter::HydrationStakeV1).to_owned(),
-            contract_call: inner_transfer.remote_instructions()[1]
-                .contract_call()
-                .expect("stake contract call")
-                .to_owned(),
-            fallback_weight: XcmWeight {
-                ref_time: 4_000_000_000,
-                proof_size: 140_000,
-            },
-        }
-    );
-    assert!(inner_transfer.remote_instructions()[1]
-        .contract_call()
-        .expect("stake contract call")
-        .starts_with("0xdfabdde3"));
-}
-
-#[test]
-fn quotes_hydration_call_over_a_multihop_path() {
-    let engine = RouteEngine::default();
-    let intent = Intent {
-        source_chain: ChainKey::PolkadotHub,
-        destination_chain: ChainKey::Hydration,
-        action: IntentAction::Call(CallIntent {
-            asset: AssetKey::Dot,
-            amount: AssetKey::Dot.units(5),
-            target: "0x1111111111111111111111111111111111111111".to_owned(),
-            calldata: "0xdeadbeef".to_owned(),
-        }),
-        refund_address: REFUND_ADDRESS.to_owned(),
-        deadline: 1_773_185_200,
-    };
-
-    let quote = engine.quote(intent).expect("call quote should build");
-
-    assert_eq!(quote.deployment_profile, DeploymentProfile::Local);
-    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Hydration]);
-    assert_eq!(quote.submission.action, SubmissionAction::Call);
-    assert!(quote.estimated_settlement_fee.is_none());
-    assert_eq!(quote.submission.xcm_fee, 150_000_000);
-    assert_eq!(quote.submission.destination_fee, 90_000_000);
-    assert_eq!(quote.submission.min_output_amount, 0);
-    assert_eq!(quote.expected_output.amount, 0);
-
-    let inner_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
-    assert_eq!(inner_transfer.remote_instructions().len(), 2);
-    assert_eq!(
-        inner_transfer.remote_instructions()[1],
-        XcmInstruction::Transact {
-            adapter: DestinationAdapter::HydrationCallV1,
-            target_address: local_adapter_address(DestinationAdapter::HydrationCallV1).to_owned(),
-            contract_call: inner_transfer.remote_instructions()[1]
-                .contract_call()
-                .expect("call contract call")
-                .to_owned(),
-            fallback_weight: XcmWeight {
-                ref_time: 3_000_000_000,
-                proof_size: 110_000,
-            },
-        }
-    );
-    assert!(inner_transfer.remote_instructions()[1]
-        .contract_call()
-        .expect("call contract call")
-        .starts_with("0x7db7dbf6"));
-}
-
-#[test]
 fn quotes_hydration_swap_on_testnet_without_adapter_deployments() {
     let engine = RouteEngine::new(
         RouteRegistry::default(),
@@ -363,51 +262,6 @@ fn quotes_hydration_swap_on_testnet_without_adapter_deployments() {
         outer_transfer.remote_instructions()[1],
         XcmInstruction::ExchangeAsset { .. }
     ));
-}
-
-#[test]
-fn rejects_adapter_backed_live_actions_on_testnet() {
-    let engine = RouteEngine::new(
-        RouteRegistry::default(),
-        EngineSettings {
-            platform_fee_bps: 10,
-            deployment_profile: DeploymentProfile::Testnet,
-        },
-    );
-    let intent = Intent {
-        source_chain: ChainKey::PolkadotHub,
-        destination_chain: ChainKey::Hydration,
-        action: IntentAction::Call(CallIntent {
-            asset: AssetKey::Dot,
-            amount: AssetKey::Dot.units(5),
-            target: "0x1111111111111111111111111111111111111111".to_owned(),
-            calldata: "0xdeadbeef".to_owned(),
-        }),
-        refund_address: REFUND_ADDRESS.to_owned(),
-        deadline: 1_773_185_200,
-    };
-
-    let error = engine.quote(intent).expect_err("testnet call should be rejected");
-    assert_eq!(error.to_string(), "unsupported action on testnet: call");
-}
-
-fn local_adapter_address(adapter: DestinationAdapter) -> &'static str {
-    lookup_destination_adapter_deployment(adapter, ChainKey::Hydration, DeploymentProfile::Local)
-        .expect("local deployment")
-        .address
-}
-
-trait InstructionExt {
-    fn contract_call(&self) -> Option<&str>;
-}
-
-impl InstructionExt for XcmInstruction {
-    fn contract_call(&self) -> Option<&str> {
-        match self {
-            XcmInstruction::Transact { contract_call, .. } => Some(contract_call.as_str()),
-            _ => None,
-        }
-    }
 }
 
 fn first_transfer_instruction(step: &PlanStep) -> &XcmInstruction {

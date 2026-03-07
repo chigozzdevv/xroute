@@ -23,10 +23,7 @@ import {
 import {
   ACTION_TO_CONTRACT_ENUM,
   DEFAULT_DEPLOYMENT_PROFILE,
-  DESTINATION_TRANSACT_DISPATCH,
   DISPATCH_MODE_TO_CONTRACT_ENUM,
-  getDestinationAdapterDeployment,
-  getDestinationAdapterSpec,
   normalizeDeploymentProfile,
 } from "../xroute-precompile-interfaces/index.mjs";
 
@@ -396,24 +393,6 @@ function buildInstruction({
           }),
         ),
       });
-    case "transact":
-      assertPublishedAdapterInvocation({
-        adapterId: instruction.adapter,
-        chainKey: currentChain,
-        deploymentProfile,
-        targetAddress: instruction.targetAddress,
-        contractCall: instruction.contractCall,
-      });
-      return Enum("Transact", {
-        origin_kind: Enum("SovereignAccount", undefined),
-        fallback_max_weight: buildWeight(instruction.fallbackWeight),
-        call: Binary.fromBytes(
-          encodeDispatchEvmCall({
-            targetAddress: instruction.targetAddress,
-            contractCall: instruction.contractCall,
-          }),
-        ),
-      });
     case "deposit-asset":
       return Enum("DepositAsset", {
         assets: buildCountedAssetFilter(instruction.assetCount ?? 1),
@@ -463,13 +442,6 @@ function buildBeneficiaryLocation(address) {
   };
 }
 
-function buildWeight(weight) {
-  return {
-    ref_time: toBigInt(weight.refTime, "transact.fallbackWeight.refTime"),
-    proof_size: toBigInt(weight.proofSize, "transact.fallbackWeight.proofSize"),
-  };
-}
-
 function buildInterior(interior) {
   switch (interior.type) {
     case "here":
@@ -502,75 +474,4 @@ function buildJunction(junction) {
 
 function hexToBytes(value) {
   return Uint8Array.from(Buffer.from(assertHexString("hex", value).slice(2), "hex"));
-}
-
-function assertPublishedAdapterInvocation({
-  adapterId,
-  chainKey,
-  deploymentProfile,
-  targetAddress,
-  contractCall,
-}) {
-  const spec = getDestinationAdapterSpec(adapterId);
-  const deployment = getDestinationAdapterDeployment(adapterId, chainKey, deploymentProfile);
-  const normalizedAddress = assertAddress("targetAddress", targetAddress);
-  const normalizedCall = assertHexString("contractCall", contractCall);
-
-  if (!normalizedCall.startsWith(spec.selector)) {
-    throw new Error(
-      `contractCall for ${adapterId} must start with published selector ${spec.selector}`,
-    );
-  }
-
-  if (normalizedAddress !== deployment.address) {
-    throw new Error(
-      `targetAddress for ${adapterId} on ${chainKey} must match published deployment ${deployment.address}`,
-    );
-  }
-
-  return Object.freeze({
-    targetAddress: normalizedAddress,
-    contractCall: normalizedCall,
-  });
-}
-
-function encodeDispatchEvmCall({ targetAddress, contractCall }) {
-  const normalizedAddress = assertAddress("targetAddress", targetAddress);
-  const normalizedCall = assertHexString("contractCall", contractCall);
-  const selector = hexToBytes(DESTINATION_TRANSACT_DISPATCH.selector);
-  const callBytes = hexToBytes(normalizedCall);
-  const encoded = new Uint8Array(4 + 32 + 32 + 32 + paddedLength(callBytes.length));
-
-  encoded.set(selector, 0);
-  encoded.set(encodeAddressWord(normalizedAddress), 4);
-  encoded.set(encodeUintWord(64n), 36);
-  encoded.set(encodeUintWord(BigInt(callBytes.length)), 68);
-  encoded.set(callBytes, 100);
-
-  return encoded;
-}
-
-function encodeUintWord(value) {
-  const normalized = toBigInt(value, "uintWord");
-  const word = new Uint8Array(32);
-  let remainder = normalized;
-
-  for (let index = 31; index >= 0 && remainder > 0n; index -= 1) {
-    word[index] = Number(remainder & 0xffn);
-    remainder >>= 8n;
-  }
-
-  return word;
-}
-
-function encodeAddressWord(address) {
-  const addressBytes = hexToBytes(assertAddress("address", address));
-  const word = new Uint8Array(32);
-  word.set(addressBytes, 12);
-  return word;
-}
-
-function paddedLength(length) {
-  const remainder = length % 32;
-  return remainder === 0 ? length : length + (32 - remainder);
 }

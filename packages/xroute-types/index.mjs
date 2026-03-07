@@ -3,8 +3,6 @@ import { createHash } from "node:crypto";
 export const ACTION_TYPES = Object.freeze({
   TRANSFER: "transfer",
   SWAP: "swap",
-  STAKE: "stake",
-  CALL: "call",
 });
 
 export const DISPATCH_MODES = Object.freeze({

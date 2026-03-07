@@ -1,4 +1,4 @@
-use crate::model::{AssetKey, ChainKey, DeploymentProfile};
+use crate::model::{AssetKey, ChainKey};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
@@ -15,40 +15,10 @@ pub enum RouteError {
         asset_in: AssetKey,
         asset_out: AssetKey,
     },
-    UnsupportedStakeRoute {
-        source: ChainKey,
-        destination: ChainKey,
-        asset: AssetKey,
-    },
-    UnsupportedCallRoute {
-        source: ChainKey,
-        destination: ChainKey,
-        asset: AssetKey,
-    },
     UnsupportedSettlementRoute {
         execution: ChainKey,
         settlement: ChainKey,
         asset: AssetKey,
-    },
-    UnsupportedAction {
-        action: &'static str,
-        profile: DeploymentProfile,
-    },
-    MissingDestinationAdapterSpec {
-        adapter: &'static str,
-    },
-    InvalidDestinationAdapterSpec {
-        adapter: &'static str,
-    },
-    MissingDestinationAdapterDeployment {
-        adapter: &'static str,
-        chain: ChainKey,
-        profile: DeploymentProfile,
-    },
-    InvalidDestinationAdapterDeployment {
-        adapter: &'static str,
-        chain: ChainKey,
-        profile: DeploymentProfile,
     },
     MinOutputTooHigh {
         requested: u128,
@@ -94,28 +64,6 @@ impl Display for RouteError {
                 asset_in.symbol(),
                 asset_out.symbol()
             ),
-            Self::UnsupportedStakeRoute {
-                source,
-                destination,
-                asset,
-            } => write!(
-                f,
-                "unsupported stake route: {} -> {} for {}",
-                source.as_str(),
-                destination.as_str(),
-                asset.symbol()
-            ),
-            Self::UnsupportedCallRoute {
-                source,
-                destination,
-                asset,
-            } => write!(
-                f,
-                "unsupported call route: {} -> {} for {}",
-                source.as_str(),
-                destination.as_str(),
-                asset.symbol()
-            ),
             Self::UnsupportedSettlementRoute {
                 execution,
                 settlement,
@@ -126,42 +74,6 @@ impl Display for RouteError {
                 execution.as_str(),
                 settlement.as_str(),
                 asset.symbol()
-            ),
-            Self::UnsupportedAction { action, profile } => {
-                write!(
-                    f,
-                    "unsupported action on {}: {}",
-                    profile.as_str(),
-                    action
-                )
-            }
-            Self::MissingDestinationAdapterSpec { adapter } => {
-                write!(f, "missing destination adapter spec for {adapter}")
-            }
-            Self::InvalidDestinationAdapterSpec { adapter } => {
-                write!(f, "invalid destination adapter spec for {adapter}")
-            }
-            Self::MissingDestinationAdapterDeployment {
-                adapter,
-                chain,
-                profile,
-            } => write!(
-                f,
-                "missing destination adapter deployment for {} on {} ({})",
-                adapter,
-                chain.as_str(),
-                profile.as_str()
-            ),
-            Self::InvalidDestinationAdapterDeployment {
-                adapter,
-                chain,
-                profile,
-            } => write!(
-                f,
-                "invalid destination adapter deployment for {} on {} ({})",
-                adapter,
-                chain.as_str(),
-                profile.as_str()
             ),
             Self::MinOutputTooHigh {
                 requested,

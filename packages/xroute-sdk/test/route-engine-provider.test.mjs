@@ -4,14 +4,10 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  createCallIntent,
   createSwapIntent,
   createTransferIntent,
 } from "../../xroute-intents/index.mjs";
-import {
-  DEPLOYMENT_PROFILES,
-  getDestinationAdapterDeployment,
-} from "../../xroute-precompile-interfaces/index.mjs";
+import { DEPLOYMENT_PROFILES } from "../../xroute-precompile-interfaces/index.mjs";
 import {
   createHttpQuoteProvider,
   createRouteEngineQuoteProvider,
@@ -42,7 +38,7 @@ test("route engine quote provider bridges the rust planner", async () => {
   const quote = normalizeQuote(await provider.quote(intent));
 
   assert.equal(quote.quoteId, intent.quoteId);
-  assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.LOCAL);
+  assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.TESTNET);
   assert.deepEqual(quote.route, ["polkadot-hub", "hydration"]);
   assert.equal(quote.segments.length, 1);
   assert.equal(quote.submission.action, "transfer");
@@ -116,65 +112,6 @@ test("sdk execute derives the XCM envelope from the route-engine quote", async (
   assert.match(routerAdapter.dispatched.message, /^0x[0-9a-f]+$/);
 });
 
-test("route engine quote provider returns adapter-backed remote calls", async () => {
-  const provider = createRouteEngineQuoteProvider({
-    cwd: workspaceRoot,
-  });
-  const intent = createCallIntent({
-    sourceChain: "polkadot-hub",
-    destinationChain: "hydration",
-    refundAddress: walletAddress,
-    deadline: 1_773_185_200,
-    params: {
-      asset: "DOT",
-      amount: "50000000000",
-      target: "0x1111111111111111111111111111111111111111",
-      calldata: "0xdeadbeef",
-    },
-  });
-
-  const quote = normalizeQuote(await provider.quote(intent));
-  const remoteInstructions = finalRemoteInstructions(quote);
-
-  assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.LOCAL);
-  assert.deepEqual(quote.route, ["polkadot-hub", "hydration"]);
-  assert.equal(quote.segments.length, 1);
-  assert.equal(quote.estimatedSettlementFee, null);
-  assert.equal(quote.submission.action, "call");
-  assert.equal(remoteInstructions[0].type, "buy-execution");
-  assert.equal(remoteInstructions[1].type, "transact");
-  assert.equal(remoteInstructions[1].adapter, "hydration-call-v1");
-  assert.equal(
-    remoteInstructions[1].targetAddress,
-    getDestinationAdapterDeployment("hydration-call-v1", "hydration", "local").address,
-  );
-  assert.match(remoteInstructions[1].contractCall, /^0x7db7dbf6[0-9a-f]+$/);
-});
-
-test("route engine quote provider rejects adapter-backed live actions", async () => {
-  const provider = createRouteEngineQuoteProvider({
-    cwd: workspaceRoot,
-    deploymentProfile: DEPLOYMENT_PROFILES.TESTNET,
-  });
-  const intent = createCallIntent({
-    sourceChain: "polkadot-hub",
-    destinationChain: "hydration",
-    refundAddress: walletAddress,
-    deadline: 1_773_185_200,
-    params: {
-      asset: "DOT",
-      amount: "50000000000",
-      target: "0x1111111111111111111111111111111111111111",
-      calldata: "0xdeadbeef",
-    },
-  });
-
-  await assert.rejects(
-    provider.quote(intent),
-    /unsupported action on testnet: call/,
-  );
-});
-
 test("route engine quote provider quotes a hydration swap that settles on polkadot hub", async () => {
   const provider = createRouteEngineQuoteProvider({
     cwd: workspaceRoot,
@@ -234,7 +171,7 @@ test("http quote provider forwards normalized intents and returns quotes", async
         ok: true,
         async json() {
           return {
-            deploymentProfile: "local",
+            deploymentProfile: "testnet",
             route: ["polkadot-hub", "hydration"],
             segments: [
               {

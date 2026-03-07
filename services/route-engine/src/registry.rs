@@ -1,4 +1,4 @@
-use crate::model::{AssetAmount, AssetKey, ChainKey, DestinationAdapter, RouteHop, XcmWeight};
+use crate::model::{AssetAmount, AssetKey, ChainKey, RouteHop};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
@@ -27,32 +27,12 @@ pub struct SwapRoute {
     pub price_numerator: u128,
     pub price_denominator: u128,
     pub dex_fee_bps: u16,
-    pub adapter: DestinationAdapter,
-    pub transact_weight: XcmWeight,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StakeRoute {
-    pub destination: ChainKey,
-    pub asset: AssetKey,
-    pub adapter: DestinationAdapter,
-    pub transact_weight: XcmWeight,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CallRoute {
-    pub destination: ChainKey,
-    pub asset: AssetKey,
-    pub adapter: DestinationAdapter,
-    pub transact_weight: XcmWeight,
 }
 
 #[derive(Debug, Clone)]
 pub struct RouteRegistry {
     transfer_edges: Vec<TransferEdge>,
     swap_routes: Vec<SwapRoute>,
-    stake_routes: Vec<StakeRoute>,
-    call_routes: Vec<CallRoute>,
 }
 
 impl Default for RouteRegistry {
@@ -96,11 +76,6 @@ impl Default for RouteRegistry {
                     price_numerator: 495,
                     price_denominator: 100,
                     dex_fee_bps: 30,
-                    adapter: DestinationAdapter::HydrationSwapV1,
-                    transact_weight: XcmWeight {
-                        ref_time: 3_500_000_000,
-                        proof_size: 120_000,
-                    },
                 },
                 SwapRoute {
                     destination: ChainKey::Hydration,
@@ -109,31 +84,8 @@ impl Default for RouteRegistry {
                     price_numerator: 150,
                     price_denominator: 1,
                     dex_fee_bps: 25,
-                    adapter: DestinationAdapter::HydrationSwapV1,
-                    transact_weight: XcmWeight {
-                        ref_time: 3_500_000_000,
-                        proof_size: 120_000,
-                    },
                 },
             ],
-            stake_routes: vec![StakeRoute {
-                destination: ChainKey::Hydration,
-                asset: AssetKey::Dot,
-                adapter: DestinationAdapter::HydrationStakeV1,
-                transact_weight: XcmWeight {
-                    ref_time: 4_000_000_000,
-                    proof_size: 140_000,
-                },
-            }],
-            call_routes: vec![CallRoute {
-                destination: ChainKey::Hydration,
-                asset: AssetKey::Dot,
-                adapter: DestinationAdapter::HydrationCallV1,
-                transact_weight: XcmWeight {
-                    ref_time: 3_000_000_000,
-                    proof_size: 110_000,
-                },
-            }],
         }
     }
 }
@@ -195,20 +147,6 @@ impl RouteRegistry {
                 && route.asset_in == asset_in
                 && route.asset_out == asset_out
         })
-    }
-
-    pub fn stake_route(&self, destination: ChainKey, asset: AssetKey) -> Option<StakeRoute> {
-        self.stake_routes
-            .iter()
-            .copied()
-            .find(|route| route.destination == destination && route.asset == asset)
-    }
-
-    pub fn call_route(&self, destination: ChainKey, asset: AssetKey) -> Option<CallRoute> {
-        self.call_routes
-            .iter()
-            .copied()
-            .find(|route| route.destination == destination && route.asset == asset)
     }
 
 }

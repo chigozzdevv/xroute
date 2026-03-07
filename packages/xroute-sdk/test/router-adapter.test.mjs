@@ -86,7 +86,7 @@ test("cast router adapter approves, submits, dispatches, and persists status eve
   });
   const quote = {
     quoteId: intent.quoteId,
-    deploymentProfile: "local",
+    deploymentProfile: "testnet",
     route: ["polkadot-hub", "hydration"],
     fees: {
       xcmFee: { asset: "DOT", amount: 150000000n },

@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
 use route_engine::{
-    AssetAmount, AssetKey, CallIntent, ChainKey, DeploymentProfile, DestinationAdapter,
-    EngineSettings, ExecutionPlan, FeeBreakdown, FeeType, Intent, IntentAction, PlanStep, Quote,
-    RouteHop, RouteEngine, RouteRegistry, RouteSegment, RouteSegmentKind, StakeIntent,
-    SubmissionAction, SwapIntent, TransferIntent, XcmInstruction, XcmWeight,
+    AssetAmount, AssetKey, ChainKey, DeploymentProfile, EngineSettings, ExecutionPlan,
+    FeeBreakdown, FeeType, Intent, IntentAction, PlanStep, Quote, RouteHop, RouteEngine,
+    RouteRegistry, RouteSegment, RouteSegmentKind, SubmissionAction, SwapIntent, TransferIntent,
+    XcmInstruction,
 };
 
 pub fn run() -> Result<(), String> {
@@ -26,7 +26,7 @@ fn run_quote(args: Vec<String>) -> Result<(), String> {
         .map(String::as_str)
         .map(parse_deployment_profile)
         .transpose()?
-        .unwrap_or(DeploymentProfile::Local);
+        .unwrap_or(DeploymentProfile::Testnet);
     let intent = build_intent(&options)?;
     let quote = RouteEngine::new(
         RouteRegistry::default(),
@@ -88,21 +88,9 @@ fn build_intent(options: &HashMap<String, String>) -> Result<Intent, String> {
                 .unwrap_or(destination_chain),
             recipient: required(options, "recipient")?.to_owned(),
         }),
-        "stake" => IntentAction::Stake(StakeIntent {
-            asset: parse_asset(required(options, "asset")?)?,
-            amount: parse_u128(required(options, "amount")?, "amount")?,
-            validator: required(options, "validator")?.to_owned(),
-            recipient: required(options, "recipient")?.to_owned(),
-        }),
-        "call" => IntentAction::Call(CallIntent {
-            asset: parse_asset(required(options, "asset")?)?,
-            amount: parse_u128(required(options, "amount")?, "amount")?,
-            target: required(options, "target")?.to_owned(),
-            calldata: required(options, "calldata")?.to_owned(),
-        }),
         other => {
             return Err(format!(
-                "unsupported action: {other} (expected transfer, swap, stake, or call)"
+                "unsupported action: {other} (expected transfer or swap)"
             ))
         }
     };
@@ -142,7 +130,6 @@ fn parse_asset(value: &str) -> Result<AssetKey, String> {
 
 fn parse_deployment_profile(value: &str) -> Result<DeploymentProfile, String> {
     match value {
-        "local" => Ok(DeploymentProfile::Local),
         "testnet" => Ok(DeploymentProfile::Testnet),
         "mainnet" => Ok(DeploymentProfile::Mainnet),
         other => Err(format!("unsupported deployment profile: {other}")),
@@ -359,18 +346,6 @@ fn xcm_instruction_json(instruction: &XcmInstruction) -> String {
                 .collect::<Vec<_>>()
                 .join(","),
         ),
-        XcmInstruction::Transact {
-            adapter,
-            target_address,
-            contract_call,
-            fallback_weight,
-        } => format!(
-            "{{\"type\":\"transact\",\"adapter\":{},\"targetAddress\":{},\"contractCall\":{},\"fallbackWeight\":{}}}",
-            json_string(destination_adapter_label(*adapter)),
-            json_string(target_address),
-            json_string(contract_call),
-            xcm_weight_json(fallback_weight),
-        ),
         XcmInstruction::DepositAsset {
             asset,
             recipient,
@@ -404,14 +379,6 @@ fn option_amount_json(amount: &Option<u128>) -> String {
         .unwrap_or_else(|| "null".to_owned())
 }
 
-fn xcm_weight_json(weight: &XcmWeight) -> String {
-    format!(
-        "{{\"refTime\":{},\"proofSize\":{}}}",
-        json_string(&weight.ref_time.to_string()),
-        json_string(&weight.proof_size.to_string()),
-    )
-}
-
 fn chain_array_json(chains: &[ChainKey]) -> String {
     format!(
         "[{}]",
@@ -437,8 +404,6 @@ fn submission_action_label(action: SubmissionAction) -> &'static str {
     match action {
         SubmissionAction::Transfer => "transfer",
         SubmissionAction::Swap => "swap",
-        SubmissionAction::Stake => "stake",
-        SubmissionAction::Call => "call",
     }
 }
 
@@ -448,10 +413,6 @@ fn fee_type_label(fee_type: FeeType) -> &'static str {
         FeeType::Destination => "destination",
         FeeType::Platform => "platform",
     }
-}
-
-fn destination_adapter_label(adapter: DestinationAdapter) -> &'static str {
-    adapter.as_str()
 }
 
 fn route_segment_kind_label(kind: RouteSegmentKind) -> &'static str {
@@ -464,13 +425,11 @@ fn route_segment_kind_label(kind: RouteSegmentKind) -> &'static str {
 fn usage() -> String {
     [
         "usage:",
-        "  route-engine quote --source-chain <chain> --destination-chain <chain> --refund-address <address> --deadline <unix-seconds> --action <transfer|swap|stake|call> [action flags] [--deployment-profile <local|testnet|mainnet>]",
+        "  route-engine quote --source-chain <chain> --destination-chain <chain> --refund-address <address> --deadline <unix-seconds> --action <transfer|swap> [action flags] [--deployment-profile <testnet|mainnet>]",
         "",
         "action flags:",
         "  transfer: --asset <symbol> --amount <units> --recipient <address>",
         "  swap: --asset-in <symbol> --asset-out <symbol> --amount-in <units> --min-amount-out <units> --recipient <address> [--settlement-chain <chain>]",
-        "  stake: --asset <symbol> --amount <units> --validator <id> --recipient <address>",
-        "  call: --asset <symbol> --amount <units> --target <address> --calldata <hex>",
     ]
     .join("\n")
 }
