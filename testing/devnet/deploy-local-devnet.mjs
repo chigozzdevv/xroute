@@ -1,11 +1,11 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { DEPLOYMENT_PROFILES } from "../packages/xroute-precompile-interfaces/index.mjs";
-import { deployStack } from "./deploy-stack.mjs";
+import { DEPLOYMENT_PROFILES } from "../../packages/xroute-precompile-interfaces/index.mjs";
+import { deployStack } from "../../scripts/deploy-stack.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
-const workspaceRoot = resolve(dirname(scriptPath), "..");
+const workspaceRoot = resolve(dirname(scriptPath), "../..");
 
 const deployment = deployStack({
   deploymentProfile: DEPLOYMENT_PROFILES.LOCAL,
@@ -15,7 +15,7 @@ const deployment = deployStack({
   ),
   stackOutputPath: resolve(
     workspaceRoot,
-    "contracts/polkadot-hub-router/devnet/local-stack.json",
+    "testing/devnet/.artifacts/local-stack.json",
   ),
 });
 

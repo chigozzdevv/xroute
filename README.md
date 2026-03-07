@@ -155,8 +155,6 @@ Example route shapes:
 
 ```text
 xroute/
-  apps/
-    xroute-studio/
   contracts/
     polkadot-hub-router/
   packages/
@@ -169,7 +167,7 @@ xroute/
   services/
     route-engine/
   testing/
-    chopsticks/
+    devnet/
 ```
 
 What each directory is for:
@@ -190,22 +188,40 @@ What each directory is for:
   - chain and asset metadata used by the SDK/XCM layer
 - `packages/xroute-types`
   - shared constants and assertions
-- `testing/chopsticks`
-  - local multi-chain testing area
+- `testing/devnet`
+  - internal end-to-end verification only
 
 ## Setup
 
-Requirements:
+The public integration surface is:
+
+- `@xroute/sdk`
+- hosted quote infrastructure
+- deployed router and adapter addresses on `testnet` or `mainnet`
+
+Repo requirements:
 
 - `Node.js 20+`
 - `cargo`
 - `forge` and `cast`
-- `anvil` for local live deployment and SDK e2e runs
+- `anvil` only if you want to run the internal devnet harness
 
-Install and verify the repo:
+Install and verify the public repo surface:
 
 ```bash
 npm test
+```
+
+Run the internal devnet end-to-end harness only when you want to verify the local stack:
+
+```bash
+npm run test:devnet
+```
+
+Run the full maintainer verification suite:
+
+```bash
+npm run check
 ```
 
 Useful commands:
@@ -215,15 +231,9 @@ npm run generate:manifests
 npm run test:rust
 npm run test:solidity
 npm run test:node
+npm run test:all
 npm run build:sdk-package
 npm run build
-```
-
-Live local deployment and e2e verification:
-
-```bash
-npm run deploy:local-devnet
-npm run test:devnet
 ```
 
 The SDK package is built from:
@@ -238,18 +248,14 @@ npm pack --dry-run ./packages/xroute-sdk
 
 ## Deployment
 
-The deployment tooling now has two layers:
+Public deployment entrypoint:
 
 - `scripts/deploy-stack.mjs`
-  - profile-aware stack deployment for `local`, `testnet`, or `mainnet`
-- `scripts/deploy-local-devnet.mjs`
-  - local wrapper that deploys the full devnet stack and writes the local stack artifact
+  - profile-aware deployment for `testnet` or `mainnet`
 
 Deployment commands:
 
 ```bash
-npm run deploy:local-devnet
-npm run deploy:stack
 XROUTE_ALLOW_LIVE_DEPLOY=true XROUTE_RPC_URL=https://... XROUTE_PRIVATE_KEY=0x... XROUTE_ROUTER_EXECUTOR=0x... XROUTE_ROUTER_TREASURY=0x... XROUTE_XCM_ADDRESS=0x... npm run deploy:testnet
 XROUTE_ALLOW_LIVE_DEPLOY=true XROUTE_RPC_URL=https://... XROUTE_PRIVATE_KEY=0x... XROUTE_ROUTER_EXECUTOR=0x... XROUTE_ROUTER_TREASURY=0x... XROUTE_XCM_ADDRESS=0x... npm run deploy:mainnet
 ```
@@ -261,7 +267,7 @@ Important environment variables:
 - `XROUTE_PRIVATE_KEY`
   - deployer key used by `forge create` and `cast send`
 - `XROUTE_DEPLOYMENT_PROFILE`
-  - `local`, `testnet`, or `mainnet`
+  - normally `testnet` or `mainnet`; `local` is reserved for the internal harness
 - `XROUTE_ALLOW_LIVE_DEPLOY`
   - must be `true` for non-local deployments
 - `XROUTE_XCM_ADDRESS`
@@ -275,29 +281,21 @@ Important environment variables:
 - `XROUTE_STACK_OUTPUT_PATH`
   - optional output file for the deployed stack summary
 
-Local deployment behavior:
-
-- deploys `DevnetXcm`
-- deploys local `DOT`, `USDT`, and `HDX` devnet tokens
-- deploys the dispatcher, Hydration executors, Hydration adapters, and Hub router
-- configures swap pairs and token minter roles
-- regenerates the local adapter deployment manifest from the actual deployed addresses
-
-Generated local stack output:
-
-- [contracts/polkadot-hub-router/devnet](/Users/chigozzdev/Desktop/xroute/contracts/polkadot-hub-router/devnet)
-  - runtime deployment artifacts live here and are ignored by git
-
 Published adapter deployments consumed by the SDK:
 
 - [destination-adapter-deployments.json](/Users/chigozzdev/Desktop/xroute/packages/xroute-precompile-interfaces/generated/destination-adapter-deployments.json)
 
 Current verification status:
 
-- `local`
-  - deployed and exercised end to end through the SDK
 - `testnet` and `mainnet`
-  - guarded deployment scripts exist, but this repo does not ship published deployment manifests for them
+  - these are the intended integration targets
+  - this repo only publishes manifests after a real deployment exists
+
+Internal devnet:
+
+- local/devnet deployment is kept under [testing/devnet](/Users/chigozzdev/Desktop/xroute/testing/devnet)
+- it is used for end-to-end verification only
+- it is not part of the public integration surface
 
 ## SDK Usage
 
@@ -444,6 +442,7 @@ Important runtime notes:
 - the cast-backed router adapter expects EVM hex addresses, not SS58 addresses
 - `createRouteEngineQuoteProvider(...)` is a local/dev operator helper because it shells into the Rust route engine
 - `createHttpQuoteProvider(...)` is the production-facing SDK quote path
+- the intended network surface for integrators is `testnet` or `mainnet`
 - swap quotes may include `estimatedSettlementFee` when the final delivery happens off the execution chain
 - the file-backed indexer is persistent, but it is still an offchain projection
 

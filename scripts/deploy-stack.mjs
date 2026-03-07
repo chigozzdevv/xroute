@@ -21,7 +21,10 @@ const defaultHydrationDeploymentPathByProfile = Object.freeze({
   [DEPLOYMENT_PROFILES.MAINNET]: resolve(contractRoot, "deployments/mainnet/hydration.json"),
 });
 const defaultStackOutputPathByProfile = Object.freeze({
-  [DEPLOYMENT_PROFILES.LOCAL]: resolve(contractRoot, "devnet/local-stack.json"),
+  [DEPLOYMENT_PROFILES.LOCAL]: resolve(
+    workspaceRoot,
+    "testing/devnet/.artifacts/local-stack.json",
+  ),
 });
 
 export function deployStack(overrides = {}) {

@@ -20,14 +20,14 @@ import {
 import { FileBackedStatusIndexer } from "../../packages/xroute-sdk/status-indexer.mjs";
 
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const deployScriptPath = resolve(workspaceRoot, "scripts/deploy-local-devnet.mjs");
+const deployScriptPath = resolve(workspaceRoot, "testing/devnet/deploy-local-devnet.mjs");
 const manifestGeneratorPath = resolve(
   workspaceRoot,
   "packages/xroute-precompile-interfaces/scripts/generate-manifests.mjs",
 );
 const localStackPath = resolve(
   workspaceRoot,
-  "contracts/polkadot-hub-router/devnet/local-stack.json",
+  "testing/devnet/.artifacts/local-stack.json",
 );
 const privateKey =
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
