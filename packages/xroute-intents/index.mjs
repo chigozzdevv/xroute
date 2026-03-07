@@ -60,7 +60,7 @@ export function createCallIntent(input) {
 export function createIntent(input) {
   const sourceChain = getChain(input.sourceChain).key;
   const destinationChain = getChain(input.destinationChain).key;
-  const refundAddress = assertNonEmptyString("refundAddress", input.refundAddress);
+  const refundAddress = assertAddress("refundAddress", input.refundAddress);
   const deadline = assertInteger("deadline", input.deadline);
   const actionType = assertIncluded(
     "action.type",

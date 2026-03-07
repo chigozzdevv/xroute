@@ -22,7 +22,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const SUBMIT_INTENT_SIGNATURE =
-  "submitIntent((uint8,address,uint128,uint128,uint128,uint128,uint64,bytes32))";
+  "submitIntent((uint8,address,address,uint128,uint128,uint128,uint128,uint64,bytes32))";
 const DISPATCH_INTENT_SIGNATURE = "dispatchIntent(bytes32,(uint8,bytes,bytes))";
 const FINALIZE_SUCCESS_SIGNATURE = "finalizeSuccess(bytes32,bytes32,bytes32,uint128)";
 const FINALIZE_FAILURE_SIGNATURE = "finalizeFailure(bytes32,bytes32,bytes32)";
@@ -30,10 +30,11 @@ const REFUND_FAILED_INTENT_SIGNATURE = "refundFailedIntent(bytes32,uint128)";
 const APPROVE_SIGNATURE = "approve(address,uint256)";
 const ALLOWANCE_SIGNATURE = "allowance(address,address)(uint256)";
 const PREVIEW_LOCKED_AMOUNT_SIGNATURE =
-  "previewLockedAmount((uint8,address,uint128,uint128,uint128,uint128,uint64,bytes32))(uint128)";
+  "previewLockedAmount((uint8,address,address,uint128,uint128,uint128,uint128,uint64,bytes32))(uint128)";
 const PREVIEW_REFUNDABLE_AMOUNT_SIGNATURE = "previewRefundableAmount(bytes32)(uint128)";
 const NEXT_INTENT_NONCE_SIGNATURE = "nextIntentNonce()(uint256)";
-const HASH_INTENT_SIGNATURE = "f(address,uint256,uint8,address,uint128,uint128,uint128,uint128,uint64,bytes32)";
+const HASH_INTENT_SIGNATURE =
+  "f(address,uint256,uint8,address,address,uint128,uint128,uint128,uint128,uint64,bytes32)";
 const HASH_DISPATCH_SIGNATURE = "f(uint8,bytes,bytes)";
 const DISPATCH_EVM_CALL_SIGNATURE = "dispatchEvmCall(address,bytes)";
 
@@ -317,6 +318,7 @@ export function createCastRouterAdapter({
       nonce.toString(),
       String(request.actionType),
       assertAddress("request.asset", request.asset),
+      assertAddress("request.refundAddress", request.refundAddress),
       toUintString(request.amount),
       toUintString(request.xcmFee),
       toUintString(request.destinationFee),
@@ -499,11 +501,12 @@ export function encodeAssetIdSymbol(assetSymbol) {
 }
 
 function formatIntentRequestTuple(request) {
-  return `(${String(request.actionType)},${assertAddress("request.asset", request.asset)},${toUintString(
-    request.amount,
-  )},${toUintString(request.xcmFee)},${toUintString(request.destinationFee)},${toUintString(
-    request.minOutputAmount,
-  )},${String(request.deadline)},${assertHexString(
+  return `(${String(request.actionType)},${assertAddress("request.asset", request.asset)},${assertAddress(
+    "request.refundAddress",
+    request.refundAddress,
+  )},${toUintString(request.amount)},${toUintString(request.xcmFee)},${toUintString(
+    request.destinationFee,
+  )},${toUintString(request.minOutputAmount)},${String(request.deadline)},${assertHexString(
     "request.executionHash",
     request.executionHash,
   )})`;

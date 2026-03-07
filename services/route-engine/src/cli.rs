@@ -317,6 +317,48 @@ fn xcm_instruction_json(instruction: &XcmInstruction) -> String {
             json_string(asset.symbol()),
             json_string(&amount.to_string()),
         ),
+        XcmInstruction::ExchangeAsset {
+            asset_in,
+            amount_in,
+            asset_out,
+            min_amount_out,
+            maximal,
+        } => format!(
+            "{{\"type\":\"exchange-asset\",\"assetIn\":{},\"amountIn\":{},\"assetOut\":{},\"minAmountOut\":{},\"maximal\":{}}}",
+            json_string(asset_in.symbol()),
+            json_string(&amount_in.to_string()),
+            json_string(asset_out.symbol()),
+            json_string(&min_amount_out.to_string()),
+            if *maximal { "true" } else { "false" },
+        ),
+        XcmInstruction::DepositReserveAsset {
+            asset_count,
+            destination,
+            remote_instructions,
+        } => format!(
+            "{{\"type\":\"deposit-reserve-asset\",\"assetCount\":{},\"destination\":{},\"remoteInstructions\":[{}]}}",
+            asset_count,
+            json_string(destination.as_str()),
+            remote_instructions
+                .iter()
+                .map(xcm_instruction_json)
+                .collect::<Vec<_>>()
+                .join(","),
+        ),
+        XcmInstruction::InitiateReserveWithdraw {
+            asset_count,
+            reserve,
+            remote_instructions,
+        } => format!(
+            "{{\"type\":\"initiate-reserve-withdraw\",\"assetCount\":{},\"reserve\":{},\"remoteInstructions\":[{}]}}",
+            asset_count,
+            json_string(reserve.as_str()),
+            remote_instructions
+                .iter()
+                .map(xcm_instruction_json)
+                .collect::<Vec<_>>()
+                .join(","),
+        ),
         XcmInstruction::Transact {
             adapter,
             target_address,
@@ -329,10 +371,15 @@ fn xcm_instruction_json(instruction: &XcmInstruction) -> String {
             json_string(contract_call),
             xcm_weight_json(fallback_weight),
         ),
-        XcmInstruction::DepositAsset { asset, recipient } => format!(
-            "{{\"type\":\"deposit-asset\",\"asset\":{},\"recipient\":{}}}",
+        XcmInstruction::DepositAsset {
+            asset,
+            recipient,
+            asset_count,
+        } => format!(
+            "{{\"type\":\"deposit-asset\",\"asset\":{},\"recipient\":{},\"assetCount\":{}}}",
             json_string(asset.symbol()),
             json_string(recipient),
+            asset_count,
         ),
     }
 }

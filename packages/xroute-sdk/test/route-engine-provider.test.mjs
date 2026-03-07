@@ -20,7 +20,8 @@ import {
 } from "../index.mjs";
 
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const aliceAddress = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
+const recipientAddress = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
+const walletAddress = "0x1111111111111111111111111111111111111111";
 
 test("route engine quote provider bridges the rust planner", async () => {
   const provider = createRouteEngineQuoteProvider({
@@ -29,7 +30,7 @@ test("route engine quote provider bridges the rust planner", async () => {
   const intent = createTransferIntent({
     sourceChain: "polkadot-hub",
     destinationChain: "hydration",
-    refundAddress: "5Frefund",
+    refundAddress: "0x1111111111111111111111111111111111111111",
     deadline: 1_773_185_200,
     params: {
       asset: "DOT",
@@ -92,7 +93,7 @@ test("sdk execute derives the XCM envelope from the route-engine quote", async (
   const intent = createSwapIntent({
     sourceChain: "polkadot-hub",
     destinationChain: "hydration",
-    refundAddress: aliceAddress,
+    refundAddress: walletAddress,
     deadline: 1_773_185_200,
     params: {
       assetIn: "DOT",
@@ -100,13 +101,13 @@ test("sdk execute derives the XCM envelope from the route-engine quote", async (
       amountIn: "1000000000000",
       minAmountOut: "490000000",
       settlementChain: "hydration",
-      recipient: aliceAddress,
+      recipient: recipientAddress,
     },
   });
 
   const execution = await client.execute({
     intent,
-    owner: aliceAddress,
+    owner: walletAddress,
   });
 
   assert.equal(execution.submitted.request.actionType, 1);
@@ -122,7 +123,7 @@ test("route engine quote provider returns adapter-backed remote calls", async ()
   const intent = createCallIntent({
     sourceChain: "polkadot-hub",
     destinationChain: "hydration",
-    refundAddress: aliceAddress,
+    refundAddress: walletAddress,
     deadline: 1_773_185_200,
     params: {
       asset: "DOT",
@@ -150,7 +151,7 @@ test("route engine quote provider returns adapter-backed remote calls", async ()
   assert.match(remoteInstructions[1].contractCall, /^0x7db7dbf6[0-9a-f]+$/);
 });
 
-test("route engine quote provider rejects non-local profiles without published deployments", async () => {
+test("route engine quote provider rejects adapter-backed live actions", async () => {
   const provider = createRouteEngineQuoteProvider({
     cwd: workspaceRoot,
     deploymentProfile: DEPLOYMENT_PROFILES.TESTNET,
@@ -158,7 +159,7 @@ test("route engine quote provider rejects non-local profiles without published d
   const intent = createCallIntent({
     sourceChain: "polkadot-hub",
     destinationChain: "hydration",
-    refundAddress: aliceAddress,
+    refundAddress: walletAddress,
     deadline: 1_773_185_200,
     params: {
       asset: "DOT",
@@ -170,7 +171,7 @@ test("route engine quote provider rejects non-local profiles without published d
 
   await assert.rejects(
     provider.quote(intent),
-    /missing destination adapter deployment for hydration-call-v1 on hydration \(testnet\)/,
+    /unsupported action on testnet: call/,
   );
 });
 
@@ -181,7 +182,7 @@ test("route engine quote provider quotes a hydration swap that settles on polkad
   const intent = createSwapIntent({
     sourceChain: "polkadot-hub",
     destinationChain: "hydration",
-    refundAddress: aliceAddress,
+    refundAddress: walletAddress,
     deadline: 1_773_185_200,
     params: {
       assetIn: "DOT",
@@ -189,7 +190,7 @@ test("route engine quote provider quotes a hydration swap that settles on polkad
       amountIn: "1000000000000",
       minAmountOut: "493000000",
       settlementChain: "polkadot-hub",
-      recipient: aliceAddress,
+      recipient: recipientAddress,
     },
   });
 
@@ -204,16 +205,16 @@ test("route engine quote provider quotes a hydration swap that settles on polkad
     amount: 35000n,
   });
   assert.equal(quote.expectedOutput.amount, 493480000n);
-  assert.equal(remoteInstructions.length, 2);
-  assert.equal(remoteInstructions[1].type, "transact");
-  assert.match(remoteInstructions[1].contractCall, /^0x670b1f29[0-9a-f]+$/);
+  assert.equal(remoteInstructions.length, 3);
+  assert.equal(remoteInstructions[1].type, "exchange-asset");
+  assert.equal(remoteInstructions[2].type, "initiate-reserve-withdraw");
 });
 
 test("http quote provider forwards normalized intents and returns quotes", async () => {
   const intent = createTransferIntent({
     sourceChain: "polkadot-hub",
     destinationChain: "hydration",
-    refundAddress: "5Frefund",
+    refundAddress: "0x1111111111111111111111111111111111111111",
     deadline: 1_773_185_200,
     params: {
       asset: "DOT",

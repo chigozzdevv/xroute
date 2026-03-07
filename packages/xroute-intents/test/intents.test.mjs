@@ -7,7 +7,7 @@ test("createSwapIntent normalizes supported hydration swaps", () => {
   const intent = createSwapIntent({
     sourceChain: "polkadot-hub",
     destinationChain: "hydration",
-    refundAddress: "5Frefund",
+    refundAddress: "0x1111111111111111111111111111111111111111",
     deadline: 1_773_185_200,
     params: {
       assetIn: "dot",
@@ -33,7 +33,7 @@ test("createTransferIntent canonicalizes asset-hub to polkadot-hub", () => {
   const intent = createTransferIntent({
     sourceChain: "asset-hub",
     destinationChain: "hydration",
-    refundAddress: "5Frefund",
+    refundAddress: "0x1111111111111111111111111111111111111111",
     deadline: 1_773_185_200,
     params: {
       asset: "DOT",

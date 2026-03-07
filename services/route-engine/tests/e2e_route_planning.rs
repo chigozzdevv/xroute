@@ -5,6 +5,8 @@ use route_engine::{
     XcmWeight, lookup_destination_adapter_deployment,
 };
 
+const REFUND_ADDRESS: &str = "0x1111111111111111111111111111111111111111";
+
 #[test]
 fn quotes_hydration_swap_over_a_multihop_path() {
     let engine = RouteEngine::default();
@@ -19,7 +21,7 @@ fn quotes_hydration_swap_over_a_multihop_path() {
             settlement_chain: ChainKey::Hydration,
             recipient: "5FswapRecipient".to_owned(),
         }),
-        refund_address: "5Frefund".to_owned(),
+        refund_address: REFUND_ADDRESS.to_owned(),
         deadline: 1_773_185_200,
     };
 
@@ -74,23 +76,22 @@ fn quotes_hydration_swap_over_a_multihop_path() {
     );
     assert_eq!(
         outer_transfer.remote_instructions()[1],
-        XcmInstruction::Transact {
-            adapter: DestinationAdapter::HydrationSwapV1,
-            target_address: local_adapter_address(DestinationAdapter::HydrationSwapV1).to_owned(),
-            contract_call: outer_transfer.remote_instructions()[1]
-                .contract_call()
-                .expect("swap contract call")
-                .to_owned(),
-            fallback_weight: XcmWeight {
-                ref_time: 3_500_000_000,
-                proof_size: 120_000,
-            },
+        XcmInstruction::ExchangeAsset {
+            asset_in: AssetKey::Dot,
+            amount_in: 1_000_000_000_000,
+            asset_out: AssetKey::Usdt,
+            min_amount_out: 490_000_000,
+            maximal: true,
         }
     );
-    assert!(outer_transfer.remote_instructions()[1]
-        .contract_call()
-        .expect("swap contract call")
-        .starts_with("0x670b1f29"));
+    assert_eq!(
+        outer_transfer.remote_instructions()[2],
+        XcmInstruction::DepositAsset {
+            asset: AssetKey::Usdt,
+            recipient: "5FswapRecipient".to_owned(),
+            asset_count: 2,
+        }
+    );
 }
 
 #[test]
@@ -107,7 +108,7 @@ fn quotes_hydration_swap_and_settles_on_polkadot_hub() {
             settlement_chain: ChainKey::PolkadotHub,
             recipient: "5FhubRecipient".to_owned(),
         }),
-        refund_address: "5Frefund".to_owned(),
+        refund_address: REFUND_ADDRESS.to_owned(),
         deadline: 1_773_185_200,
     };
 
@@ -148,11 +149,37 @@ fn quotes_hydration_swap_and_settles_on_polkadot_hub() {
     );
 
     let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
-    assert_eq!(outer_transfer.remote_instructions().len(), 2);
-    assert!(outer_transfer.remote_instructions()[1]
-        .contract_call()
-        .expect("swap contract call")
-        .contains("00000000000000000000000000000000000000000000000000000000000003e8"));
+    assert_eq!(outer_transfer.remote_instructions().len(), 3);
+    assert_eq!(
+        outer_transfer.remote_instructions()[1],
+        XcmInstruction::ExchangeAsset {
+            asset_in: AssetKey::Dot,
+            amount_in: 1_000_000_000_000,
+            asset_out: AssetKey::Usdt,
+            min_amount_out: 493_000_000,
+            maximal: true,
+        }
+    );
+
+    let settlement = &outer_transfer.remote_instructions()[2];
+    assert_eq!(
+        *settlement,
+        XcmInstruction::InitiateReserveWithdraw {
+            asset_count: 2,
+            reserve: ChainKey::PolkadotHub,
+            remote_instructions: vec![
+                XcmInstruction::BuyExecution {
+                    asset: AssetKey::Usdt,
+                    amount: 10_000,
+                },
+                XcmInstruction::DepositAsset {
+                    asset: AssetKey::Usdt,
+                    recipient: "5FhubRecipient".to_owned(),
+                    asset_count: 2,
+                },
+            ],
+        }
+    );
 }
 
 #[test]
@@ -166,7 +193,7 @@ fn quotes_asset_transfer_and_builds_delivery_plan() {
             amount: AssetKey::Dot.units(25),
             recipient: "5FtransferRecipient".to_owned(),
         }),
-        refund_address: "5Frefund".to_owned(),
+        refund_address: REFUND_ADDRESS.to_owned(),
         deadline: 1_773_185_200,
     };
 
@@ -199,6 +226,7 @@ fn quotes_asset_transfer_and_builds_delivery_plan() {
             XcmInstruction::DepositAsset {
                 asset: AssetKey::Dot,
                 recipient: "5FtransferRecipient".to_owned(),
+                asset_count: 1,
             },
         ]
     );
@@ -216,7 +244,7 @@ fn quotes_hydration_stake_over_a_multihop_path() {
             validator: "validator-01".to_owned(),
             recipient: "5FstakeRecipient".to_owned(),
         }),
-        refund_address: "5Frefund".to_owned(),
+        refund_address: REFUND_ADDRESS.to_owned(),
         deadline: 1_773_185_200,
     };
 
@@ -266,7 +294,7 @@ fn quotes_hydration_call_over_a_multihop_path() {
             target: "0x1111111111111111111111111111111111111111".to_owned(),
             calldata: "0xdeadbeef".to_owned(),
         }),
-        refund_address: "5Frefund".to_owned(),
+        refund_address: REFUND_ADDRESS.to_owned(),
         deadline: 1_773_185_200,
     };
 
@@ -305,7 +333,7 @@ fn quotes_hydration_call_over_a_multihop_path() {
 }
 
 #[test]
-fn rejects_non_local_profiles_without_published_deployments() {
+fn quotes_hydration_swap_on_testnet_without_adapter_deployments() {
     let engine = RouteEngine::new(
         RouteRegistry::default(),
         EngineSettings {
@@ -324,15 +352,43 @@ fn rejects_non_local_profiles_without_published_deployments() {
             settlement_chain: ChainKey::Hydration,
             recipient: "5FswapRecipient".to_owned(),
         }),
-        refund_address: "5Frefund".to_owned(),
+        refund_address: REFUND_ADDRESS.to_owned(),
         deadline: 1_773_185_200,
     };
 
-    let error = engine.quote(intent).expect_err("testnet deployment should be missing");
-    assert_eq!(
-        error.to_string(),
-        "missing destination adapter deployment for hydration-swap-v1 on hydration (testnet)"
+    let quote = engine.quote(intent).expect("testnet swap quote should build");
+    assert_eq!(quote.deployment_profile, DeploymentProfile::Testnet);
+    let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
+    assert!(matches!(
+        outer_transfer.remote_instructions()[1],
+        XcmInstruction::ExchangeAsset { .. }
+    ));
+}
+
+#[test]
+fn rejects_adapter_backed_live_actions_on_testnet() {
+    let engine = RouteEngine::new(
+        RouteRegistry::default(),
+        EngineSettings {
+            platform_fee_bps: 10,
+            deployment_profile: DeploymentProfile::Testnet,
+        },
     );
+    let intent = Intent {
+        source_chain: ChainKey::PolkadotHub,
+        destination_chain: ChainKey::Hydration,
+        action: IntentAction::Call(CallIntent {
+            asset: AssetKey::Dot,
+            amount: AssetKey::Dot.units(5),
+            target: "0x1111111111111111111111111111111111111111".to_owned(),
+            calldata: "0xdeadbeef".to_owned(),
+        }),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let error = engine.quote(intent).expect_err("testnet call should be rejected");
+    assert_eq!(error.to_string(), "unsupported action on testnet: call");
 }
 
 fn local_adapter_address(adapter: DestinationAdapter) -> &'static str {

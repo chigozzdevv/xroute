@@ -31,7 +31,7 @@ test("buildRouterIntentRequest matches the contract-facing request shape", () =>
   const intent = createSwapIntent({
     sourceChain: "polkadot-hub",
     destinationChain: "hydration",
-    refundAddress: "5Frefund",
+    refundAddress: "0x1111111111111111111111111111111111111111",
     deadline: 1_773_185_200,
     params: {
       assetIn: "DOT",
@@ -76,6 +76,7 @@ test("buildRouterIntentRequest matches the contract-facing request shape", () =>
 
   assert.equal(request.actionType, 1);
   assert.equal(request.asset, "0x0000000000000000000000000000000000000401");
+  assert.equal(request.refundAddress, "0x1111111111111111111111111111111111111111");
   assert.equal(request.amount, 1000000000000n);
   assert.equal(request.deadline, 1773185200);
   assert.match(request.executionHash, /^0x[0-9a-f]{64}$/);

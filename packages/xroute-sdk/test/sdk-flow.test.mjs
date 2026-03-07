@@ -159,7 +159,7 @@ test("sdk coordinates quote, submit, dispatch, and status tracking", async () =>
   const intent = createSwapIntent({
     sourceChain: "polkadot-hub",
     destinationChain: "hydration",
-    refundAddress: "5Frefund",
+    refundAddress: "0x1111111111111111111111111111111111111111",
     deadline: 1_773_185_200,
     params: {
       assetIn: "DOT",
@@ -179,7 +179,7 @@ test("sdk coordinates quote, submit, dispatch, and status tracking", async () =>
     intent,
     quote,
     envelope,
-    owner: "5Fowner",
+    owner: "0x1111111111111111111111111111111111111111",
   });
 
   assert.equal(execution.submitted.request.actionType, 1);
@@ -327,7 +327,7 @@ test("sdk coordinates fail and refund helpers", async () => {
   const intent = createSwapIntent({
     sourceChain: "polkadot-hub",
     destinationChain: "hydration",
-    refundAddress: "5Frefund",
+    refundAddress: "0x1111111111111111111111111111111111111111",
     deadline: 1_773_185_200,
     params: {
       assetIn: "DOT",
@@ -339,7 +339,7 @@ test("sdk coordinates fail and refund helpers", async () => {
   });
   const execution = await client.execute({
     intent,
-    owner: "5Fowner",
+    owner: "0x1111111111111111111111111111111111111111",
     envelope: createDispatchEnvelope({
       mode: "execute",
       message: "0x1234",

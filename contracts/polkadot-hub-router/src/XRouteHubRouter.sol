@@ -30,6 +30,7 @@ contract XRouteHubRouter {
     struct IntentRequest {
         ActionType actionType;
         address asset;
+        address refundAddress;
         uint128 amount;
         uint128 xcmFee;
         uint128 destinationFee;
@@ -47,6 +48,7 @@ contract XRouteHubRouter {
     struct IntentRecord {
         address owner;
         address asset;
+        address refundAddress;
         uint128 amount;
         uint128 xcmFee;
         uint128 destinationFee;
@@ -84,6 +86,7 @@ contract XRouteHubRouter {
         bytes32 indexed intentId,
         address indexed owner,
         address indexed asset,
+        address refundAddress,
         ActionType actionType,
         uint128 amount,
         uint128 totalLocked
@@ -150,7 +153,7 @@ contract XRouteHubRouter {
     }
 
     function submitIntent(IntentRequest calldata request) external nonReentrant returns (bytes32 intentId) {
-        if (request.asset == address(0)) revert ZeroAddress();
+        if (request.asset == address(0) || request.refundAddress == address(0)) revert ZeroAddress();
         if (request.amount == 0) revert InvalidAmount();
         if (request.deadline <= block.timestamp) revert InvalidDeadline();
         if (request.executionHash == bytes32(0)) revert InvalidExecutionHash();
@@ -164,6 +167,7 @@ contract XRouteHubRouter {
                 nextIntentNonce++,
                 request.actionType,
                 request.asset,
+                request.refundAddress,
                 request.amount,
                 request.xcmFee,
                 request.destinationFee,
@@ -176,6 +180,7 @@ contract XRouteHubRouter {
         intents[intentId] = IntentRecord({
             owner: msg.sender,
             asset: request.asset,
+            refundAddress: request.refundAddress,
             amount: request.amount,
             xcmFee: request.xcmFee,
             destinationFee: request.destinationFee,
@@ -194,7 +199,15 @@ contract XRouteHubRouter {
 
         _safeTransferFrom(request.asset, msg.sender, address(this), totalLocked);
 
-        emit IntentSubmitted(intentId, msg.sender, request.asset, request.actionType, request.amount, totalLocked);
+        emit IntentSubmitted(
+            intentId,
+            msg.sender,
+            request.asset,
+            request.refundAddress,
+            request.actionType,
+            request.amount,
+            totalLocked
+        );
     }
 
     function dispatchIntent(bytes32 intentId, DispatchRequest calldata request) external onlyExecutor nonReentrant {
@@ -276,7 +289,7 @@ contract XRouteHubRouter {
         intent.status = IntentStatus.Refunded;
         intent.refundAmount = refundAmount;
 
-        _safeTransfer(intent.asset, intent.owner, refundAmount);
+        _safeTransfer(intent.asset, intent.refundAddress, refundAmount);
 
         emit IntentRefunded(intentId, refundAmount);
     }
@@ -290,7 +303,7 @@ contract XRouteHubRouter {
         intent.status = IntentStatus.Cancelled;
 
         uint128 lockedAmount = intent.amount + intent.xcmFee + intent.destinationFee + intent.platformFee;
-        _safeTransfer(intent.asset, intent.owner, lockedAmount);
+        _safeTransfer(intent.asset, intent.refundAddress, lockedAmount);
 
         emit IntentCancelled(intentId);
     }

@@ -13,7 +13,6 @@ import {
 } from "../../packages/xroute-sdk/index.mjs";
 import {
   createCastRouterAdapter,
-  createCastTransactDispatcher,
   createStaticAssetAddressResolver,
   encodeAssetIdSymbol,
 } from "../../packages/xroute-sdk/router-adapters.mjs";
@@ -29,10 +28,11 @@ const localStackPath = resolve(
   workspaceRoot,
   "testing/devnet/.artifacts/local-stack.json",
 );
+const recipientAccount = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
 const privateKey =
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
-test("local devnet deploys the stack and settles a live swap through the sdk", async () => {
+test("local devnet deploys the stack and dispatches a live swap through the sdk", async () => {
   const port = await getAvailablePort();
   const rpcUrl = `http://127.0.0.1:${port}`;
   const tempRoot = mkdtempSync(resolve(tmpdir(), "xroute-devnet-"));
@@ -77,11 +77,6 @@ test("local devnet deploys the stack and settles a live swap through the sdk", a
       ownerAddress: stack.deployer,
       statusIndexer: statusProvider,
     });
-    const transactDispatcher = createCastTransactDispatcher({
-      rpcUrl,
-      dispatcherAddress: stack.dispatcherAddress,
-      privateKey,
-    });
     const client = createXRouteClient({
       quoteProvider,
       routerAdapter,
@@ -106,7 +101,7 @@ test("local devnet deploys the stack and settles a live swap through the sdk", a
           amountIn: "1000000000000",
           minAmountOut: "493000000",
           settlementChain: "polkadot-hub",
-          recipient: stack.deployer,
+          recipient: recipientAccount,
         },
       },
     });
@@ -126,9 +121,6 @@ test("local devnet deploys the stack and settles a live swap through the sdk", a
     });
     assert.equal(execution.status.status, "executing");
 
-    const destinationDispatch = await transactDispatcher.dispatchQuote(quote);
-    assert.match(destinationDispatch.txHash, /^0x[0-9a-f]{64}$/);
-
     await client.settle({
       intentId: execution.submitted.intentId,
       outcomeReference:
@@ -140,43 +132,11 @@ test("local devnet deploys the stack and settles a live swap through the sdk", a
     const status = client.getStatus(execution.submitted.intentId);
     assert.equal(status.status, "settled");
     assert.equal(status.result.amount, quote.expectedOutput.amount);
-
-    const usdtBalance = readUint256({
-      rpcUrl,
-      contractAddress: stack.tokens.USDT,
-      signature: "balanceOf(address)(uint256)",
-      args: [stack.deployer],
-    });
-    assert.equal(usdtBalance, quote.expectedOutput.amount);
   } finally {
     anvil.kill("SIGTERM");
     rmSync(tempRoot, { recursive: true, force: true });
   }
 });
-
-function readUint256({ rpcUrl, contractAddress, signature, args = [] }) {
-  const output = execFileSync(
-    "cast",
-    ["call", contractAddress, signature, ...args.map(String), "--rpc-url", rpcUrl],
-    {
-      cwd: workspaceRoot,
-      encoding: "utf8",
-    },
-  ).trim();
-
-  const normalized = output.trim();
-  const hexMatch = normalized.match(/^(0x[0-9a-f]+)/i);
-  if (hexMatch) {
-    return BigInt(hexMatch[1]);
-  }
-
-  const decimalMatch = normalized.match(/^(\d+)/);
-  if (decimalMatch) {
-    return BigInt(decimalMatch[1]);
-  }
-
-  throw new Error(`unable to parse uint256 from cast output: ${normalized}`);
-}
 
 async function getAvailablePort() {
   return new Promise((resolvePort, reject) => {

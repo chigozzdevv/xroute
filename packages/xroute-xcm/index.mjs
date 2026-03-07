@@ -164,6 +164,7 @@ export function buildRouterIntentRequest({
   return Object.freeze({
     actionType: ACTION_TO_CONTRACT_ENUM[quote.submission.action],
     asset: normalizedAddress,
+    refundAddress: assertAddress("intent.refundAddress", intent.refundAddress),
     amount: toBigInt(quote.submission.amount, "quote.submission.amount"),
     xcmFee: toBigInt(quote.submission.xcmFee, "quote.submission.xcmFee"),
     destinationFee: toBigInt(
@@ -347,6 +348,54 @@ function buildInstruction({
         }),
         weight_limit: Enum("Unlimited", undefined),
       });
+    case "exchange-asset":
+      return Enum("ExchangeAsset", {
+        give: Enum("Definite", [
+          buildAsset({
+            chainKey: currentChain,
+            assetKey: instruction.assetIn,
+            amount: toBigInt(
+              instruction.amountIn,
+              "executionPlan.instructions.exchange-asset.amountIn",
+            ),
+          }),
+        ]),
+        want: [
+          buildAsset({
+            chainKey: currentChain,
+            assetKey: instruction.assetOut,
+            amount: toBigInt(
+              instruction.minAmountOut,
+              "executionPlan.instructions.exchange-asset.minAmountOut",
+            ),
+          }),
+        ],
+        maximal: Boolean(instruction.maximal),
+      });
+    case "deposit-reserve-asset":
+      return Enum("DepositReserveAsset", {
+        assets: buildCountedAssetFilter(instruction.assetCount),
+        dest: buildParachainLocation(instruction.destination),
+        xcm: instruction.remoteInstructions.map((nestedInstruction) =>
+          buildInstruction({
+            instruction: nestedInstruction,
+            currentChain: instruction.destination,
+            deploymentProfile,
+          }),
+        ),
+      });
+    case "initiate-reserve-withdraw":
+      return Enum("InitiateReserveWithdraw", {
+        assets: buildCountedAssetFilter(instruction.assetCount),
+        reserve: buildParachainLocation(instruction.reserve),
+        xcm: instruction.remoteInstructions.map((nestedInstruction) =>
+          buildInstruction({
+            instruction: nestedInstruction,
+            currentChain: instruction.reserve,
+            deploymentProfile,
+          }),
+        ),
+      });
     case "transact":
       assertPublishedAdapterInvocation({
         adapterId: instruction.adapter,
@@ -367,7 +416,7 @@ function buildInstruction({
       });
     case "deposit-asset":
       return Enum("DepositAsset", {
-        assets: Enum("Wild", Enum("AllCounted", 1)),
+        assets: buildCountedAssetFilter(instruction.assetCount ?? 1),
         beneficiary: buildBeneficiaryLocation(instruction.recipient),
       });
     default:
@@ -385,6 +434,13 @@ function buildAsset({ chainKey, assetKey, amount }) {
     },
     fun: Enum("Fungible", amount),
   };
+}
+
+function buildCountedAssetFilter(assetCount) {
+  return Enum(
+    "Wild",
+    Enum("AllCounted", assertInteger("assetCount", assetCount)),
+  );
 }
 
 function buildParachainLocation(chainKey) {

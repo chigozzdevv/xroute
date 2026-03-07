@@ -21,7 +21,7 @@ test("file-backed status indexer reloads persisted events", () => {
         at: 1,
         intentId: "0xintent",
         quoteId: "0xquote",
-        owner: "5Fowner",
+        owner: "0x1111111111111111111111111111111111111111",
         sourceChain: "polkadot-hub",
         destinationChain: "hydration",
         actionType: "swap",

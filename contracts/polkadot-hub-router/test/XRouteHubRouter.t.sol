@@ -8,6 +8,7 @@ import {TestBase} from "./helpers/TestBase.sol";
 
 contract XRouteHubRouterTest is TestBase {
     address internal constant ALICE = address(0xA11CE);
+    address internal constant REFUND_RECIPIENT = address(0xFEE1);
     address internal constant EXECUTOR = address(0xB0B);
     address internal constant TREASURY = address(0xC0FFEE);
 
@@ -44,6 +45,7 @@ contract XRouteHubRouterTest is TestBase {
 
         assertEq(intent.owner, ALICE);
         assertEq(intent.asset, address(token));
+        assertEq(intent.refundAddress, REFUND_RECIPIENT);
         assertEq(intent.amount, 100 * 10 ** 10);
         assertEq(intent.xcmFee, 150_000_000);
         assertEq(intent.destinationFee, 100_000_000);
@@ -78,6 +80,7 @@ contract XRouteHubRouterTest is TestBase {
         XRouteHubRouter.IntentRequest memory request = XRouteHubRouter.IntentRequest({
             actionType: XRouteHubRouter.ActionType.Transfer,
             asset: address(token),
+            refundAddress: REFUND_RECIPIENT,
             amount: 25 * 10 ** 10,
             xcmFee: 100_000_000,
             destinationFee: 20_000_000,
@@ -99,7 +102,8 @@ contract XRouteHubRouterTest is TestBase {
         XRouteHubRouter.IntentRecord memory intent = router.getIntent(intentId);
 
         assertEq(uint256(intent.status), uint256(XRouteHubRouter.IntentStatus.Cancelled));
-        assertEq(token.balanceOf(ALICE), 2_000 * 10 ** 10);
+        assertEq(token.balanceOf(ALICE), 2_000 * 10 ** 10 - lockedAmount);
+        assertEq(token.balanceOf(REFUND_RECIPIENT), lockedAmount);
         assertEq(token.balanceOf(address(router)), 0);
     }
 
@@ -168,7 +172,8 @@ contract XRouteHubRouterTest is TestBase {
         XRouteHubRouter.IntentRecord memory refundedIntent = router.getIntent(intentId);
         assertEq(uint256(refundedIntent.status), uint256(XRouteHubRouter.IntentStatus.Refunded));
         assertEq(refundedIntent.refundAmount, 1_000_250_000_000);
-        assertEq(token.balanceOf(ALICE), 20_000_000_000_000 - 1_000_000_000);
+        assertEq(token.balanceOf(ALICE), 20_000_000_000_000 - 1_001_250_000_000);
+        assertEq(token.balanceOf(REFUND_RECIPIENT), 1_000_250_000_000);
         assertEq(token.balanceOf(address(router)), 0);
         assertEq(token.balanceOf(TREASURY), 1_000_000_000);
     }
@@ -213,6 +218,7 @@ contract XRouteHubRouterTest is TestBase {
         return XRouteHubRouter.IntentRequest({
             actionType: XRouteHubRouter.ActionType.Swap,
             asset: address(token),
+            refundAddress: REFUND_RECIPIENT,
             amount: 100 * 10 ** 10,
             xcmFee: 150_000_000,
             destinationFee: 100_000_000,

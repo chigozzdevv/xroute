@@ -32,6 +32,7 @@ pub enum RouteError {
     },
     UnsupportedAction {
         action: &'static str,
+        profile: DeploymentProfile,
     },
     MissingDestinationAdapterSpec {
         adapter: &'static str,
@@ -126,8 +127,13 @@ impl Display for RouteError {
                 settlement.as_str(),
                 asset.symbol()
             ),
-            Self::UnsupportedAction { action } => {
-                write!(f, "unsupported action: {action}")
+            Self::UnsupportedAction { action, profile } => {
+                write!(
+                    f,
+                    "unsupported action on {}: {}",
+                    profile.as_str(),
+                    action
+                )
             }
             Self::MissingDestinationAdapterSpec { adapter } => {
                 write!(f, "missing destination adapter spec for {adapter}")

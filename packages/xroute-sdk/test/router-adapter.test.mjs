@@ -10,6 +10,7 @@ import {
 import { InMemoryStatusIndexer } from "../status-indexer.mjs";
 
 const signerAddress = "0x1111111111111111111111111111111111111111";
+const recipientAccount = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
 const routerAddress = "0x2222222222222222222222222222222222222222";
 const dotAddress = "0x3333333333333333333333333333333333333333";
 const privateKey = "0x0123456789012345678901234567890123456789012345678901234567890123";
@@ -41,7 +42,7 @@ test("cast router adapter approves, submits, dispatches, and persists status eve
       calls.push(args);
       const [command, ...rest] = args;
 
-      if (command === "call" && rest[1] === "previewLockedAmount((uint8,address,uint128,uint128,uint128,uint128,uint64,bytes32))(uint128)") {
+      if (command === "call" && rest[1] === "previewLockedAmount((uint8,address,address,uint128,uint128,uint128,uint128,uint64,bytes32))(uint128)") {
         return { stdout: "1001250000000\n" };
       }
       if (command === "call" && rest[1] === "allowance(address,address)(uint256)") {
@@ -53,7 +54,7 @@ test("cast router adapter approves, submits, dispatches, and persists status eve
       if (command === "send" && rest[0] === dotAddress) {
         return { stdout: "{\"transactionHash\":\"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}\n" };
       }
-      if (command === "send" && rest[0] === routerAddress && rest[1] === "submitIntent((uint8,address,uint128,uint128,uint128,uint128,uint64,bytes32))") {
+      if (command === "send" && rest[0] === routerAddress && rest[1] === "submitIntent((uint8,address,address,uint128,uint128,uint128,uint128,uint64,bytes32))") {
         return { stdout: "{\"transactionHash\":\"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}\n" };
       }
       if (command === "send" && rest[0] === routerAddress && rest[1] === "dispatchIntent(bytes32,(uint8,bytes,bytes))") {
@@ -80,7 +81,7 @@ test("cast router adapter approves, submits, dispatches, and persists status eve
       assetOut: "USDT",
       amountIn: "1000000000000",
       minAmountOut: "490000000",
-      recipient: signerAddress,
+      recipient: recipientAccount,
     },
   });
   const quote = {
@@ -108,6 +109,7 @@ test("cast router adapter approves, submits, dispatches, and persists status eve
   const request = {
     actionType: 1,
     asset: dotAddress,
+    refundAddress: signerAddress,
     amount: 1000000000000n,
     xcmFee: 150000000n,
     destinationFee: 100000000n,

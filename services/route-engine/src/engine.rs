@@ -130,7 +130,6 @@ impl RouteEngine {
                     &route,
                     &settlement,
                     &fees,
-                    self.settings.deployment_profile,
                 )?;
 
                 Ok(Quote {
@@ -154,6 +153,10 @@ impl RouteEngine {
                 })
             }
             IntentAction::Stake(stake) => {
+                ensure_profile_supports_adapter_action(
+                    self.settings.deployment_profile,
+                    "stake",
+                )?;
                 let path = self
                     .registry
                     .best_transfer_path(intent.source_chain, intent.destination_chain, stake.asset)
@@ -205,6 +208,10 @@ impl RouteEngine {
                 })
             }
             IntentAction::Call(call) => {
+                ensure_profile_supports_adapter_action(
+                    self.settings.deployment_profile,
+                    "call",
+                )?;
                 let path = self
                     .registry
                     .best_transfer_path(intent.source_chain, intent.destination_chain, call.asset)
@@ -426,6 +433,7 @@ fn build_transfer_plan(
     let final_remote_instructions = vec![XcmInstruction::DepositAsset {
         asset: principal.asset,
         recipient: recipient.clone(),
+        asset_count: 1,
     }];
 
     Ok(crate::model::ExecutionPlan {
@@ -477,7 +485,6 @@ fn build_swap_plan(
     route: &SwapRoute,
     settlement: &SwapSettlement,
     fees: &FeeBreakdown,
-    deployment_profile: DeploymentProfile,
 ) -> Result<crate::model::ExecutionPlan, RouteError> {
     let principal = intent.principal_amount();
     let locked = principal
@@ -489,24 +496,7 @@ fn build_swap_plan(
         IntentAction::Swap(swap) => swap,
         _ => unreachable!(),
     };
-    let final_remote_instructions = vec![XcmInstruction::Transact {
-        adapter: route.adapter,
-        target_address: destination_adapter_address(
-            route.adapter,
-            route.destination,
-            deployment_profile,
-        )?
-        .to_owned(),
-        contract_call: encode_swap_adapter_call(
-            route.adapter,
-            swap.asset_in,
-            swap.asset_out,
-            swap.amount_in,
-            swap.min_amount_out,
-            settlement,
-        )?,
-        fallback_weight: route.transact_weight,
-    }];
+    let final_remote_instructions = build_swap_remote_instructions(route, swap, settlement)?;
 
     Ok(crate::model::ExecutionPlan {
         route: composed_route(&execution_path.route, settlement.settlement_path.as_ref()),
@@ -552,6 +542,73 @@ fn build_swap_plan(
             },
         ],
     })
+}
+
+fn build_swap_remote_instructions(
+    route: &SwapRoute,
+    swap: &crate::model::SwapIntent,
+    settlement: &SwapSettlement,
+) -> Result<Vec<XcmInstruction>, RouteError> {
+    let mut instructions = vec![XcmInstruction::ExchangeAsset {
+        asset_in: route.asset_in,
+        amount_in: swap.amount_in,
+        asset_out: route.asset_out,
+        min_amount_out: swap.min_amount_out,
+        maximal: true,
+    }];
+
+    instructions.extend(build_swap_settlement_instructions(settlement)?);
+    Ok(instructions)
+}
+
+fn build_swap_settlement_instructions(
+    settlement: &SwapSettlement,
+) -> Result<Vec<XcmInstruction>, RouteError> {
+    const SWAP_OUTPUT_ASSET_COUNT: u32 = 2;
+
+    let Some(settlement_path) = settlement.settlement_path.as_ref() else {
+        return Ok(vec![XcmInstruction::DepositAsset {
+            asset: settlement.asset,
+            recipient: settlement.recipient.clone(),
+            asset_count: SWAP_OUTPUT_ASSET_COUNT,
+        }]);
+    };
+
+    let destination_hop = settlement_path
+        .hops
+        .first()
+        .ok_or(RouteError::ArithmeticOverflow)?;
+    let final_delivery = XcmInstruction::DepositAsset {
+        asset: settlement.asset,
+        recipient: settlement.recipient.clone(),
+        asset_count: SWAP_OUTPUT_ASSET_COUNT,
+    };
+
+    let settlement_remote_instructions = vec![
+        XcmInstruction::BuyExecution {
+            asset: destination_hop.buy_execution_fee.asset,
+            amount: destination_hop.buy_execution_fee.amount,
+        },
+        final_delivery,
+    ];
+
+    let instruction = match settlement.mode {
+        SwapSettlementMode::LocalAccount => unreachable!(),
+        SwapSettlementMode::DepositReserveAsset => XcmInstruction::DepositReserveAsset {
+            asset_count: SWAP_OUTPUT_ASSET_COUNT,
+            destination: settlement.settlement_chain,
+            remote_instructions: settlement_remote_instructions,
+        },
+        SwapSettlementMode::InitiateReserveWithdraw => {
+            XcmInstruction::InitiateReserveWithdraw {
+                asset_count: SWAP_OUTPUT_ASSET_COUNT,
+                reserve: settlement.reserve_chain,
+                remote_instructions: settlement_remote_instructions,
+            }
+        }
+    };
+
+    Ok(vec![instruction])
 }
 
 fn build_stake_plan(
@@ -767,24 +824,18 @@ fn percentage_fee(amount: u128, bps: u16) -> u128 {
     }
 }
 
-fn encode_swap_adapter_call(
-    adapter: DestinationAdapter,
-    asset_in: AssetKey,
-    asset_out: AssetKey,
-    amount_in: u128,
-    min_amount_out: u128,
-    settlement: &SwapSettlement,
-) -> Result<String, RouteError> {
-    Ok(abi_encode_call(
-        destination_adapter_selector(adapter)?,
-        &[
-            AbiToken::Bytes32(encode_asset_id(asset_in)),
-            AbiToken::Bytes32(encode_asset_id(asset_out)),
-            AbiToken::Uint(amount_in),
-            AbiToken::Uint(min_amount_out),
-            AbiToken::Bytes(encode_swap_settlement_plan(settlement)),
-        ],
-    ))
+fn ensure_profile_supports_adapter_action(
+    deployment_profile: DeploymentProfile,
+    action: &'static str,
+) -> Result<(), RouteError> {
+    if deployment_profile == DeploymentProfile::Local {
+        return Ok(());
+    }
+
+    Err(RouteError::UnsupportedAction {
+        action,
+        profile: deployment_profile,
+    })
 }
 
 fn encode_stake_adapter_call(
@@ -898,27 +949,6 @@ fn encode_address_word(value: &[u8; 20]) -> [u8; 32] {
     word
 }
 
-fn encode_swap_settlement_plan(settlement: &SwapSettlement) -> Vec<u8> {
-    let estimated_fee = settlement.estimated_fee.map(|fee| fee.amount).unwrap_or(0);
-
-    let tokens = [
-        AbiToken::Uint(settlement.mode as u128),
-        AbiToken::Bytes32(encode_asset_id(settlement.asset)),
-        AbiToken::Uint(u128::from(parachain_id(settlement.reserve_chain))),
-        AbiToken::Uint(u128::from(parachain_id(settlement.settlement_chain))),
-        AbiToken::Uint(estimated_fee),
-        AbiToken::Bytes(settlement.recipient.as_bytes().to_vec()),
-    ];
-
-    abi_encode_tokens(&tokens)
-}
-
-fn parachain_id(chain: ChainKey) -> u32 {
-    match chain {
-        ChainKey::PolkadotHub => 1000,
-        ChainKey::Hydration => 2034,
-    }
-}
 
 fn parse_evm_address(field: &'static str, value: &str) -> Result<[u8; 20], RouteError> {
     let bytes = parse_hex_bytes(field, value)?;

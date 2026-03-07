@@ -6,8 +6,7 @@ It gives developers a higher-level interface for cross-chain actions such as:
 
 - `transfer` native assets across chains
 - `swap` on Hydration from Polkadot Hub
-- `stake` through a destination adapter
-- `call` a destination contract or adapter
+- local-only `stake` and generic `call` adapter experiments
 
 Instead of asking a user or dApp to hand-build low-level XCM, XRoute lets them ask for an outcome and pushes the routing, payload construction, and execution details into dedicated infrastructure.
 
@@ -32,12 +31,12 @@ The design goal is simple:
 
 Current supported vertical slices:
 
-- `polkadot-hub -> hydration` native `transfer`
-- `hydration -> polkadot-hub` native `transfer`
-- `polkadot-hub -> hydration` `swap`
-- `polkadot-hub -> hydration` `stake`
-- `polkadot-hub -> hydration` generic `call`
-- `polkadot-hub -> hydration -> polkadot-hub` remote-settlement `swap`
+- live `polkadot-hub -> hydration` native `transfer`
+- live `hydration -> polkadot-hub` native `transfer`
+- live `polkadot-hub -> hydration` `swap`
+- live `polkadot-hub -> hydration -> polkadot-hub` remote-settlement `swap`
+- local/dev-only `polkadot-hub -> hydration` `stake`
+- local/dev-only `polkadot-hub -> hydration` generic `call`
 
 Current swap capabilities:
 
@@ -64,10 +63,13 @@ XRoute is split into four main runtime pieces.
 The app creates an intent and asks for a quote.
 
 ```ts
+const refundAddress = "0x1111111111111111111111111111111111111111";
+const recipientAccount = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
+
 const { intent, quote } = await client.quote({
   sourceChain: "polkadot-hub",
   destinationChain: "hydration",
-  refundAddress: ownerAddress,
+  refundAddress,
   deadline: Math.floor(Date.now() / 1000) + 1800,
   action: {
     type: "swap",
@@ -77,11 +79,16 @@ const { intent, quote } = await client.quote({
       amountIn: "1000000000000",
       minAmountOut: "493000000",
       settlementChain: "polkadot-hub",
-      recipient: ownerAddress,
+      recipient: recipientAccount,
     },
   },
 });
 ```
+
+Important address distinction:
+
+- `refundAddress` is the source-chain refund recipient on the Hub EVM side, so it must be an EVM hex address
+- `recipient` is the XCM beneficiary on the destination or settlement chain, so it is typically an SS58 account
 
 `2. Route engine`
 
@@ -93,8 +100,8 @@ The Rust route engine:
 - estimates output-side settlement fees for remote-settlement swaps
 - emits explicit execution and settlement route segments with per-hop fee data
 - resolves the deployment profile
-- emits destination adapter target addresses and calldata
-- encodes destination settlement plans for adapter-backed swaps
+- emits real Hydration runtime `ExchangeAsset` instructions for live swaps
+- uses destination adapters only for local/dev-only `stake` and generic `call`
 - builds nested multihop execution plans consumed by the XCM layer
 
 `3. Hub router`
@@ -132,18 +139,23 @@ Typical remote-settlement swap flow:
 1. User creates a `swap` intent on `polkadot-hub`.
 2. The route engine resolves the execution path `polkadot-hub -> hydration`.
 3. If the output should land on another chain, the route engine also resolves the settlement path from the execution chain to the settlement chain.
-4. The swap executor payload is built with an explicit settlement plan instead of relying on the client to infer delivery behavior.
+4. The route engine builds a real Hydration runtime `ExchangeAsset` step and any required reserve-settlement instructions.
 5. The SDK converts that plan into the committed router request and XCM envelope.
 6. The router escrows funds and dispatches the exact payload.
-7. The XCM message executes across the intermediate hop and reaches the Hydration adapter.
-8. The Hydration executor delivers the result locally or forwards it to the settlement chain.
+7. The XCM message executes across the route and reaches the Hydration runtime.
+8. Hydration executes the swap and either deposits locally or routes the reserve-backed output to the settlement chain.
 9. The executor records `settled` or `failed` onchain.
 10. If needed, the executor records a `refund`.
 
-For adapter-backed actions:
+For live swaps:
 
 - `destinationChain` is the execution chain
 - `settlementChain` is where the user finally receives the result
+
+For local/dev-only adapter actions:
+
+- `stake` and generic `call` still use destination adapters
+- they are not part of the current live `testnet` or `mainnet` integration surface
 
 Example route shapes:
 
@@ -173,7 +185,7 @@ xroute/
 What each directory is for:
 
 - `contracts/polkadot-hub-router`
-  - Solidity router and destination adapter contracts
+  - Solidity router and local/dev-only adapter contracts
 - `services/route-engine`
   - Rust quote engine and execution-plan builder
 - `packages/xroute-sdk`
@@ -202,7 +214,7 @@ The public integration surface is:
 
 - `@xroute/sdk`
 - hosted quote infrastructure
-- deployed router and adapter addresses on `testnet` or `mainnet`
+- deployed router addresses and live chain metadata on `testnet` or `mainnet`
 
 Repo requirements:
 
@@ -290,6 +302,11 @@ Published adapter deployments consumed by the SDK:
 
 - [destination-adapter-deployments.json](/Users/chigozzdev/Desktop/xroute/packages/xroute-precompile-interfaces/generated/destination-adapter-deployments.json)
 
+Note:
+
+- live Hydration swaps do not depend on a destination EVM adapter deployment
+- the published adapter manifest is still used by the local/dev-only `stake` and `call` paths
+
 Current verification status:
 
 - `testnet` and `mainnet`
@@ -346,10 +363,13 @@ const client = createXRouteClient({
   assetAddressResolver,
 });
 
+const refundAddress = process.env.XROUTE_OWNER_ADDRESS;
+const recipientAccount = process.env.XROUTE_RECIPIENT_ACCOUNT;
+
 const { intent, quote } = await client.quote({
   sourceChain: "polkadot-hub",
   destinationChain: "hydration",
-  refundAddress: process.env.XROUTE_OWNER_ADDRESS,
+  refundAddress,
   deadline: Math.floor(Date.now() / 1000) + 1800,
   action: {
     type: "swap",
@@ -359,7 +379,7 @@ const { intent, quote } = await client.quote({
       amountIn: "1000000000000",
       minAmountOut: "493000000",
       settlementChain: "polkadot-hub",
-      recipient: process.env.XROUTE_OWNER_ADDRESS,
+      recipient: recipientAccount,
     },
   },
 });
@@ -444,11 +464,14 @@ Important runtime notes:
 
 - import router adapters from `@xroute/sdk/router-adapters`
 - import status indexing helpers from `@xroute/sdk/status-indexer`
-- the cast-backed router adapter expects EVM hex addresses, not SS58 addresses
+- `refundAddress` and router `owner` are EVM hex addresses on the source Hub chain
+- `recipient` is the beneficiary account on the destination or settlement chain and is typically SS58
 - `createRouteEngineQuoteProvider(...)` is a local/dev operator helper because it shells into the Rust route engine
 - `createHttpQuoteProvider(...)` is the production-facing SDK quote path
 - the intended network surface for integrators is `testnet` or `mainnet`
 - swap quotes may include `estimatedSettlementFee` when the final delivery happens off the execution chain
+- live Hydration swaps are encoded as runtime `ExchangeAsset` XCM, not destination EVM adapter calls
+- live `stake` and generic `call` are intentionally not exposed yet because they do not have a real Hydration runtime target
 - the file-backed indexer is persistent, but it is still an offchain projection
 
 ## Trust Model

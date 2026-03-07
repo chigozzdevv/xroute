@@ -20,13 +20,13 @@ const quoteProvider = createRouteEngineQuoteProvider({
   cwd: workspaceRoot,
 });
 const aliceAddress = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
-const bobAddress = "5FHneW46xGXgs5mUiveU4sbTyGBzmto4mKc9UEQx7JjvqSg";
+const refundAddress = "0x2222222222222222222222222222222222222222";
 
 test("buildExecutionEnvelope encodes a transfer reserve XCM payload", async () => {
   const intent = createTransferIntent({
     sourceChain: "polkadot-hub",
     destinationChain: "hydration",
-    refundAddress: bobAddress,
+    refundAddress,
     deadline: 1_773_185_200,
     params: {
       asset: "DOT",
@@ -48,11 +48,11 @@ test("buildExecutionEnvelope encodes a transfer reserve XCM payload", async () =
   assert.equal(decoded.value[1].value.xcm[1].type, "DepositAsset");
 });
 
-test("buildExecutionEnvelope encodes the hydration swap adapter path", async () => {
+test("buildExecutionEnvelope encodes the hydration runtime swap path", async () => {
   const intent = createSwapIntent({
     sourceChain: "polkadot-hub",
     destinationChain: "hydration",
-    refundAddress: bobAddress,
+    refundAddress,
     deadline: 1_773_185_200,
     params: {
       assetIn: "DOT",
@@ -73,26 +73,20 @@ test("buildExecutionEnvelope encodes the hydration swap adapter path", async () 
   assert.equal(envelope.mode, "execute");
   assert.equal(decoded.type, "V5");
   assert.equal(outerTransfer.type, "TransferReserveAsset");
-  assert.equal(outerTransfer.value.xcm[0].type, "BuyExecution");
   assert.equal(remoteInstructions[0].type, "BuyExecution");
-  assert.equal(remoteInstructions[1].type, "Transact");
-  assert.equal(remoteInstructions.length, 2);
-  assert.equal(remoteInstructions[1].value.origin_kind.type, "SovereignAccount");
-  assert.equal(remoteInstructions[1].value.fallback_max_weight.ref_time, 3500000000n);
-  assert.equal(remoteInstructions[1].value.fallback_max_weight.proof_size, 120000n);
-  assert.ok(toHex(remoteInstructions[1].value.call).startsWith("0x00986153"));
-  assert.ok(
-    toHex(remoteInstructions[1].value.call).includes(
-      expectedAddressWord("hydration-swap-v1", "local"),
-    ),
-  );
+  assert.equal(remoteInstructions[1].type, "ExchangeAsset");
+  assert.equal(remoteInstructions[1].value.maximal, true);
+  assert.equal(remoteInstructions[1].value.give.type, "Definite");
+  assert.equal(remoteInstructions[1].value.want[0].fun.type, "Fungible");
+  assert.equal(remoteInstructions[2].type, "DepositAsset");
+  assert.equal(remoteInstructions.length, 3);
 });
 
 test("buildExecutionEnvelope encodes the hydration stake adapter path", async () => {
   const intent = createStakeIntent({
     sourceChain: "polkadot-hub",
     destinationChain: "hydration",
-    refundAddress: bobAddress,
+    refundAddress,
     deadline: 1_773_185_200,
     params: {
       asset: "DOT",
@@ -121,7 +115,7 @@ test("buildExecutionEnvelope encodes the hydration generic call adapter path", a
   const intent = createCallIntent({
     sourceChain: "polkadot-hub",
     destinationChain: "hydration",
-    refundAddress: bobAddress,
+    refundAddress,
     deadline: 1_773_185_200,
     params: {
       asset: "DOT",
@@ -147,18 +141,16 @@ test("buildExecutionEnvelope encodes the hydration generic call adapter path", a
 });
 
 test("buildExecutionEnvelope rejects a transact payload with a mismatched published selector", async () => {
-  const intent = createSwapIntent({
+  const intent = createCallIntent({
     sourceChain: "polkadot-hub",
     destinationChain: "hydration",
-    refundAddress: bobAddress,
+    refundAddress,
     deadline: 1_773_185_200,
     params: {
-      assetIn: "DOT",
-      assetOut: "USDT",
-      amountIn: "1000000000000",
-      minAmountOut: "490000000",
-      settlementChain: "hydration",
-      recipient: aliceAddress,
+      asset: "DOT",
+      amount: "50000000000",
+      target: "0x1111111111111111111111111111111111111111",
+      calldata: "0xdeadbeef",
     },
   });
   const quote = await quoteProvider.quote(intent);
@@ -194,7 +186,7 @@ test("buildExecutionEnvelope rejects a transact payload with a mismatched publis
 
   assert.throws(
     () => buildExecutionEnvelope({ intent, quote: badQuote }),
-    /must start with published selector 0x670b1f29/,
+    /must start with published selector 0x7db7dbf6/,
   );
 });
 
@@ -202,7 +194,7 @@ test("buildExecutionEnvelope encodes a hydration swap that settles on polkadot h
   const intent = createSwapIntent({
     sourceChain: "polkadot-hub",
     destinationChain: "hydration",
-    refundAddress: bobAddress,
+    refundAddress,
     deadline: 1_773_185_200,
     params: {
       assetIn: "DOT",
@@ -219,21 +211,19 @@ test("buildExecutionEnvelope encodes a hydration swap that settles on polkadot h
   const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
   const remoteInstructions = hydrationRemoteInstructions(decoded);
 
-  assert.equal(remoteInstructions.length, 2);
-  assert.equal(remoteInstructions[1].type, "Transact");
-  assert.ok(toHex(remoteInstructions[1].value.call).startsWith("0x00986153"));
-  assert.ok(
-    toHex(remoteInstructions[1].value.call).includes(
-      "00000000000000000000000000000000000000000000000000000000000003e8",
-    ),
-  );
+  assert.equal(remoteInstructions.length, 3);
+  assert.equal(remoteInstructions[1].type, "ExchangeAsset");
+  assert.equal(remoteInstructions[2].type, "InitiateReserveWithdraw");
+  assert.equal(remoteInstructions[2].value.reserve.interior.type, "X1");
+  assert.equal(remoteInstructions[2].value.xcm[0].type, "BuyExecution");
+  assert.equal(remoteInstructions[2].value.xcm[1].type, "DepositAsset");
 });
 
 test("buildExecutionEnvelope rejects a transact payload with a mismatched published target address", async () => {
   const intent = createStakeIntent({
     sourceChain: "polkadot-hub",
     destinationChain: "hydration",
-    refundAddress: bobAddress,
+    refundAddress,
     deadline: 1_773_185_200,
     params: {
       asset: "DOT",

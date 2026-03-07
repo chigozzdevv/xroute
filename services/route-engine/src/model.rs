@@ -330,6 +330,23 @@ pub enum XcmInstruction {
         asset: AssetKey,
         amount: u128,
     },
+    ExchangeAsset {
+        asset_in: AssetKey,
+        amount_in: u128,
+        asset_out: AssetKey,
+        min_amount_out: u128,
+        maximal: bool,
+    },
+    DepositReserveAsset {
+        asset_count: u32,
+        destination: ChainKey,
+        remote_instructions: Vec<XcmInstruction>,
+    },
+    InitiateReserveWithdraw {
+        asset_count: u32,
+        reserve: ChainKey,
+        remote_instructions: Vec<XcmInstruction>,
+    },
     Transact {
         adapter: DestinationAdapter,
         target_address: String,
@@ -339,6 +356,7 @@ pub enum XcmInstruction {
     DepositAsset {
         asset: AssetKey,
         recipient: String,
+        asset_count: u32,
     },
 }
 
