@@ -240,11 +240,16 @@ Example:
 ```bash
 XROUTE_ALLOW_LIVE_DEPLOY=true \
 XROUTE_DEPLOYMENT_PROFILE=testnet \
-XROUTE_RPC_URL=https://... \
+XROUTE_RPC_URL=https://services.polkadothub-rpc.com/testnet \
 XROUTE_PRIVATE_KEY=0x... \
 XROUTE_XCM_ADDRESS=0x... \
 node scripts/deploy-stack.mjs
 ```
+
+Official public RPC endpoints:
+
+- `testnet`: `https://services.polkadothub-rpc.com/testnet`
+- `mainnet`: `https://services.polkadothub-rpc.com/mainnet`
 
 Required variables:
 
@@ -261,6 +266,10 @@ Optional:
 - `XROUTE_STACK_OUTPUT_PATH`
 
 If `XROUTE_ROUTER_EXECUTOR` or `XROUTE_ROUTER_TREASURY` are omitted, they default to the deployer address derived from `XROUTE_PRIVATE_KEY`.
+
+For a first `testnet` deployment, fund the deployer with testnet tokens from the official faucet:
+
+- [Polkadot smart contracts faucet](https://docs.polkadot.com/smart-contracts/faucet)
 
 Deployment artifacts are written under:
 
