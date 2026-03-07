@@ -67,6 +67,34 @@ impl Default for RouteRegistry {
                     transport_fee: AssetAmount::new(AssetKey::Hdx, 50_000_000_000),
                     buy_execution_fee: AssetAmount::new(AssetKey::Hdx, 20_000_000_000),
                 },
+                TransferEdge {
+                    source: ChainKey::PolkadotHub,
+                    destination: ChainKey::Moonbeam,
+                    asset: AssetKey::Dot,
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 180_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 110_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Moonbeam,
+                    destination: ChainKey::PolkadotHub,
+                    asset: AssetKey::Dot,
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 180_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 110_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::PolkadotHub,
+                    destination: ChainKey::Bifrost,
+                    asset: AssetKey::Dot,
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 170_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 100_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Bifrost,
+                    destination: ChainKey::PolkadotHub,
+                    asset: AssetKey::Dot,
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 170_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 100_000_000),
+                },
             ],
             swap_routes: vec![
                 SwapRoute {

@@ -1,4 +1,9 @@
-import { ACTION_TYPES, assertIncluded, assertNonEmptyString } from "../xroute-types/index.mjs";
+import {
+  ACTION_TYPES,
+  EXECUTION_TYPES,
+  assertIncluded,
+  assertNonEmptyString,
+} from "../xroute-types/index.mjs";
 
 export const CHAINS = Object.freeze({
   "polkadot-hub": Object.freeze({
@@ -8,6 +13,7 @@ export const CHAINS = Object.freeze({
     supportedActions: Object.freeze([
       ACTION_TYPES.TRANSFER,
       ACTION_TYPES.SWAP,
+      ACTION_TYPES.EXECUTE,
     ]),
   }),
   hydration: Object.freeze({
@@ -17,6 +23,24 @@ export const CHAINS = Object.freeze({
     supportedActions: Object.freeze([
       ACTION_TYPES.TRANSFER,
       ACTION_TYPES.SWAP,
+      ACTION_TYPES.EXECUTE,
+    ]),
+  }),
+  moonbeam: Object.freeze({
+    key: "moonbeam",
+    label: "Moonbeam",
+    parachainId: 2004,
+    supportedActions: Object.freeze([
+      ACTION_TYPES.TRANSFER,
+      ACTION_TYPES.EXECUTE,
+    ]),
+  }),
+  bifrost: Object.freeze({
+    key: "bifrost",
+    label: "Bifrost",
+    parachainId: 2030,
+    supportedActions: Object.freeze([
+      ACTION_TYPES.TRANSFER,
       ACTION_TYPES.EXECUTE,
     ]),
   }),
@@ -30,13 +54,26 @@ export const ASSETS = Object.freeze({
   DOT: Object.freeze({
     symbol: "DOT",
     decimals: 10,
-    supportedChains: Object.freeze(["polkadot-hub", "hydration"]),
+    supportedChains: Object.freeze([
+      "polkadot-hub",
+      "hydration",
+      "moonbeam",
+      "bifrost",
+    ]),
     xcmLocations: Object.freeze({
       "polkadot-hub": Object.freeze({
         parents: 1,
         interior: Object.freeze({ type: "here" }),
       }),
       hydration: Object.freeze({
+        parents: 1,
+        interior: Object.freeze({ type: "here" }),
+      }),
+      moonbeam: Object.freeze({
+        parents: 1,
+        interior: Object.freeze({ type: "here" }),
+      }),
+      bifrost: Object.freeze({
         parents: 1,
         interior: Object.freeze({ type: "here" }),
       }),
@@ -99,7 +136,7 @@ export const ASSETS = Object.freeze({
   }),
 });
 
-const USER_ROUTES = Object.freeze([
+const DIRECT_ROUTES = Object.freeze([
   Object.freeze({
     sourceChain: "polkadot-hub",
     destinationChain: "hydration",
@@ -123,6 +160,7 @@ const USER_ROUTES = Object.freeze([
       }),
     ]),
     executeAssets: Object.freeze(["DOT"]),
+    executeTypes: Object.freeze([EXECUTION_TYPES.RUNTIME_CALL]),
   }),
   Object.freeze({
     sourceChain: "hydration",
@@ -132,6 +170,47 @@ const USER_ROUTES = Object.freeze([
     transferableAssets: Object.freeze(["DOT", "USDT", "HDX"]),
     swapPairs: Object.freeze([]),
     executeAssets: Object.freeze([]),
+    executeTypes: Object.freeze([]),
+  }),
+  Object.freeze({
+    sourceChain: "polkadot-hub",
+    destinationChain: "moonbeam",
+    path: Object.freeze(["polkadot-hub", "moonbeam"]),
+    actions: Object.freeze([ACTION_TYPES.TRANSFER, ACTION_TYPES.EXECUTE]),
+    transferableAssets: Object.freeze(["DOT"]),
+    swapPairs: Object.freeze([]),
+    executeAssets: Object.freeze(["DOT"]),
+    executeTypes: Object.freeze([EXECUTION_TYPES.RUNTIME_CALL]),
+  }),
+  Object.freeze({
+    sourceChain: "moonbeam",
+    destinationChain: "polkadot-hub",
+    path: Object.freeze(["moonbeam", "polkadot-hub"]),
+    actions: Object.freeze([ACTION_TYPES.TRANSFER]),
+    transferableAssets: Object.freeze(["DOT"]),
+    swapPairs: Object.freeze([]),
+    executeAssets: Object.freeze([]),
+    executeTypes: Object.freeze([]),
+  }),
+  Object.freeze({
+    sourceChain: "polkadot-hub",
+    destinationChain: "bifrost",
+    path: Object.freeze(["polkadot-hub", "bifrost"]),
+    actions: Object.freeze([ACTION_TYPES.TRANSFER, ACTION_TYPES.EXECUTE]),
+    transferableAssets: Object.freeze(["DOT"]),
+    swapPairs: Object.freeze([]),
+    executeAssets: Object.freeze(["DOT"]),
+    executeTypes: Object.freeze([EXECUTION_TYPES.RUNTIME_CALL]),
+  }),
+  Object.freeze({
+    sourceChain: "bifrost",
+    destinationChain: "polkadot-hub",
+    path: Object.freeze(["bifrost", "polkadot-hub"]),
+    actions: Object.freeze([ACTION_TYPES.TRANSFER]),
+    transferableAssets: Object.freeze(["DOT"]),
+    swapPairs: Object.freeze([]),
+    executeAssets: Object.freeze([]),
+    executeTypes: Object.freeze([]),
   }),
 ]);
 
@@ -173,14 +252,14 @@ export function getAssetLocation(assetKey, chainKey) {
 }
 
 export function listRoutes() {
-  return USER_ROUTES.slice();
+  return DIRECT_ROUTES.slice();
 }
 
 export function getRoute(sourceChain, destinationChain) {
   const normalizedSource = getChain(sourceChain).key;
   const normalizedDestination = getChain(destinationChain).key;
 
-  const route = USER_ROUTES.find(
+  const route = DIRECT_ROUTES.find(
     (candidate) =>
       candidate.sourceChain === normalizedSource &&
       candidate.destinationChain === normalizedDestination,
@@ -234,10 +313,16 @@ export function assertSwapRoute(
   return route;
 }
 
-export function assertExecuteRoute(sourceChain, destinationChain, assetKey) {
+export function assertExecuteRoute(
+  sourceChain,
+  destinationChain,
+  assetKey,
+  executionType = EXECUTION_TYPES.RUNTIME_CALL,
+) {
   const asset = getAsset(assetKey);
   const route = getRoute(sourceChain, destinationChain);
   assertIncluded("action", ACTION_TYPES.EXECUTE, route.actions);
+  assertIncluded("executionType", executionType, route.executeTypes);
 
   if (!route.executeAssets.includes(asset.symbol)) {
     throw new Error(

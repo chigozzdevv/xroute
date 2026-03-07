@@ -233,6 +233,47 @@ fn quotes_asset_transfer_and_builds_delivery_plan() {
 }
 
 #[test]
+fn quotes_bifrost_transfer_and_builds_delivery_plan() {
+    let engine = RouteEngine::default();
+    let intent = Intent {
+        source_chain: ChainKey::PolkadotHub,
+        destination_chain: ChainKey::Bifrost,
+        action: IntentAction::Transfer(TransferIntent {
+            asset: AssetKey::Dot,
+            amount: AssetKey::Dot.units(25),
+            recipient: "5FbifrostRecipient".to_owned(),
+        }),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let quote = engine.quote(intent).expect("transfer quote should build");
+
+    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Bifrost]);
+    assert_eq!(quote.segments.len(), 1);
+    assert_eq!(quote.fees.xcm_fee.amount, 170_000_000);
+    assert_eq!(quote.fees.destination_fee.amount, 100_000_000);
+    assert_eq!(quote.submission.action, SubmissionAction::Transfer);
+
+    let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
+    assert_eq!(outer_transfer.destination(), ChainKey::Bifrost);
+    assert_eq!(
+        outer_transfer.remote_instructions(),
+        &vec![
+            XcmInstruction::BuyExecution {
+                asset: AssetKey::Dot,
+                amount: 100_000_000,
+            },
+            XcmInstruction::DepositAsset {
+                asset: AssetKey::Dot,
+                recipient: "5FbifrostRecipient".to_owned(),
+                asset_count: 1,
+            },
+        ]
+    );
+}
+
+#[test]
 fn quotes_hydration_swap_on_testnet_without_adapter_deployments() {
     let engine = RouteEngine::new(
         RouteRegistry::default(),
@@ -326,6 +367,63 @@ fn quotes_execute_runtime_call_on_hydration() {
                 proof_size: 4_096,
             },
             call_data: "0x01020304".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn quotes_execute_runtime_call_on_moonbeam() {
+    let engine = RouteEngine::default();
+    let intent = Intent {
+        source_chain: ChainKey::PolkadotHub,
+        destination_chain: ChainKey::Moonbeam,
+        action: IntentAction::Execute(ExecuteIntent {
+            execution_type: ExecutionType::RuntimeCall,
+            asset: AssetKey::Dot,
+            max_payment_amount: 110_000_000,
+            call_data: "0x05060708".to_owned(),
+            origin_kind: RuntimeCallOriginKind::SovereignAccount,
+            fallback_weight: XcmWeight {
+                ref_time: 500_000_000,
+                proof_size: 8_192,
+            },
+        }),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let quote = engine.quote(intent).expect("execute quote should build");
+
+    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Moonbeam]);
+    assert_eq!(quote.submission.action, SubmissionAction::Execute);
+    assert_eq!(quote.submission.amount, 110_000_000);
+    assert_eq!(
+        quote.execution_plan.steps[0],
+        PlanStep::LockAsset {
+            chain: ChainKey::PolkadotHub,
+            asset: AssetKey::Dot,
+            amount: 290_110_000,
+        }
+    );
+
+    let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
+    assert_eq!(outer_transfer.destination(), ChainKey::Moonbeam);
+    assert_eq!(
+        outer_transfer.remote_instructions()[0],
+        XcmInstruction::BuyExecution {
+            asset: AssetKey::Dot,
+            amount: 110_000_000,
+        }
+    );
+    assert_eq!(
+        outer_transfer.remote_instructions()[1],
+        XcmInstruction::Transact {
+            origin_kind: RuntimeCallOriginKind::SovereignAccount,
+            fallback_weight: XcmWeight {
+                ref_time: 500_000_000,
+                proof_size: 8_192,
+            },
+            call_data: "0x05060708".to_owned(),
         }
     );
 }

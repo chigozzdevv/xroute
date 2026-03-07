@@ -47,6 +47,31 @@ test("route engine quote provider bridges the rust planner", async () => {
   assert.equal(quote.fees.totalFee.amount, 490000000n);
 });
 
+test("route engine quote provider supports a hub to bifrost transfer", async () => {
+  const provider = createRouteEngineQuoteProvider({
+    cwd: workspaceRoot,
+  });
+  const intent = createTransferIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "bifrost",
+    refundAddress: walletAddress,
+    deadline: 1_773_185_200,
+    params: {
+      asset: "DOT",
+      amount: "250000000000",
+      recipient: recipientAddress,
+    },
+  });
+
+  const quote = normalizeQuote(await provider.quote(intent));
+
+  assert.deepEqual(quote.route, ["polkadot-hub", "bifrost"]);
+  assert.equal(quote.submission.action, "transfer");
+  assert.equal(quote.submission.asset, "DOT");
+  assert.equal(quote.fees.xcmFee.amount, 170000000n);
+  assert.equal(quote.fees.destinationFee.amount, 100000000n);
+});
+
 test("route engine quote provider builds an execute/runtime-call quote", async () => {
   const provider = createRouteEngineQuoteProvider({
     cwd: workspaceRoot,
@@ -79,6 +104,37 @@ test("route engine quote provider builds an execute/runtime-call quote", async (
   assert.equal(remoteInstructions[1].type, "transact");
   assert.equal(remoteInstructions[1].originKind, "sovereign-account");
   assert.equal(remoteInstructions[1].callData, "0x01020304");
+});
+
+test("route engine quote provider builds a moonbeam runtime-call quote", async () => {
+  const provider = createRouteEngineQuoteProvider({
+    cwd: workspaceRoot,
+  });
+  const intent = createExecuteIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "moonbeam",
+    refundAddress: walletAddress,
+    deadline: 1_773_185_200,
+    params: {
+      executionType: "runtime-call",
+      asset: "DOT",
+      maxPaymentAmount: "110000000",
+      callData: "0x05060708",
+      fallbackWeight: {
+        refTime: 500000000,
+        proofSize: 8192,
+      },
+    },
+  });
+
+  const quote = normalizeQuote(await provider.quote(intent));
+  const remoteInstructions = finalRemoteInstructions(quote);
+
+  assert.deepEqual(quote.route, ["polkadot-hub", "moonbeam"]);
+  assert.equal(quote.submission.action, "execute");
+  assert.equal(quote.submission.amount, 110000000n);
+  assert.equal(remoteInstructions[1].type, "transact");
+  assert.equal(remoteInstructions[1].callData, "0x05060708");
 });
 
 test("sdk execute derives the XCM envelope from the route-engine quote", async () => {

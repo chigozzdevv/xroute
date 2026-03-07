@@ -163,7 +163,12 @@ function normalizeExecute(sourceChain, destinationChain, params) {
 
 function normalizeRuntimeCall(sourceChain, destinationChain, params) {
   const asset = assertNonEmptyString("action.params.asset", params.asset).toUpperCase();
-  assertExecuteRoute(sourceChain, destinationChain, asset);
+  assertExecuteRoute(
+    sourceChain,
+    destinationChain,
+    asset,
+    EXECUTION_TYPES.RUNTIME_CALL,
+  );
 
   const originKind = params.originKind
     ? assertIncluded(

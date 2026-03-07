@@ -8,11 +8,12 @@ It gives developers a higher-level SDK for three live actions:
 - `swap`: execute a Hydration swap and optionally settle the output on another chain
 - `execute`: fund and dispatch a typed destination runtime call
 
-The current live route graph is narrow by design, but the routing model is real:
+The current live route graph uses a Hub-centered star topology:
 
-- `polkadot-hub -> hydration`
-- `hydration -> polkadot-hub`
-- `polkadot-hub -> hydration -> polkadot-hub`
+- `polkadot-hub <-> hydration`
+- `polkadot-hub <-> moonbeam`
+- `polkadot-hub <-> bifrost`
+- `polkadot-hub -> hydration -> polkadot-hub` for remote-settlement swaps
 
 This is not a generic router for arbitrary parachains. It is a production-shaped router for the routes and assets it explicitly models.
 
@@ -36,9 +37,13 @@ XRoute pushes that complexity into a small set of clean layers:
 Live runtime surface:
 
 - `transfer` between `polkadot-hub` and `hydration`
+- `transfer` between `polkadot-hub` and `moonbeam`
+- `transfer` between `polkadot-hub` and `bifrost`
 - `swap` on `hydration`
 - remote-settlement swaps back to `polkadot-hub`
 - `execute/runtime-call` from `polkadot-hub` to `hydration`
+- `execute/runtime-call` from `polkadot-hub` to `moonbeam`
+- `execute/runtime-call` from `polkadot-hub` to `bifrost`
 - onchain intent lifecycle persistence
 - offchain status projection for app-facing reads
 
@@ -153,8 +158,12 @@ XRoute is multihop for the routes it explicitly publishes.
 Examples:
 
 - direct transfer: `polkadot-hub -> hydration`
+- direct transfer: `polkadot-hub -> moonbeam`
+- direct transfer: `polkadot-hub -> bifrost`
 - direct swap: `polkadot-hub -> hydration`
 - direct execute/runtime-call: `polkadot-hub -> hydration`
+- direct execute/runtime-call: `polkadot-hub -> moonbeam`
+- direct execute/runtime-call: `polkadot-hub -> bifrost`
 - remote-settlement swap: `polkadot-hub -> hydration -> polkadot-hub`
 
 That means the route engine does not just hardcode one destination action. It models:
@@ -206,6 +215,7 @@ Directory roles:
 Compatibility note:
 
 - `asset-hub` is accepted as an input alias and canonicalized to `polkadot-hub`
+- the current public SDK entrypoint still assumes the source-side router lives on `polkadot-hub`
 
 ## Setup
 

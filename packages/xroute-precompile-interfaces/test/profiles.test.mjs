@@ -16,7 +16,7 @@ test("deployment profiles stay limited to testnet and mainnet", () => {
   assert.throws(() => normalizeDeploymentProfile("staging"));
 });
 
-test("contract enums stay stable for the live transfer and swap surface", () => {
+test("contract enums stay stable for the live action surface", () => {
   assert.deepEqual(ACTION_TO_CONTRACT_ENUM, {
     transfer: 0,
     swap: 1,

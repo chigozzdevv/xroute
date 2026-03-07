@@ -138,6 +138,8 @@ fn parse_chain(value: &str) -> Result<ChainKey, String> {
     match value {
         "polkadot-hub" | "asset-hub" => Ok(ChainKey::PolkadotHub),
         "hydration" => Ok(ChainKey::Hydration),
+        "moonbeam" => Ok(ChainKey::Moonbeam),
+        "bifrost" => Ok(ChainKey::Bifrost),
         other => Err(format!("unsupported chain: {other}")),
     }
 }

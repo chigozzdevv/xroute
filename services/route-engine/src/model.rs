@@ -4,6 +4,8 @@ use std::fmt::{Display, Formatter};
 pub enum ChainKey {
     PolkadotHub,
     Hydration,
+    Moonbeam,
+    Bifrost,
 }
 
 impl ChainKey {
@@ -11,6 +13,8 @@ impl ChainKey {
         match self {
             Self::PolkadotHub => "polkadot-hub",
             Self::Hydration => "hydration",
+            Self::Moonbeam => "moonbeam",
+            Self::Bifrost => "bifrost",
         }
     }
 }

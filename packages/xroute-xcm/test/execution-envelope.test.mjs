@@ -135,6 +135,36 @@ test("buildExecutionEnvelope encodes a runtime call via Transact", async () => {
   assert.equal(remoteInstructions[1].value.origin_kind.type, "SovereignAccount");
 });
 
+test("buildExecutionEnvelope encodes a moonbeam runtime call via Transact", async () => {
+  const intent = createExecuteIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "moonbeam",
+    refundAddress,
+    deadline: 1_773_185_200,
+    params: {
+      executionType: "runtime-call",
+      asset: "DOT",
+      maxPaymentAmount: "110000000",
+      callData: "0x05060708",
+      fallbackWeight: {
+        refTime: 500000000,
+        proofSize: 8192,
+      },
+    },
+  });
+  const quote = await testnetQuoteProvider.quote(intent);
+
+  const envelope = buildExecutionEnvelope({ intent, quote });
+  const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
+  const outerTransfer = decoded.value[1];
+  const remoteInstructions = outerTransfer.value.xcm;
+
+  assert.equal(outerTransfer.type, "TransferReserveAsset");
+  assert.equal(remoteInstructions[0].type, "BuyExecution");
+  assert.equal(remoteInstructions[1].type, "Transact");
+  assert.equal(remoteInstructions[1].value.call.asHex(), "0x05060708");
+});
+
 function hydrationRemoteInstructions(decoded) {
   const outerTransfer = decoded.value[1];
   const nestedTransfer = outerTransfer.value.xcm.find(
