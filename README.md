@@ -32,19 +32,18 @@ The design goal is simple:
 
 Current supported vertical slices:
 
-- `polkadot-hub -> asset-hub` native `transfer`
-- `asset-hub -> hydration` native `transfer`
-- `polkadot-hub -> asset-hub -> hydration` native `transfer`
-- `polkadot-hub -> asset-hub -> hydration` `swap`
-- `asset-hub -> hydration` `swap`
-- `polkadot-hub -> asset-hub -> hydration` `stake`
-- `polkadot-hub -> asset-hub -> hydration` generic `call`
+- `polkadot-hub -> hydration` native `transfer`
+- `hydration -> polkadot-hub` native `transfer`
+- `polkadot-hub -> hydration` `swap`
+- `polkadot-hub -> hydration` `stake`
+- `polkadot-hub -> hydration` generic `call`
+- `polkadot-hub -> hydration -> polkadot-hub` remote-settlement `swap`
 
 Current swap capabilities:
 
 - `DOT -> USDT` on Hydration
 - `DOT -> HDX` on Hydration
-- settlement on `hydration` or on `asset-hub`
+- settlement on `hydration` or on `polkadot-hub`
 
 Current implemented layers:
 
@@ -77,7 +76,7 @@ const { intent, quote } = await client.quote({
       assetOut: "USDT",
       amountIn: "1000000000000",
       minAmountOut: "493000000",
-      settlementChain: "asset-hub",
+      settlementChain: "polkadot-hub",
       recipient: ownerAddress,
     },
   },
@@ -92,6 +91,7 @@ The Rust route engine:
 - searches the supported route graph
 - estimates `xcmFee`, `destinationFee`, and `platformFee`
 - estimates output-side settlement fees for remote-settlement swaps
+- emits explicit execution and settlement route segments with per-hop fee data
 - resolves the deployment profile
 - emits destination adapter target addresses and calldata
 - encodes destination settlement plans for adapter-backed swaps
@@ -130,7 +130,7 @@ Important distinction:
 Typical remote-settlement swap flow:
 
 1. User creates a `swap` intent on `polkadot-hub`.
-2. The route engine resolves the execution path `polkadot-hub -> asset-hub -> hydration`.
+2. The route engine resolves the execution path `polkadot-hub -> hydration`.
 3. If the output should land on another chain, the route engine also resolves the settlement path from the execution chain to the settlement chain.
 4. The swap executor payload is built with an explicit settlement plan instead of relying on the client to infer delivery behavior.
 5. The SDK converts that plan into the committed router request and XCM envelope.
@@ -147,9 +147,9 @@ For adapter-backed actions:
 
 Example route shapes:
 
-- `polkadot-hub -> asset-hub -> hydration`
-- `polkadot-hub -> asset-hub -> hydration -> asset-hub`
-- `asset-hub -> hydration -> asset-hub`
+- `polkadot-hub -> hydration`
+- `hydration -> polkadot-hub`
+- `polkadot-hub -> hydration -> polkadot-hub`
 
 ## Project Structure
 
@@ -190,6 +190,11 @@ What each directory is for:
   - shared constants and assertions
 - `testing/devnet`
   - internal end-to-end verification only
+
+Compatibility note:
+
+- `asset-hub` is accepted as an input alias and canonicalized to `polkadot-hub`
+- the public route graph and quote output use `polkadot-hub`
 
 ## Setup
 
@@ -353,7 +358,7 @@ const { intent, quote } = await client.quote({
       assetOut: "USDT",
       amountIn: "1000000000000",
       minAmountOut: "493000000",
-      settlementChain: "asset-hub",
+      settlementChain: "polkadot-hub",
       recipient: process.env.XROUTE_OWNER_ADDRESS,
     },
   },

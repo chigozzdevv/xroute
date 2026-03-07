@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use route_engine::{
     AssetAmount, AssetKey, CallIntent, ChainKey, DeploymentProfile, DestinationAdapter,
     EngineSettings, ExecutionPlan, FeeBreakdown, FeeType, Intent, IntentAction, PlanStep, Quote,
-    RouteEngine, RouteRegistry, StakeIntent, SubmissionAction, SwapIntent, TransferIntent,
-    XcmInstruction, XcmWeight,
+    RouteHop, RouteEngine, RouteRegistry, RouteSegment, RouteSegmentKind, StakeIntent,
+    SubmissionAction, SwapIntent, TransferIntent, XcmInstruction, XcmWeight,
 };
 
 pub fn run() -> Result<(), String> {
@@ -125,9 +125,8 @@ fn required<'a>(options: &'a HashMap<String, String>, key: &str) -> Result<&'a s
 
 fn parse_chain(value: &str) -> Result<ChainKey, String> {
     match value {
-        "polkadot-hub" => Ok(ChainKey::PolkadotHub),
+        "polkadot-hub" | "asset-hub" => Ok(ChainKey::PolkadotHub),
         "hydration" => Ok(ChainKey::Hydration),
-        "asset-hub" => Ok(ChainKey::AssetHub),
         other => Err(format!("unsupported chain: {other}")),
     }
 }
@@ -164,10 +163,16 @@ fn parse_u128(value: &str, name: &str) -> Result<u128, String> {
 
 fn quote_to_json(quote: &Quote) -> String {
     format!(
-        "{{\"quoteId\":{},\"deploymentProfile\":{},\"route\":{},\"fees\":{},\"estimatedSettlementFee\":{},\"expectedOutput\":{},\"minOutput\":{},\"submission\":{},\"executionPlan\":{}}}",
+        "{{\"quoteId\":{},\"deploymentProfile\":{},\"route\":{},\"segments\":[{}],\"fees\":{},\"estimatedSettlementFee\":{},\"expectedOutput\":{},\"minOutput\":{},\"submission\":{},\"executionPlan\":{}}}",
         json_string(&quote.quote_id),
         json_string(quote.deployment_profile.as_str()),
         chain_array_json(&quote.route),
+        quote
+            .segments
+            .iter()
+            .map(route_segment_json)
+            .collect::<Vec<_>>()
+            .join(","),
         fee_breakdown_json(&quote.fees),
         option_asset_amount_json(quote.estimated_settlement_fee.as_ref()),
         asset_amount_json(&quote.expected_output),
@@ -208,6 +213,33 @@ fn execution_plan_json(plan: &ExecutionPlan) -> String {
             .map(plan_step_json)
             .collect::<Vec<_>>()
             .join(","),
+    )
+}
+
+fn route_segment_json(segment: &RouteSegment) -> String {
+    format!(
+        "{{\"kind\":{},\"route\":{},\"hops\":[{}],\"xcmFee\":{},\"destinationFee\":{}}}",
+        json_string(route_segment_kind_label(segment.kind)),
+        chain_array_json(&segment.route),
+        segment
+            .hops
+            .iter()
+            .map(route_hop_json)
+            .collect::<Vec<_>>()
+            .join(","),
+        asset_amount_json(&segment.xcm_fee),
+        asset_amount_json(&segment.destination_fee),
+    )
+}
+
+fn route_hop_json(hop: &RouteHop) -> String {
+    format!(
+        "{{\"source\":{},\"destination\":{},\"asset\":{},\"transportFee\":{},\"buyExecutionFee\":{}}}",
+        json_string(hop.source.as_str()),
+        json_string(hop.destination.as_str()),
+        json_string(hop.asset.symbol()),
+        asset_amount_json(&hop.transport_fee),
+        asset_amount_json(&hop.buy_execution_fee),
     )
 }
 
@@ -373,6 +405,13 @@ fn fee_type_label(fee_type: FeeType) -> &'static str {
 
 fn destination_adapter_label(adapter: DestinationAdapter) -> &'static str {
     adapter.as_str()
+}
+
+fn route_segment_kind_label(kind: RouteSegmentKind) -> &'static str {
+    match kind {
+        RouteSegmentKind::Execution => "execution",
+        RouteSegmentKind::Settlement => "settlement",
+    }
 }
 
 fn usage() -> String {

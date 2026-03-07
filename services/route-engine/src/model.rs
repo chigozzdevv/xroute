@@ -4,7 +4,6 @@ use std::fmt::{Display, Formatter};
 pub enum ChainKey {
     PolkadotHub,
     Hydration,
-    AssetHub,
 }
 
 impl ChainKey {
@@ -12,7 +11,6 @@ impl ChainKey {
         match self {
             Self::PolkadotHub => "polkadot-hub",
             Self::Hydration => "hydration",
-            Self::AssetHub => "asset-hub",
         }
     }
 }
@@ -72,8 +70,8 @@ impl AssetKey {
 
     pub const fn reserve_chain(self) -> ChainKey {
         match self {
-            Self::Dot => ChainKey::AssetHub,
-            Self::Usdt => ChainKey::AssetHub,
+            Self::Dot => ChainKey::PolkadotHub,
+            Self::Usdt => ChainKey::PolkadotHub,
             Self::Hdx => ChainKey::Hydration,
         }
     }
@@ -217,6 +215,7 @@ pub struct Quote {
     pub quote_id: String,
     pub deployment_profile: DeploymentProfile,
     pub route: Vec<ChainKey>,
+    pub segments: Vec<RouteSegment>,
     pub fees: FeeBreakdown,
     pub estimated_settlement_fee: Option<AssetAmount>,
     pub expected_output: AssetAmount,
@@ -255,6 +254,30 @@ pub struct FeeBreakdown {
 pub struct ExecutionPlan {
     pub route: Vec<ChainKey>,
     pub steps: Vec<PlanStep>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RouteSegment {
+    pub kind: RouteSegmentKind,
+    pub route: Vec<ChainKey>,
+    pub hops: Vec<RouteHop>,
+    pub xcm_fee: AssetAmount,
+    pub destination_fee: AssetAmount,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteSegmentKind {
+    Execution,
+    Settlement,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RouteHop {
+    pub source: ChainKey,
+    pub destination: ChainKey,
+    pub asset: AssetKey,
+    pub transport_fee: AssetAmount,
+    pub buy_execution_fee: AssetAmount,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

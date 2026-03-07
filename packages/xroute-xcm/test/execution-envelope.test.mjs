@@ -25,7 +25,7 @@ const bobAddress = "5FHneW46xGXgs5mUiveU4sbTyGBzmto4mKc9UEQx7JjvqSg";
 test("buildExecutionEnvelope encodes a transfer reserve XCM payload", async () => {
   const intent = createTransferIntent({
     sourceChain: "polkadot-hub",
-    destinationChain: "asset-hub",
+    destinationChain: "hydration",
     refundAddress: bobAddress,
     deadline: 1_773_185_200,
     params: {
@@ -68,14 +68,12 @@ test("buildExecutionEnvelope encodes the hydration swap adapter path", async () 
   const envelope = buildExecutionEnvelope({ intent, quote });
   const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
   const outerTransfer = decoded.value[1];
-  const innerTransfer = outerTransfer.value.xcm[1];
-  const remoteInstructions = innerTransfer.value.xcm;
+  const remoteInstructions = outerTransfer.value.xcm;
 
   assert.equal(envelope.mode, "execute");
   assert.equal(decoded.type, "V5");
   assert.equal(outerTransfer.type, "TransferReserveAsset");
   assert.equal(outerTransfer.value.xcm[0].type, "BuyExecution");
-  assert.equal(innerTransfer.type, "TransferReserveAsset");
   assert.equal(remoteInstructions[0].type, "BuyExecution");
   assert.equal(remoteInstructions[1].type, "Transact");
   assert.equal(remoteInstructions.length, 2);
@@ -184,15 +182,7 @@ test("buildExecutionEnvelope rejects a transact payload with a mismatched publis
                             ? remoteInstruction
                             : {
                                 ...remoteInstruction,
-                                remoteInstructions: remoteInstruction.remoteInstructions.map(
-                                  (finalInstruction, finalIndex) =>
-                                    finalIndex !== 1
-                                      ? finalInstruction
-                                      : {
-                                          ...finalInstruction,
-                                          contractCall: "0xdeadbeef",
-                                        },
-                                ),
+                                contractCall: "0xdeadbeef",
                               },
                       ),
                     },
@@ -208,7 +198,7 @@ test("buildExecutionEnvelope rejects a transact payload with a mismatched publis
   );
 });
 
-test("buildExecutionEnvelope encodes a hydration swap that settles on asset hub", async () => {
+test("buildExecutionEnvelope encodes a hydration swap that settles on polkadot hub", async () => {
   const intent = createSwapIntent({
     sourceChain: "polkadot-hub",
     destinationChain: "hydration",
@@ -219,7 +209,7 @@ test("buildExecutionEnvelope encodes a hydration swap that settles on asset hub"
       assetOut: "USDT",
       amountIn: "1000000000000",
       minAmountOut: "493000000",
-      settlementChain: "asset-hub",
+      settlementChain: "polkadot-hub",
       recipient: aliceAddress,
     },
   });
@@ -273,16 +263,8 @@ test("buildExecutionEnvelope rejects a transact payload with a mismatched publis
                             ? remoteInstruction
                             : {
                                 ...remoteInstruction,
-                                remoteInstructions: remoteInstruction.remoteInstructions.map(
-                                  (finalInstruction, finalIndex) =>
-                                    finalIndex !== 1
-                                      ? finalInstruction
-                                      : {
-                                          ...finalInstruction,
-                                          targetAddress:
-                                            "0x0000000000000000000000000000000000001999",
-                                        },
-                                ),
+                                targetAddress:
+                                  "0x0000000000000000000000000000000000001999",
                               },
                       ),
                     },
@@ -313,7 +295,12 @@ function toHex(value) {
 }
 
 function hydrationRemoteInstructions(decoded) {
-  return decoded.value[1].value.xcm[1].value.xcm;
+  const outerTransfer = decoded.value[1];
+  const nestedTransfer = outerTransfer.value.xcm.find(
+    (instruction) => instruction.type === "TransferReserveAsset",
+  );
+
+  return nestedTransfer ? nestedTransfer.value.xcm : outerTransfer.value.xcm;
 }
 
 function expectedAddressWord(adapterId, deploymentProfile) {

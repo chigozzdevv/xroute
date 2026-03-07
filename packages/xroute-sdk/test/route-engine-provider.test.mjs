@@ -28,7 +28,7 @@ test("route engine quote provider bridges the rust planner", async () => {
   });
   const intent = createTransferIntent({
     sourceChain: "polkadot-hub",
-    destinationChain: "asset-hub",
+    destinationChain: "hydration",
     refundAddress: "5Frefund",
     deadline: 1_773_185_200,
     params: {
@@ -42,10 +42,11 @@ test("route engine quote provider bridges the rust planner", async () => {
 
   assert.equal(quote.quoteId, intent.quoteId);
   assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.LOCAL);
-  assert.deepEqual(quote.route, ["polkadot-hub", "asset-hub"]);
+  assert.deepEqual(quote.route, ["polkadot-hub", "hydration"]);
+  assert.equal(quote.segments.length, 1);
   assert.equal(quote.submission.action, "transfer");
   assert.equal(quote.submission.amount, 250000000000n);
-  assert.equal(quote.fees.totalFee.amount, 370000000n);
+  assert.equal(quote.fees.totalFee.amount, 490000000n);
 });
 
 test("sdk execute derives the XCM envelope from the route-engine quote", async () => {
@@ -135,7 +136,8 @@ test("route engine quote provider returns adapter-backed remote calls", async ()
   const remoteInstructions = finalRemoteInstructions(quote);
 
   assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.LOCAL);
-  assert.deepEqual(quote.route, ["polkadot-hub", "asset-hub", "hydration"]);
+  assert.deepEqual(quote.route, ["polkadot-hub", "hydration"]);
+  assert.equal(quote.segments.length, 1);
   assert.equal(quote.estimatedSettlementFee, null);
   assert.equal(quote.submission.action, "call");
   assert.equal(remoteInstructions[0].type, "buy-execution");
@@ -172,7 +174,7 @@ test("route engine quote provider rejects non-local profiles without published d
   );
 });
 
-test("route engine quote provider quotes a hydration swap that settles on asset hub", async () => {
+test("route engine quote provider quotes a hydration swap that settles on polkadot hub", async () => {
   const provider = createRouteEngineQuoteProvider({
     cwd: workspaceRoot,
   });
@@ -186,7 +188,7 @@ test("route engine quote provider quotes a hydration swap that settles on asset 
       assetOut: "USDT",
       amountIn: "1000000000000",
       minAmountOut: "493000000",
-      settlementChain: "asset-hub",
+      settlementChain: "polkadot-hub",
       recipient: aliceAddress,
     },
   });
@@ -194,12 +196,9 @@ test("route engine quote provider quotes a hydration swap that settles on asset 
   const quote = normalizeQuote(await provider.quote(intent));
   const remoteInstructions = finalRemoteInstructions(quote);
 
-  assert.deepEqual(quote.route, [
-    "polkadot-hub",
-    "asset-hub",
-    "hydration",
-    "asset-hub",
-  ]);
+  assert.deepEqual(quote.route, ["polkadot-hub", "hydration", "polkadot-hub"]);
+  assert.equal(quote.segments.length, 2);
+  assert.deepEqual(quote.segments[1].route, ["hydration", "polkadot-hub"]);
   assert.deepEqual(quote.estimatedSettlementFee, {
     asset: "USDT",
     amount: 35000n,
@@ -213,7 +212,7 @@ test("route engine quote provider quotes a hydration swap that settles on asset 
 test("http quote provider forwards normalized intents and returns quotes", async () => {
   const intent = createTransferIntent({
     sourceChain: "polkadot-hub",
-    destinationChain: "asset-hub",
+    destinationChain: "hydration",
     refundAddress: "5Frefund",
     deadline: 1_773_185_200,
     params: {
@@ -235,12 +234,29 @@ test("http quote provider forwards normalized intents and returns quotes", async
         async json() {
           return {
             deploymentProfile: "local",
-            route: ["polkadot-hub", "asset-hub"],
+            route: ["polkadot-hub", "hydration"],
+            segments: [
+              {
+                kind: "execution",
+                route: ["polkadot-hub", "hydration"],
+                hops: [
+                  {
+                    source: "polkadot-hub",
+                    destination: "hydration",
+                    asset: "DOT",
+                    transportFee: { asset: "DOT", amount: "150000000" },
+                    buyExecutionFee: { asset: "DOT", amount: "90000000" },
+                  },
+                ],
+                xcmFee: { asset: "DOT", amount: "150000000" },
+                destinationFee: { asset: "DOT", amount: "90000000" },
+              },
+            ],
             fees: {
-              xcmFee: { asset: "DOT", amount: "100000000" },
-              destinationFee: { asset: "DOT", amount: "20000000" },
+              xcmFee: { asset: "DOT", amount: "150000000" },
+              destinationFee: { asset: "DOT", amount: "90000000" },
               platformFee: { asset: "DOT", amount: "250000000" },
-              totalFee: { asset: "DOT", amount: "370000000" },
+              totalFee: { asset: "DOT", amount: "490000000" },
             },
             expectedOutput: { asset: "DOT", amount: "250000000000" },
             minOutput: { asset: "DOT", amount: "250000000000" },
@@ -248,12 +264,12 @@ test("http quote provider forwards normalized intents and returns quotes", async
               action: "transfer",
               asset: "DOT",
               amount: "250000000000",
-              xcmFee: "100000000",
-              destinationFee: "20000000",
+              xcmFee: "150000000",
+              destinationFee: "90000000",
               minOutputAmount: "250000000000",
             },
             executionPlan: {
-              route: ["polkadot-hub", "asset-hub"],
+              route: ["polkadot-hub", "hydration"],
               steps: [],
             },
           };
@@ -266,13 +282,15 @@ test("http quote provider forwards normalized intents and returns quotes", async
 
   assert.equal(quote.quoteId, intent.quoteId);
   assert.equal(quote.submission.action, "transfer");
-  assert.equal(quote.fees.totalFee.amount, 370000000n);
+  assert.equal(quote.fees.totalFee.amount, 490000000n);
 });
 
 function finalRemoteInstructions(quote) {
   const sendStep = quote.executionPlan.steps.find((step) => step.type === "send-xcm");
   const outerTransfer = sendStep.instructions[0];
-  const innerTransfer = outerTransfer.remoteInstructions[1];
+  const nestedTransfer = outerTransfer.remoteInstructions.find(
+    (instruction) => instruction.type === "transfer-reserve-asset",
+  );
 
-  return innerTransfer.remoteInstructions;
+  return nestedTransfer ? nestedTransfer.remoteInstructions : outerTransfer.remoteInstructions;
 }

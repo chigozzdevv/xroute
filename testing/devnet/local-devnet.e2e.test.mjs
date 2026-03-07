@@ -105,18 +105,15 @@ test("local devnet deploys the stack and settles a live swap through the sdk", a
           assetOut: "USDT",
           amountIn: "1000000000000",
           minAmountOut: "493000000",
-          settlementChain: "asset-hub",
+          settlementChain: "polkadot-hub",
           recipient: stack.deployer,
         },
       },
     });
 
-    assert.deepEqual(quote.route, [
-      "polkadot-hub",
-      "asset-hub",
-      "hydration",
-      "asset-hub",
-    ]);
+    assert.deepEqual(quote.route, ["polkadot-hub", "hydration", "polkadot-hub"]);
+    assert.equal(quote.segments.length, 2);
+    assert.deepEqual(quote.segments[1].route, ["hydration", "polkadot-hub"]);
     assert.deepEqual(quote.estimatedSettlementFee, {
       asset: "USDT",
       amount: 35000n,

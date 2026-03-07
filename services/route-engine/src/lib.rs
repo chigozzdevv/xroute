@@ -11,7 +11,8 @@ pub use engine::{EngineSettings, RouteEngine};
 pub use error::RouteError;
 pub use model::{
     AssetAmount, AssetKey, CallIntent, ChainKey, DeploymentProfile, DestinationAdapter,
-    ExecutionPlan, FeeBreakdown, FeeType, Intent, IntentAction, PlanStep, Quote, StakeIntent,
-    SubmissionAction, SubmissionTerms, SwapIntent, TransferIntent, XcmInstruction, XcmWeight,
+    ExecutionPlan, FeeBreakdown, FeeType, Intent, IntentAction, PlanStep, Quote, RouteHop,
+    RouteSegment, RouteSegmentKind, StakeIntent, SubmissionAction, SubmissionTerms, SwapIntent,
+    TransferIntent, XcmInstruction, XcmWeight,
 };
 pub use registry::{CallRoute, RouteRegistry, StakeRoute, SwapRoute, TransferEdge, TransferPath};

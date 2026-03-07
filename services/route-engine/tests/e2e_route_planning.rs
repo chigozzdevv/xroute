@@ -1,8 +1,8 @@
 use route_engine::{
     AssetAmount, AssetKey, CallIntent, ChainKey, DeploymentProfile, DestinationAdapter,
     EngineSettings, FeeType, Intent, IntentAction, PlanStep, RouteEngine, RouteRegistry,
-    StakeIntent, SubmissionAction, SwapIntent, TransferIntent, XcmInstruction, XcmWeight,
-    lookup_destination_adapter_deployment,
+    RouteSegmentKind, StakeIntent, SubmissionAction, SwapIntent, TransferIntent, XcmInstruction,
+    XcmWeight, lookup_destination_adapter_deployment,
 };
 
 #[test]
@@ -26,18 +26,14 @@ fn quotes_hydration_swap_over_a_multihop_path() {
     let quote = engine.quote(intent).expect("swap quote should build");
 
     assert_eq!(quote.deployment_profile, DeploymentProfile::Local);
-    assert_eq!(
-        quote.route,
-        vec![
-            ChainKey::PolkadotHub,
-            ChainKey::AssetHub,
-            ChainKey::Hydration
-        ]
-    );
-    assert_eq!(quote.fees.xcm_fee.amount, 180_000_000);
-    assert_eq!(quote.fees.destination_fee.amount, 120_000_000);
+    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Hydration]);
+    assert_eq!(quote.segments.len(), 1);
+    assert_eq!(quote.segments[0].kind, RouteSegmentKind::Execution);
+    assert_eq!(quote.segments[0].route, quote.route);
+    assert_eq!(quote.fees.xcm_fee.amount, 150_000_000);
+    assert_eq!(quote.fees.destination_fee.amount, 90_000_000);
     assert_eq!(quote.fees.platform_fee.amount, 1_000_000_000);
-    assert_eq!(quote.fees.total_fee.amount, 1_300_000_000);
+    assert_eq!(quote.fees.total_fee.amount, 1_240_000_000);
     assert!(quote.estimated_settlement_fee.is_none());
     assert_eq!(quote.expected_output.asset, AssetKey::Usdt);
     assert_eq!(quote.expected_output.amount, 493_515_000);
@@ -45,8 +41,8 @@ fn quotes_hydration_swap_over_a_multihop_path() {
     assert_eq!(quote.submission.action, SubmissionAction::Swap);
     assert_eq!(quote.submission.asset, AssetKey::Dot);
     assert_eq!(quote.submission.amount, 1_000_000_000_000);
-    assert_eq!(quote.submission.xcm_fee, 180_000_000);
-    assert_eq!(quote.submission.destination_fee, 120_000_000);
+    assert_eq!(quote.submission.xcm_fee, 150_000_000);
+    assert_eq!(quote.submission.destination_fee, 90_000_000);
     assert_eq!(quote.submission.min_output_amount, 490_000_000);
 
     assert_eq!(
@@ -54,7 +50,7 @@ fn quotes_hydration_swap_over_a_multihop_path() {
         PlanStep::LockAsset {
             chain: ChainKey::PolkadotHub,
             asset: AssetKey::Dot,
-            amount: 1_001_300_000_000,
+            amount: 1_001_240_000_000,
         }
     );
     assert_eq!(
@@ -67,32 +63,21 @@ fn quotes_hydration_swap_over_a_multihop_path() {
     );
 
     let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
-    assert_eq!(outer_transfer.destination(), ChainKey::AssetHub);
+    assert_eq!(outer_transfer.destination(), ChainKey::Hydration);
     assert_eq!(outer_transfer.amount(), 1_000_000_000_000);
     assert_eq!(
         outer_transfer.remote_instructions()[0],
         XcmInstruction::BuyExecution {
             asset: AssetKey::Dot,
-            amount: 20_000_000,
-        }
-    );
-
-    let inner_transfer = nested_transfer_instruction(outer_transfer.remote_instructions(), 1);
-    assert_eq!(inner_transfer.destination(), ChainKey::Hydration);
-    assert_eq!(inner_transfer.amount(), 1_000_000_000_000);
-    assert_eq!(
-        inner_transfer.remote_instructions()[0],
-        XcmInstruction::BuyExecution {
-            asset: AssetKey::Dot,
-            amount: 100_000_000,
+            amount: 90_000_000,
         }
     );
     assert_eq!(
-        inner_transfer.remote_instructions()[1],
+        outer_transfer.remote_instructions()[1],
         XcmInstruction::Transact {
             adapter: DestinationAdapter::HydrationSwapV1,
             target_address: local_adapter_address(DestinationAdapter::HydrationSwapV1).to_owned(),
-            contract_call: inner_transfer.remote_instructions()[1]
+            contract_call: outer_transfer.remote_instructions()[1]
                 .contract_call()
                 .expect("swap contract call")
                 .to_owned(),
@@ -102,14 +87,14 @@ fn quotes_hydration_swap_over_a_multihop_path() {
             },
         }
     );
-    assert!(inner_transfer.remote_instructions()[1]
+    assert!(outer_transfer.remote_instructions()[1]
         .contract_call()
         .expect("swap contract call")
         .starts_with("0x670b1f29"));
 }
 
 #[test]
-fn quotes_hydration_swap_and_settles_on_asset_hub() {
+fn quotes_hydration_swap_and_settles_on_polkadot_hub() {
     let engine = RouteEngine::default();
     let intent = Intent {
         source_chain: ChainKey::PolkadotHub,
@@ -119,8 +104,8 @@ fn quotes_hydration_swap_and_settles_on_asset_hub() {
             asset_out: AssetKey::Usdt,
             amount_in: AssetKey::Dot.units(100),
             min_amount_out: AssetKey::Usdt.units(493),
-            settlement_chain: ChainKey::AssetHub,
-            recipient: "5FassetHubRecipient".to_owned(),
+            settlement_chain: ChainKey::PolkadotHub,
+            recipient: "5FhubRecipient".to_owned(),
         }),
         refund_address: "5Frefund".to_owned(),
         deadline: 1_773_185_200,
@@ -132,10 +117,16 @@ fn quotes_hydration_swap_and_settles_on_asset_hub() {
         quote.route,
         vec![
             ChainKey::PolkadotHub,
-            ChainKey::AssetHub,
             ChainKey::Hydration,
-            ChainKey::AssetHub,
+            ChainKey::PolkadotHub,
         ]
+    );
+    assert_eq!(quote.segments.len(), 2);
+    assert_eq!(quote.segments[0].kind, RouteSegmentKind::Execution);
+    assert_eq!(quote.segments[1].kind, RouteSegmentKind::Settlement);
+    assert_eq!(
+        quote.segments[1].route,
+        vec![ChainKey::Hydration, ChainKey::PolkadotHub]
     );
     assert_eq!(
         quote.estimated_settlement_fee,
@@ -149,19 +140,16 @@ fn quotes_hydration_swap_and_settles_on_asset_hub() {
     assert_eq!(
         quote.execution_plan.steps[5],
         PlanStep::ExpectSettlement {
-            chain: ChainKey::AssetHub,
+            chain: ChainKey::PolkadotHub,
             asset: AssetKey::Usdt,
-            recipient: "5FassetHubRecipient".to_owned(),
+            recipient: "5FhubRecipient".to_owned(),
             minimum_amount: Some(493_000_000),
         }
     );
 
-    let inner_transfer = nested_transfer_instruction(
-        first_transfer_instruction(&quote.execution_plan.steps[4]).remote_instructions(),
-        1,
-    );
-    assert_eq!(inner_transfer.remote_instructions().len(), 2);
-    assert!(inner_transfer.remote_instructions()[1]
+    let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
+    assert_eq!(outer_transfer.remote_instructions().len(), 2);
+    assert!(outer_transfer.remote_instructions()[1]
         .contract_call()
         .expect("swap contract call")
         .contains("00000000000000000000000000000000000000000000000000000000000003e8"));
@@ -172,7 +160,7 @@ fn quotes_asset_transfer_and_builds_delivery_plan() {
     let engine = RouteEngine::default();
     let intent = Intent {
         source_chain: ChainKey::PolkadotHub,
-        destination_chain: ChainKey::AssetHub,
+        destination_chain: ChainKey::Hydration,
         action: IntentAction::Transfer(TransferIntent {
             asset: AssetKey::Dot,
             amount: AssetKey::Dot.units(25),
@@ -185,27 +173,28 @@ fn quotes_asset_transfer_and_builds_delivery_plan() {
     let quote = engine.quote(intent).expect("transfer quote should build");
 
     assert_eq!(quote.deployment_profile, DeploymentProfile::Local);
-    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::AssetHub]);
-    assert_eq!(quote.fees.xcm_fee.amount, 100_000_000);
-    assert_eq!(quote.fees.destination_fee.amount, 20_000_000);
+    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Hydration]);
+    assert_eq!(quote.segments.len(), 1);
+    assert_eq!(quote.fees.xcm_fee.amount, 150_000_000);
+    assert_eq!(quote.fees.destination_fee.amount, 90_000_000);
     assert_eq!(quote.fees.platform_fee.amount, 250_000_000);
-    assert_eq!(quote.fees.total_fee.amount, 370_000_000);
+    assert_eq!(quote.fees.total_fee.amount, 490_000_000);
     assert_eq!(quote.expected_output.amount, 250_000_000_000);
     assert_eq!(quote.submission.action, SubmissionAction::Transfer);
     assert_eq!(quote.submission.asset, AssetKey::Dot);
     assert_eq!(quote.submission.amount, 250_000_000_000);
-    assert_eq!(quote.submission.xcm_fee, 100_000_000);
-    assert_eq!(quote.submission.destination_fee, 20_000_000);
+    assert_eq!(quote.submission.xcm_fee, 150_000_000);
+    assert_eq!(quote.submission.destination_fee, 90_000_000);
     assert_eq!(quote.submission.min_output_amount, 250_000_000_000);
 
     let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
-    assert_eq!(outer_transfer.destination(), ChainKey::AssetHub);
+    assert_eq!(outer_transfer.destination(), ChainKey::Hydration);
     assert_eq!(
         outer_transfer.remote_instructions(),
         &vec![
             XcmInstruction::BuyExecution {
                 asset: AssetKey::Dot,
-                amount: 20_000_000,
+                amount: 90_000_000,
             },
             XcmInstruction::DepositAsset {
                 asset: AssetKey::Dot,
@@ -234,25 +223,15 @@ fn quotes_hydration_stake_over_a_multihop_path() {
     let quote = engine.quote(intent).expect("stake quote should build");
 
     assert_eq!(quote.deployment_profile, DeploymentProfile::Local);
-    assert_eq!(
-        quote.route,
-        vec![
-            ChainKey::PolkadotHub,
-            ChainKey::AssetHub,
-            ChainKey::Hydration
-        ]
-    );
+    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Hydration]);
     assert_eq!(quote.submission.action, SubmissionAction::Stake);
     assert!(quote.estimated_settlement_fee.is_none());
-    assert_eq!(quote.submission.xcm_fee, 180_000_000);
-    assert_eq!(quote.submission.destination_fee, 120_000_000);
+    assert_eq!(quote.submission.xcm_fee, 150_000_000);
+    assert_eq!(quote.submission.destination_fee, 90_000_000);
     assert_eq!(quote.submission.min_output_amount, 0);
     assert!(quote.min_output.is_none());
 
-    let inner_transfer = nested_transfer_instruction(
-        first_transfer_instruction(&quote.execution_plan.steps[4]).remote_instructions(),
-        1,
-    );
+    let inner_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
     assert_eq!(inner_transfer.remote_instructions().len(), 2);
     assert_eq!(
         inner_transfer.remote_instructions()[1],
@@ -294,25 +273,15 @@ fn quotes_hydration_call_over_a_multihop_path() {
     let quote = engine.quote(intent).expect("call quote should build");
 
     assert_eq!(quote.deployment_profile, DeploymentProfile::Local);
-    assert_eq!(
-        quote.route,
-        vec![
-            ChainKey::PolkadotHub,
-            ChainKey::AssetHub,
-            ChainKey::Hydration
-        ]
-    );
+    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Hydration]);
     assert_eq!(quote.submission.action, SubmissionAction::Call);
     assert!(quote.estimated_settlement_fee.is_none());
-    assert_eq!(quote.submission.xcm_fee, 180_000_000);
-    assert_eq!(quote.submission.destination_fee, 120_000_000);
+    assert_eq!(quote.submission.xcm_fee, 150_000_000);
+    assert_eq!(quote.submission.destination_fee, 90_000_000);
     assert_eq!(quote.submission.min_output_amount, 0);
     assert_eq!(quote.expected_output.amount, 0);
 
-    let inner_transfer = nested_transfer_instruction(
-        first_transfer_instruction(&quote.execution_plan.steps[4]).remote_instructions(),
-        1,
-    );
+    let inner_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
     assert_eq!(inner_transfer.remote_instructions().len(), 2);
     assert_eq!(
         inner_transfer.remote_instructions()[1],
@@ -392,13 +361,6 @@ fn first_transfer_instruction(step: &PlanStep) -> &XcmInstruction {
             other => panic!("unexpected instruction: {other:?}"),
         },
         other => panic!("unexpected plan step: {other:?}"),
-    }
-}
-
-fn nested_transfer_instruction(instructions: &[XcmInstruction], index: usize) -> &XcmInstruction {
-    match &instructions[index] {
-        instruction @ XcmInstruction::TransferReserveAsset { .. } => instruction,
-        other => panic!("unexpected nested instruction: {other:?}"),
     }
 }
 

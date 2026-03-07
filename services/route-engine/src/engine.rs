@@ -3,7 +3,8 @@ use crate::adapter_specs::lookup_destination_adapter_spec;
 use crate::error::RouteError;
 use crate::model::{
     AssetAmount, AssetKey, ChainKey, DeploymentProfile, DestinationAdapter, FeeBreakdown, FeeType,
-    Intent, IntentAction, PlanStep, Quote, SubmissionAction, SubmissionTerms, XcmInstruction,
+    Intent, IntentAction, PlanStep, Quote, RouteSegment, RouteSegmentKind, SubmissionAction,
+    SubmissionTerms, XcmInstruction,
 };
 use crate::registry::{CallRoute, RouteRegistry, StakeRoute, SwapRoute, TransferPath};
 
@@ -62,6 +63,7 @@ impl RouteEngine {
                     quote_id,
                     deployment_profile: self.settings.deployment_profile,
                     route: execution_plan.route.clone(),
+                    segments: vec![route_segment(RouteSegmentKind::Execution, &path)],
                     fees,
                     estimated_settlement_fee: None,
                     expected_output: AssetAmount::new(transfer.asset, transfer.amount),
@@ -135,6 +137,7 @@ impl RouteEngine {
                     quote_id,
                     deployment_profile: self.settings.deployment_profile,
                     route: execution_plan.route.clone(),
+                    segments: swap_segments(&execution_path, &settlement),
                     fees,
                     estimated_settlement_fee: settlement.estimated_fee,
                     expected_output,
@@ -185,6 +188,7 @@ impl RouteEngine {
                     quote_id,
                     deployment_profile: self.settings.deployment_profile,
                     route: execution_plan.route.clone(),
+                    segments: vec![route_segment(RouteSegmentKind::Execution, &path)],
                     fees,
                     estimated_settlement_fee: None,
                     expected_output: AssetAmount::new(stake.asset, stake.amount),
@@ -235,6 +239,7 @@ impl RouteEngine {
                     quote_id,
                     deployment_profile: self.settings.deployment_profile,
                     route: execution_plan.route.clone(),
+                    segments: vec![route_segment(RouteSegmentKind::Execution, &path)],
                     fees,
                     estimated_settlement_fee: None,
                     expected_output: AssetAmount::new(call.asset, 0),
@@ -381,6 +386,26 @@ fn composed_route(
     }
 
     route
+}
+
+fn route_segment(kind: RouteSegmentKind, path: &TransferPath) -> RouteSegment {
+    RouteSegment {
+        kind,
+        route: path.route.clone(),
+        hops: path.hops.iter().copied().map(|hop| hop.to_route_hop()).collect(),
+        xcm_fee: path.xcm_fee,
+        destination_fee: path.destination_fee,
+    }
+}
+
+fn swap_segments(execution_path: &TransferPath, settlement: &SwapSettlement) -> Vec<RouteSegment> {
+    let mut segments = vec![route_segment(RouteSegmentKind::Execution, execution_path)];
+
+    if let Some(path) = settlement.settlement_path.as_ref() {
+        segments.push(route_segment(RouteSegmentKind::Settlement, path));
+    }
+
+    segments
 }
 
 fn build_transfer_plan(
@@ -891,7 +916,6 @@ fn encode_swap_settlement_plan(settlement: &SwapSettlement) -> Vec<u8> {
 fn parachain_id(chain: ChainKey) -> u32 {
     match chain {
         ChainKey::PolkadotHub => 1000,
-        ChainKey::AssetHub => 1000,
         ChainKey::Hydration => 2034,
     }
 }

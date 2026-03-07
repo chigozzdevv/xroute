@@ -191,6 +191,7 @@ export function buildVersionedXcmMessage({ quote }) {
   const deploymentProfile = normalizeDeploymentProfile(
     quote?.deploymentProfile ?? DEFAULT_DEPLOYMENT_PROFILE,
   );
+  assertQuoteSegmentsMatchExecutionPlan(quote);
   const sendStep = getExecutionStep(quote, "send-xcm");
 
   return Enum("V5", [
@@ -213,6 +214,101 @@ function getExecutionStep(quote, stepType) {
   }
 
   return step;
+}
+
+function assertQuoteSegmentsMatchExecutionPlan(quote) {
+  const segments = quote?.segments;
+  if (!Array.isArray(segments) || segments.length === 0) {
+    throw new Error("quote.segments must describe the multihop execution path");
+  }
+
+  const executionSegment = segments.find((segment) => segment.kind === "execution");
+  if (!executionSegment) {
+    throw new Error("quote.segments must include an execution segment");
+  }
+
+  const composedRoute = composeSegmentRoute(segments);
+  if (JSON.stringify(composedRoute) !== JSON.stringify(quote.route)) {
+    throw new Error("quote.route must match the composed route segments");
+  }
+
+  if (executionSegment.hops.length + 1 !== executionSegment.route.length) {
+    throw new Error("execution segment route must contain exactly one more chain than its hops");
+  }
+
+  const sendStep = getExecutionStep(quote, "send-xcm");
+  if (sendStep.origin !== executionSegment.route[0]) {
+    throw new Error("send-xcm origin must match the execution segment origin");
+  }
+  if (sendStep.destination !== executionSegment.route[1]) {
+    throw new Error("send-xcm destination must match the first execution hop");
+  }
+
+  const topInstruction = sendStep.instructions?.[0];
+  if (!topInstruction || topInstruction.type !== "transfer-reserve-asset") {
+    throw new Error("send-xcm must begin with a transfer-reserve-asset instruction");
+  }
+
+  const transferChain = collectTransferChain(topInstruction);
+  if (transferChain.length !== executionSegment.hops.length) {
+    throw new Error("execution segment hop count must match the nested transfer instruction chain");
+  }
+
+  executionSegment.hops.forEach((hop, index) => {
+    const instruction = transferChain[index];
+    if (instruction.asset !== hop.asset) {
+      throw new Error(`execution hop ${index} asset does not match the XCM instruction chain`);
+    }
+    if (instruction.destination !== hop.destination) {
+      throw new Error(
+        `execution hop ${index} destination does not match the XCM instruction chain`,
+      );
+    }
+
+    const buyExecution = instruction.remoteInstructions?.[0];
+    if (!buyExecution || buyExecution.type !== "buy-execution") {
+      throw new Error(`execution hop ${index} must start with a buy-execution instruction`);
+    }
+    if (buyExecution.asset !== hop.buyExecutionFee.asset) {
+      throw new Error(`execution hop ${index} buy-execution asset must match the segment fee`);
+    }
+    if (
+      toBigInt(buyExecution.amount, "buy-execution.amount") !==
+      toBigInt(
+        hop.buyExecutionFee.amount,
+        `segments[${index}].hops[${index}].buyExecutionFee.amount`,
+      )
+    ) {
+      throw new Error(`execution hop ${index} buy-execution amount must match the segment fee`);
+    }
+  });
+}
+
+function composeSegmentRoute(segments) {
+  const [first, ...rest] = segments;
+  const route = first.route.slice();
+  for (const segment of rest) {
+    route.push(...segment.route.slice(1));
+  }
+
+  return route;
+}
+
+function collectTransferChain(instruction) {
+  const chain = [instruction];
+  let current = instruction;
+
+  while (true) {
+    const nestedTransfer = current.remoteInstructions?.find(
+      (candidate) => candidate.type === "transfer-reserve-asset",
+    );
+    if (!nestedTransfer) {
+      return chain;
+    }
+
+    chain.push(nestedTransfer);
+    current = nestedTransfer;
+  }
 }
 
 function buildInstruction({

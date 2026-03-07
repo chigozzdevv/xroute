@@ -81,7 +81,7 @@ test("status indexer records cancellations", () => {
       quoteId: "quote-2",
       owner: "5Fowner",
       sourceChain: "polkadot-hub",
-      destinationChain: "asset-hub",
+      destinationChain: "polkadot-hub",
       actionType: "transfer",
       asset: "DOT",
       amount: 250000000000n,

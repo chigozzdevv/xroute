@@ -269,6 +269,7 @@ export function normalizeQuote(quote) {
       quote?.deploymentProfile ?? DEFAULT_DEPLOYMENT_PROFILE,
     ),
     route: quote.route.slice(),
+    segments: normalizeRouteSegments(quote.segments ?? []),
     fees: normalizeFeeBreakdown(quote.fees),
     estimatedSettlementFee: quote.estimatedSettlementFee
       ? normalizeAssetAmount(quote.estimatedSettlementFee)
@@ -307,6 +308,34 @@ function normalizeAssetAmount(assetAmount) {
     asset: assetAmount.asset,
     amount: toBigInt(assetAmount.amount, `${assetAmount.asset} amount`),
   });
+}
+
+function normalizeRouteSegments(segments) {
+  return Object.freeze(
+    segments.map((segment, index) =>
+      Object.freeze({
+        kind: assertIncluded(
+          `segments[${index}].kind`,
+          segment.kind,
+          ["execution", "settlement"],
+        ),
+        route: Object.freeze(segment.route.slice()),
+        hops: Object.freeze(
+          segment.hops.map((hop) =>
+            Object.freeze({
+              source: hop.source,
+              destination: hop.destination,
+              asset: hop.asset,
+              transportFee: normalizeAssetAmount(hop.transportFee),
+              buyExecutionFee: normalizeAssetAmount(hop.buyExecutionFee),
+            }),
+          ),
+        ),
+        xcmFee: normalizeAssetAmount(segment.xcmFee),
+        destinationFee: normalizeAssetAmount(segment.destinationFee),
+      }),
+    ),
+  );
 }
 
 function buildRouteEngineQuoteArgs(

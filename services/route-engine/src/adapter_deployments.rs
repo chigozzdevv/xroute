@@ -108,9 +108,8 @@ fn parse_required_string(object: &str, key: &str) -> Result<String, String> {
 
 fn parse_chain(value: &str) -> Option<ChainKey> {
     match value {
-        "polkadot-hub" => Some(ChainKey::PolkadotHub),
+        "polkadot-hub" | "asset-hub" => Some(ChainKey::PolkadotHub),
         "hydration" => Some(ChainKey::Hydration),
-        "asset-hub" => Some(ChainKey::AssetHub),
         _ => None,
     }
 }

@@ -23,24 +23,17 @@ export const CHAINS = Object.freeze({
       ACTION_TYPES.CALL,
     ]),
   }),
-  "asset-hub": Object.freeze({
-    key: "asset-hub",
-    label: "Asset Hub",
-    parachainId: 1000,
-    supportedActions: Object.freeze([
-      ACTION_TYPES.TRANSFER,
-      ACTION_TYPES.SWAP,
-      ACTION_TYPES.STAKE,
-      ACTION_TYPES.CALL,
-    ]),
-  }),
+});
+
+const CHAIN_ALIASES = Object.freeze({
+  "asset-hub": "polkadot-hub",
 });
 
 export const ASSETS = Object.freeze({
   DOT: Object.freeze({
     symbol: "DOT",
     decimals: 10,
-    supportedChains: Object.freeze(["polkadot-hub", "hydration", "asset-hub"]),
+    supportedChains: Object.freeze(["polkadot-hub", "hydration"]),
     xcmLocations: Object.freeze({
       "polkadot-hub": Object.freeze({
         parents: 1,
@@ -50,16 +43,12 @@ export const ASSETS = Object.freeze({
         parents: 1,
         interior: Object.freeze({ type: "here" }),
       }),
-      "asset-hub": Object.freeze({
-        parents: 1,
-        interior: Object.freeze({ type: "here" }),
-      }),
     }),
   }),
   USDT: Object.freeze({
     symbol: "USDT",
     decimals: 6,
-    supportedChains: Object.freeze(["hydration", "asset-hub"]),
+    supportedChains: Object.freeze(["hydration", "polkadot-hub"]),
     xcmLocations: Object.freeze({
       hydration: Object.freeze({
         parents: 1,
@@ -72,7 +61,7 @@ export const ASSETS = Object.freeze({
           ]),
         }),
       }),
-      "asset-hub": Object.freeze({
+      "polkadot-hub": Object.freeze({
         parents: 0,
         interior: Object.freeze({
           type: "x2",
@@ -87,7 +76,7 @@ export const ASSETS = Object.freeze({
   HDX: Object.freeze({
     symbol: "HDX",
     decimals: 12,
-    supportedChains: Object.freeze(["hydration", "asset-hub"]),
+    supportedChains: Object.freeze(["hydration", "polkadot-hub"]),
     xcmLocations: Object.freeze({
       hydration: Object.freeze({
         parents: 0,
@@ -99,7 +88,7 @@ export const ASSETS = Object.freeze({
           }),
         }),
       }),
-      "asset-hub": Object.freeze({
+      "polkadot-hub": Object.freeze({
         parents: 1,
         interior: Object.freeze({
           type: "x2",
@@ -116,69 +105,44 @@ export const ASSETS = Object.freeze({
 const USER_ROUTES = Object.freeze([
   Object.freeze({
     sourceChain: "polkadot-hub",
-    destinationChain: "asset-hub",
-    path: Object.freeze(["polkadot-hub", "asset-hub"]),
+    destinationChain: "hydration",
+    path: Object.freeze(["polkadot-hub", "hydration"]),
+    actions: Object.freeze([
+      ACTION_TYPES.TRANSFER,
+      ACTION_TYPES.SWAP,
+      ACTION_TYPES.STAKE,
+      ACTION_TYPES.CALL,
+    ]),
+    transferableAssets: Object.freeze(["DOT"]),
+    swapPairs: Object.freeze([
+      Object.freeze({
+        assetIn: "DOT",
+        assetOut: "USDT",
+        settlementChains: Object.freeze(["hydration", "polkadot-hub"]),
+      }),
+      Object.freeze({
+        assetIn: "DOT",
+        assetOut: "HDX",
+        settlementChains: Object.freeze(["hydration", "polkadot-hub"]),
+      }),
+    ]),
+    stakeAssets: Object.freeze(["DOT"]),
+    callAssets: Object.freeze(["DOT"]),
+  }),
+  Object.freeze({
+    sourceChain: "hydration",
+    destinationChain: "polkadot-hub",
+    path: Object.freeze(["hydration", "polkadot-hub"]),
     actions: Object.freeze([ACTION_TYPES.TRANSFER]),
-    transferableAssets: Object.freeze(["DOT"]),
+    transferableAssets: Object.freeze(["DOT", "USDT", "HDX"]),
     swapPairs: Object.freeze([]),
-  }),
-  Object.freeze({
-    sourceChain: "polkadot-hub",
-    destinationChain: "hydration",
-    path: Object.freeze(["polkadot-hub", "asset-hub", "hydration"]),
-    actions: Object.freeze([
-      ACTION_TYPES.TRANSFER,
-      ACTION_TYPES.SWAP,
-      ACTION_TYPES.STAKE,
-      ACTION_TYPES.CALL,
-    ]),
-    transferableAssets: Object.freeze(["DOT"]),
-    swapPairs: Object.freeze([
-      Object.freeze({
-        assetIn: "DOT",
-        assetOut: "USDT",
-        settlementChains: Object.freeze(["hydration", "asset-hub"]),
-      }),
-      Object.freeze({
-        assetIn: "DOT",
-        assetOut: "HDX",
-        settlementChains: Object.freeze(["hydration", "asset-hub"]),
-      }),
-    ]),
-    stakeAssets: Object.freeze(["DOT"]),
-    callAssets: Object.freeze(["DOT"]),
-  }),
-  Object.freeze({
-    sourceChain: "asset-hub",
-    destinationChain: "hydration",
-    path: Object.freeze(["asset-hub", "hydration"]),
-    actions: Object.freeze([
-      ACTION_TYPES.TRANSFER,
-      ACTION_TYPES.SWAP,
-      ACTION_TYPES.STAKE,
-      ACTION_TYPES.CALL,
-    ]),
-    transferableAssets: Object.freeze(["DOT"]),
-    swapPairs: Object.freeze([
-      Object.freeze({
-        assetIn: "DOT",
-        assetOut: "USDT",
-        settlementChains: Object.freeze(["hydration", "asset-hub"]),
-      }),
-      Object.freeze({
-        assetIn: "DOT",
-        assetOut: "HDX",
-        settlementChains: Object.freeze(["hydration", "asset-hub"]),
-      }),
-    ]),
-    stakeAssets: Object.freeze(["DOT"]),
-    callAssets: Object.freeze(["DOT"]),
   }),
 ]);
 
 export function getChain(chainKey) {
   const normalized = assertNonEmptyString("chainKey", chainKey);
-  const chain = CHAINS[normalized];
+  const canonical = CHAIN_ALIASES[normalized] ?? normalized;
+  const chain = CHAINS[canonical];
   if (!chain) {
     throw new Error(`unsupported chain: ${normalized}`);
   }

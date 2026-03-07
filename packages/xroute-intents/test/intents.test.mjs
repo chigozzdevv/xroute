@@ -24,12 +24,12 @@ test("createSwapIntent normalizes supported hydration swaps", () => {
   assert.equal(intent.action.type, "swap");
   assert.equal(intent.action.params.assetIn, "DOT");
   assert.equal(intent.action.params.assetOut, "USDT");
-  assert.equal(intent.action.params.settlementChain, "asset-hub");
+  assert.equal(intent.action.params.settlementChain, "polkadot-hub");
   assert.equal(intent.action.params.amountIn, 1000000000000n);
   assert.match(intent.quoteId, /^0x[0-9a-f]{64}$/);
 });
 
-test("createTransferIntent normalizes supported asset-hub transfers", () => {
+test("createTransferIntent canonicalizes asset-hub to polkadot-hub", () => {
   const intent = createTransferIntent({
     sourceChain: "asset-hub",
     destinationChain: "hydration",
@@ -42,7 +42,7 @@ test("createTransferIntent normalizes supported asset-hub transfers", () => {
     },
   });
 
-  assert.equal(intent.sourceChain, "asset-hub");
+  assert.equal(intent.sourceChain, "polkadot-hub");
   assert.equal(intent.destinationChain, "hydration");
   assert.equal(intent.action.type, "transfer");
   assert.equal(intent.action.params.asset, "DOT");

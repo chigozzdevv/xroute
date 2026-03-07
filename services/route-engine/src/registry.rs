@@ -1,4 +1,6 @@
-use crate::model::{AssetAmount, AssetKey, ChainKey, DestinationAdapter, XcmWeight};
+use crate::model::{AssetAmount, AssetKey, ChainKey, DestinationAdapter, RouteHop, XcmWeight};
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransferEdge {
@@ -59,28 +61,28 @@ impl Default for RouteRegistry {
             transfer_edges: vec![
                 TransferEdge {
                     source: ChainKey::PolkadotHub,
-                    destination: ChainKey::AssetHub,
-                    asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 100_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 20_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::AssetHub,
                     destination: ChainKey::Hydration,
                     asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 80_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 100_000_000),
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 150_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 90_000_000),
                 },
                 TransferEdge {
                     source: ChainKey::Hydration,
-                    destination: ChainKey::AssetHub,
+                    destination: ChainKey::PolkadotHub,
+                    asset: AssetKey::Dot,
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 150_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 90_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Hydration,
+                    destination: ChainKey::PolkadotHub,
                     asset: AssetKey::Usdt,
                     transport_fee: AssetAmount::new(AssetKey::Usdt, 25_000),
                     buy_execution_fee: AssetAmount::new(AssetKey::Usdt, 10_000),
                 },
                 TransferEdge {
                     source: ChainKey::Hydration,
-                    destination: ChainKey::AssetHub,
+                    destination: ChainKey::PolkadotHub,
                     asset: AssetKey::Hdx,
                     transport_fee: AssetAmount::new(AssetKey::Hdx, 50_000_000_000),
                     buy_execution_fee: AssetAmount::new(AssetKey::Hdx, 20_000_000_000),
@@ -143,20 +145,43 @@ impl RouteRegistry {
         destination: ChainKey,
         asset: AssetKey,
     ) -> Option<TransferPath> {
-        let mut best_path: Option<TransferPath> = None;
-        let mut current_route = vec![source];
-        let mut current_hops = Vec::new();
+        let mut frontier = BinaryHeap::new();
+        frontier.push(PathCandidate::seed(source));
 
-        self.explore_transfer_paths(
-            source,
-            destination,
-            asset,
-            &mut current_route,
-            &mut current_hops,
-            &mut best_path,
-        );
+        while let Some(candidate) = frontier.pop() {
+            if candidate.chain == destination {
+                return Some(transfer_path_from_hops(asset, &candidate.route, &candidate.hops));
+            }
 
-        best_path
+            for edge in self
+                .transfer_edges
+                .iter()
+                .copied()
+                .filter(|edge| edge.source == candidate.chain && edge.asset == asset)
+            {
+                if candidate.route.contains(&edge.destination) {
+                    continue;
+                }
+
+                let next_cost = candidate
+                    .total_cost
+                    .saturating_add(edge.transport_fee.amount)
+                    .saturating_add(edge.buy_execution_fee.amount);
+                let mut next_route = candidate.route.clone();
+                next_route.push(edge.destination);
+                let mut next_hops = candidate.hops.clone();
+                next_hops.push(edge);
+
+                frontier.push(PathCandidate {
+                    chain: edge.destination,
+                    route: next_route,
+                    hops: next_hops,
+                    total_cost: next_cost,
+                });
+            }
+        }
+
+        None
     }
 
     pub fn swap_route(
@@ -186,52 +211,6 @@ impl RouteRegistry {
             .find(|route| route.destination == destination && route.asset == asset)
     }
 
-    fn explore_transfer_paths(
-        &self,
-        current: ChainKey,
-        destination: ChainKey,
-        asset: AssetKey,
-        current_route: &mut Vec<ChainKey>,
-        current_hops: &mut Vec<TransferEdge>,
-        best_path: &mut Option<TransferPath>,
-    ) {
-        if current == destination {
-            let candidate = transfer_path_from_hops(current_route, current_hops);
-
-            if best_path
-                .as_ref()
-                .map(|existing| candidate.total_cost() < existing.total_cost())
-                .unwrap_or(true)
-            {
-                *best_path = Some(candidate);
-            }
-            return;
-        }
-
-        for edge in self
-            .transfer_edges
-            .iter()
-            .copied()
-            .filter(|edge| edge.source == current && edge.asset == asset)
-        {
-            if current_route.contains(&edge.destination) {
-                continue;
-            }
-
-            current_route.push(edge.destination);
-            current_hops.push(edge);
-            self.explore_transfer_paths(
-                edge.destination,
-                destination,
-                asset,
-                current_route,
-                current_hops,
-                best_path,
-            );
-            current_hops.pop();
-            current_route.pop();
-        }
-    }
 }
 
 impl TransferPath {
@@ -242,7 +221,7 @@ impl TransferPath {
     }
 }
 
-fn transfer_path_from_hops(route: &[ChainKey], hops: &[TransferEdge]) -> TransferPath {
+fn transfer_path_from_hops(asset: AssetKey, route: &[ChainKey], hops: &[TransferEdge]) -> TransferPath {
     let xcm_fee = hops.iter().fold(0u128, |total, hop| {
         total.saturating_add(hop.transport_fee.amount)
     });
@@ -253,7 +232,62 @@ fn transfer_path_from_hops(route: &[ChainKey], hops: &[TransferEdge]) -> Transfe
     TransferPath {
         route: route.to_vec(),
         hops: hops.to_vec(),
-        xcm_fee: AssetAmount::new(AssetKey::Dot, xcm_fee),
-        destination_fee: AssetAmount::new(AssetKey::Dot, destination_fee),
+        xcm_fee: AssetAmount::new(asset, xcm_fee),
+        destination_fee: AssetAmount::new(asset, destination_fee),
     }
+}
+
+impl TransferEdge {
+    pub const fn to_route_hop(self) -> RouteHop {
+        RouteHop {
+            source: self.source,
+            destination: self.destination,
+            asset: self.asset,
+            transport_fee: self.transport_fee,
+            buy_execution_fee: self.buy_execution_fee,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PathCandidate {
+    chain: ChainKey,
+    route: Vec<ChainKey>,
+    hops: Vec<TransferEdge>,
+    total_cost: u128,
+}
+
+impl PathCandidate {
+    fn seed(source: ChainKey) -> Self {
+        Self {
+            chain: source,
+            route: vec![source],
+            hops: Vec::new(),
+            total_cost: 0,
+        }
+    }
+}
+
+impl Ord for PathCandidate {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other
+            .total_cost
+            .cmp(&self.total_cost)
+            .then_with(|| other.route.len().cmp(&self.route.len()))
+            .then_with(|| route_key(&other.route).cmp(&route_key(&self.route)))
+    }
+}
+
+impl PartialOrd for PathCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+fn route_key(route: &[ChainKey]) -> String {
+    route
+        .iter()
+        .map(|chain| chain.as_str())
+        .collect::<Vec<_>>()
+        .join(">")
 }
