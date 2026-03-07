@@ -9,7 +9,6 @@ ignition/deployments
 .env
 .env.*
 !.env.example
-.secrets
 contracts/polkadot-hub-router/cache
 contracts/polkadot-hub-router/out
 testing/devnet/.artifacts
