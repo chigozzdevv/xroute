@@ -10,6 +10,7 @@ import {
   DESTINATION_ADAPTER_TARGET_KINDS,
   getDestinationAdapterDeployment,
   getDestinationAdapterSpec,
+  hasDestinationAdapterDeployment,
 } from "../index.mjs";
 
 test("destination adapter specs are published with supported target kinds", () => {
@@ -31,30 +32,42 @@ test("destination adapter selectors match their published function signatures", 
   }
 });
 
-test("destination adapter deployments are published per chain and profile", () => {
+test("destination adapter deployments only expose configured live profiles", () => {
   const local = getDestinationAdapterDeployment(
     "hydration-swap-v1",
     "hydration",
     DEPLOYMENT_PROFILES.LOCAL,
   );
-  const testnet = getDestinationAdapterDeployment(
-    "hydration-swap-v1",
-    "hydration",
-    DEPLOYMENT_PROFILES.TESTNET,
-  );
-  const mainnet = getDestinationAdapterDeployment(
-    "hydration-call-v1",
-    "hydration",
-    DEPLOYMENT_PROFILES.MAINNET,
-  );
 
   assert.match(local.address, /^0x[0-9a-f]{40}$/);
-  assert.match(testnet.address, /^0x[0-9a-f]{40}$/);
-  assert.match(mainnet.address, /^0x[0-9a-f]{40}$/);
-  assert.notEqual(local.address, testnet.address);
   assert.equal(
-    DESTINATION_ADAPTER_DEPLOYMENTS["hydration-stake-v1:hydration:testnet"].chainKey,
+    DESTINATION_ADAPTER_DEPLOYMENTS["hydration-stake-v1:hydration:local"].chainKey,
     "hydration",
+  );
+  assert.equal(
+    hasDestinationAdapterDeployment(
+      "hydration-swap-v1",
+      "hydration",
+      DEPLOYMENT_PROFILES.TESTNET,
+    ),
+    false,
+  );
+  assert.equal(
+    hasDestinationAdapterDeployment(
+      "hydration-call-v1",
+      "hydration",
+      DEPLOYMENT_PROFILES.MAINNET,
+    ),
+    false,
+  );
+  assert.throws(
+    () =>
+      getDestinationAdapterDeployment(
+        "hydration-swap-v1",
+        "hydration",
+        DEPLOYMENT_PROFILES.TESTNET,
+      ),
+    /missing destination adapter deployment/,
   );
 });
 

@@ -10,7 +10,7 @@ import {
   createIntentDispatchedEvent,
   createIntentSubmittedEvent,
   createRefundIssuedEvent,
-} from "../index.mjs";
+} from "../status-indexer.mjs";
 
 test("status indexer tracks a failed execution and refund timeline", () => {
   const indexer = new InMemoryStatusIndexer();

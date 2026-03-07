@@ -8,14 +8,16 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 import {
-  FileBackedStatusIndexer,
+  createRouteEngineQuoteProvider,
+  createXRouteClient,
+} from "../../packages/xroute-sdk/index.mjs";
+import {
   createCastRouterAdapter,
   createCastTransactDispatcher,
-  createRouteEngineQuoteProvider,
   createStaticAssetAddressResolver,
-  createXRouteClient,
   encodeAssetIdSymbol,
-} from "../../packages/xroute-sdk/index.mjs";
+} from "../../packages/xroute-sdk/router-adapters.mjs";
+import { FileBackedStatusIndexer } from "../../packages/xroute-sdk/status-indexer.mjs";
 
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const deployScriptPath = resolve(workspaceRoot, "scripts/deploy-local-devnet.mjs");

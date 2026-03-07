@@ -336,7 +336,7 @@ fn quotes_hydration_call_over_a_multihop_path() {
 }
 
 #[test]
-fn quotes_hydration_swap_against_testnet_deployments() {
+fn rejects_non_local_profiles_without_published_deployments() {
     let engine = RouteEngine::new(
         RouteRegistry::default(),
         EngineSettings {
@@ -359,36 +359,16 @@ fn quotes_hydration_swap_against_testnet_deployments() {
         deadline: 1_773_185_200,
     };
 
-    let quote = engine
-        .quote(intent)
-        .expect("testnet swap quote should build");
-
-    assert_eq!(quote.deployment_profile, DeploymentProfile::Testnet);
-
-    let inner_transfer = nested_transfer_instruction(
-        first_transfer_instruction(&quote.execution_plan.steps[4]).remote_instructions(),
-        1,
+    let error = engine.quote(intent).expect_err("testnet deployment should be missing");
+    assert_eq!(
+        error.to_string(),
+        "missing destination adapter deployment for hydration-swap-v1 on hydration (testnet)"
     );
-    match &inner_transfer.remote_instructions()[1] {
-        XcmInstruction::Transact { target_address, .. } => {
-            assert_eq!(
-                target_address,
-                testnet_adapter_address(DestinationAdapter::HydrationSwapV1)
-            );
-        }
-        other => panic!("unexpected instruction: {other:?}"),
-    }
 }
 
 fn local_adapter_address(adapter: DestinationAdapter) -> &'static str {
     lookup_destination_adapter_deployment(adapter, ChainKey::Hydration, DeploymentProfile::Local)
         .expect("local deployment")
-        .address
-}
-
-fn testnet_adapter_address(adapter: DestinationAdapter) -> &'static str {
-    lookup_destination_adapter_deployment(adapter, ChainKey::Hydration, DeploymentProfile::Testnet)
-        .expect("testnet deployment")
         .address
 }
 

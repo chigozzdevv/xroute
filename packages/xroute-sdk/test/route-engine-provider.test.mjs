@@ -148,7 +148,7 @@ test("route engine quote provider returns adapter-backed remote calls", async ()
   assert.match(remoteInstructions[1].contractCall, /^0x7db7dbf6[0-9a-f]+$/);
 });
 
-test("route engine quote provider selects published testnet deployments", async () => {
+test("route engine quote provider rejects non-local profiles without published deployments", async () => {
   const provider = createRouteEngineQuoteProvider({
     cwd: workspaceRoot,
     deploymentProfile: DEPLOYMENT_PROFILES.TESTNET,
@@ -166,13 +166,9 @@ test("route engine quote provider selects published testnet deployments", async 
     },
   });
 
-  const quote = normalizeQuote(await provider.quote(intent));
-  const remoteInstructions = finalRemoteInstructions(quote);
-
-  assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.TESTNET);
-  assert.equal(
-    remoteInstructions[1].targetAddress,
-    getDestinationAdapterDeployment("hydration-call-v1", "hydration", "testnet").address,
+  await assert.rejects(
+    provider.quote(intent),
+    /missing destination adapter deployment for hydration-call-v1 on hydration \(testnet\)/,
   );
 });
 

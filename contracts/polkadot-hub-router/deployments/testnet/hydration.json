@@ -1,9 +1,0 @@
-{
-  "chainKey": "hydration",
-  "deploymentProfile": "testnet",
-  "contracts": {
-    "HydrationSwapAdapterV1": "0x0000000000000000000000000000000000002001",
-    "HydrationStakeAdapterV1": "0x0000000000000000000000000000000000002002",
-    "HydrationCallAdapterV1": "0x0000000000000000000000000000000000002003"
-  }
-}

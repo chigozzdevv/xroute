@@ -168,7 +168,6 @@ xroute/
     xroute-xcm/
   services/
     route-engine/
-    status-indexer/
   testing/
     chopsticks/
 ```
@@ -191,8 +190,6 @@ What each directory is for:
   - chain and asset metadata used by the SDK/XCM layer
 - `packages/xroute-types`
   - shared constants and assertions
-- `services/status-indexer`
-  - status projection layer used by apps and tests
 - `testing/chopsticks`
   - local multi-chain testing area
 
@@ -253,8 +250,8 @@ Deployment commands:
 ```bash
 npm run deploy:local-devnet
 npm run deploy:stack
-npm run deploy:testnet
-npm run deploy:mainnet
+XROUTE_ALLOW_LIVE_DEPLOY=true XROUTE_RPC_URL=https://... XROUTE_PRIVATE_KEY=0x... XROUTE_ROUTER_EXECUTOR=0x... XROUTE_ROUTER_TREASURY=0x... XROUTE_XCM_ADDRESS=0x... npm run deploy:testnet
+XROUTE_ALLOW_LIVE_DEPLOY=true XROUTE_RPC_URL=https://... XROUTE_PRIVATE_KEY=0x... XROUTE_ROUTER_EXECUTOR=0x... XROUTE_ROUTER_TREASURY=0x... XROUTE_XCM_ADDRESS=0x... npm run deploy:mainnet
 ```
 
 Important environment variables:
@@ -265,12 +262,14 @@ Important environment variables:
   - deployer key used by `forge create` and `cast send`
 - `XROUTE_DEPLOYMENT_PROFILE`
   - `local`, `testnet`, or `mainnet`
+- `XROUTE_ALLOW_LIVE_DEPLOY`
+  - must be `true` for non-local deployments
 - `XROUTE_XCM_ADDRESS`
-  - override the XCM precompile address for non-local deployments
+  - required for non-local deployments
 - `XROUTE_ROUTER_EXECUTOR`
-  - executor allowed to dispatch and finalize intents on the Hub router
+  - required for non-local deployments; executor allowed to dispatch and finalize intents on the Hub router
 - `XROUTE_ROUTER_TREASURY`
-  - treasury that receives platform fees
+  - required for non-local deployments; treasury that receives platform fees
 - `XROUTE_PLATFORM_FEE_BPS`
   - router platform fee in basis points
 - `XROUTE_STACK_OUTPUT_PATH`
@@ -298,28 +297,29 @@ Current verification status:
 - `local`
   - deployed and exercised end to end through the SDK
 - `testnet` and `mainnet`
-  - deployment scripts are wired, but this repo does not contain a broadcasted live deployment yet
+  - guarded deployment scripts exist, but this repo does not ship published deployment manifests for them
 
 ## SDK Usage
 
-Use the local Rust planner:
+Use a hosted quote service in production:
 
 ```js
 import {
-  FileBackedStatusIndexer,
-  createCastRouterAdapter,
-  createRouteEngineQuoteProvider,
-  createStaticAssetAddressResolver,
+  createHttpQuoteProvider,
   createXRouteClient,
 } from "@xroute/sdk";
+import {
+  createCastRouterAdapter,
+  createStaticAssetAddressResolver,
+} from "@xroute/sdk/router-adapters";
+import { FileBackedStatusIndexer } from "@xroute/sdk/status-indexer";
 
 const statusProvider = new FileBackedStatusIndexer({
   eventsPath: "./.xroute/status-events.jsonl",
 });
 
-const quoteProvider = createRouteEngineQuoteProvider({
-  cwd: process.cwd(),
-  deploymentProfile: "local",
+const quoteProvider = createHttpQuoteProvider({
+  endpoint: "https://quotes.example.com/xroute/quote",
 });
 
 const routerAdapter = createCastRouterAdapter({
@@ -374,6 +374,15 @@ console.log(execution.submitted.intentId);
 console.log(client.getStatus(execution.submitted.intentId));
 ```
 
+Use the local Rust planner only for development, CI, or operator-controlled environments:
+
+```js
+import {
+  createRouteEngineQuoteProvider,
+  createXRouteClient,
+} from "@xroute/sdk";
+```
+
 Record final onchain outcomes:
 
 ```js
@@ -397,16 +406,6 @@ await client.refund({
 });
 ```
 
-Use a hosted quote service instead of the local Rust binary:
-
-```js
-import { createHttpQuoteProvider } from "@xroute/sdk";
-
-const quoteProvider = createHttpQuoteProvider({
-  endpoint: "https://quotes.example.com/xroute/quote",
-});
-```
-
 ## SDK Surface
 
 Main SDK helpers:
@@ -414,9 +413,17 @@ Main SDK helpers:
 - `createXRouteClient(...)`
 - `createRouteEngineQuoteProvider(...)`
 - `createHttpQuoteProvider(...)`
+
+Router adapter helpers:
+
 - `createCastRouterAdapter(...)`
+- `createCastTransactDispatcher(...)`
 - `createStaticAssetAddressResolver(...)`
+
+Status indexing helpers:
+
 - `FileBackedStatusIndexer`
+- `InMemoryStatusIndexer`
 
 Main client methods:
 
@@ -432,8 +439,11 @@ Main client methods:
 
 Important runtime notes:
 
+- import router adapters from `@xroute/sdk/router-adapters`
+- import status indexing helpers from `@xroute/sdk/status-indexer`
 - the cast-backed router adapter expects EVM hex addresses, not SS58 addresses
-- the local quote provider is server-side because it shells into the Rust route engine
+- `createRouteEngineQuoteProvider(...)` is a local/dev operator helper because it shells into the Rust route engine
+- `createHttpQuoteProvider(...)` is the production-facing SDK quote path
 - swap quotes may include `estimatedSettlementFee` when the final delivery happens off the execution chain
 - the file-backed indexer is persistent, but it is still an offchain projection
 

@@ -3,7 +3,7 @@
   "private": true,
   "packageManager": "pnpm@10.6.0",
   "scripts": {
-    "build": "npm run generate:manifests && cargo build -p route-engine && npm run build:sdk-package && node --test packages/*/test/*.test.mjs services/status-indexer/test/*.test.mjs",
+    "build": "npm run generate:manifests && cargo build -p route-engine && npm run build:sdk-package && node --test packages/*/test/*.test.mjs",
     "build:sdk-package": "node packages/xroute-sdk/scripts/build-package.mjs",
     "check": "npm run test",
     "deploy:local-devnet": "forge build --root contracts/polkadot-hub-router && node scripts/deploy-local-devnet.mjs && node packages/xroute-precompile-interfaces/scripts/generate-manifests.mjs",
@@ -13,7 +13,7 @@
     "generate:manifests": "forge build --root contracts/polkadot-hub-router && node packages/xroute-precompile-interfaces/scripts/generate-manifests.mjs",
     "test": "npm run generate:manifests && npm run test:rust && npm run test:solidity && npm run test:node && npm run test:package && npm run test:devnet",
     "test:devnet": "node --test testing/devnet/*.test.mjs",
-    "test:node": "node --test packages/*/test/*.test.mjs services/status-indexer/test/*.test.mjs",
+    "test:node": "node --test packages/*/test/*.test.mjs",
     "test:package": "node packages/xroute-sdk/scripts/build-package.mjs && npm --cache ./.npm-cache pack --dry-run ./packages/xroute-sdk",
     "test:rust": "cargo test -p route-engine",
     "test:solidity": "forge test --root contracts/polkadot-hub-router"

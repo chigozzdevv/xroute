@@ -103,6 +103,22 @@ export function getDestinationAdapterDeployment(
   return deployment;
 }
 
+export function hasDestinationAdapterDeployment(
+  adapterId,
+  chainKey,
+  deploymentProfile = DEFAULT_DEPLOYMENT_PROFILE,
+) {
+  const normalizedAdapterId = assertNonEmptyString("adapterId", adapterId);
+  const normalizedChainKey = assertNonEmptyString("chainKey", chainKey);
+  const normalizedDeploymentProfile = normalizeDeploymentProfile(deploymentProfile);
+
+  return (
+    getDestinationAdapterDeploymentsMap()[
+      `${normalizedAdapterId}:${normalizedChainKey}:${normalizedDeploymentProfile}`
+    ] !== undefined
+  );
+}
+
 function getDestinationTransactDispatch() {
   const manifest = loadSpecsManifest();
   const cache = manifestCache.dispatchSpec;

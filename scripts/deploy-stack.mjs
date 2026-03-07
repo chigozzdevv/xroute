@@ -30,16 +30,29 @@ export function deployStack(overrides = {}) {
       process.env.XROUTE_DEPLOYMENT_PROFILE ??
       DEPLOYMENT_PROFILES.LOCAL,
   );
-  const rpcUrl =
-    overrides.rpcUrl ??
-    process.env.XROUTE_RPC_URL ??
-    process.env.XROUTE_LOCAL_RPC_URL ??
-    "http://127.0.0.1:8545";
-  const privateKey =
-    overrides.privateKey ??
-    process.env.XROUTE_PRIVATE_KEY ??
-    process.env.XROUTE_LOCAL_PRIVATE_KEY ??
-    defaultPrivateKey;
+  const isLocalDeployment = deploymentProfile === DEPLOYMENT_PROFILES.LOCAL;
+  if (!isLocalDeployment) {
+    assertLiveDeploymentConfirmed(
+      overrides.allowLiveDeployment ?? process.env.XROUTE_ALLOW_LIVE_DEPLOY,
+      deploymentProfile,
+    );
+  }
+
+  const rpcUrl = isLocalDeployment
+    ? overrides.rpcUrl ??
+      process.env.XROUTE_RPC_URL ??
+      process.env.XROUTE_LOCAL_RPC_URL ??
+      "http://127.0.0.1:8545"
+    : requiredSetting("XROUTE_RPC_URL", overrides.rpcUrl ?? process.env.XROUTE_RPC_URL);
+  const privateKey = isLocalDeployment
+    ? overrides.privateKey ??
+      process.env.XROUTE_PRIVATE_KEY ??
+      process.env.XROUTE_LOCAL_PRIVATE_KEY ??
+      defaultPrivateKey
+    : requiredSetting(
+        "XROUTE_PRIVATE_KEY",
+        overrides.privateKey ?? process.env.XROUTE_PRIVATE_KEY,
+      );
   const chainKey =
     overrides.chainKey ?? process.env.XROUTE_DESTINATION_CHAIN_KEY ?? "hydration";
   const platformFeeBps =
@@ -57,16 +70,40 @@ export function deployStack(overrides = {}) {
     "";
   const deployLocalInfrastructure =
     overrides.deployLocalInfrastructure ??
-    (deploymentProfile === DEPLOYMENT_PROFILES.LOCAL &&
+    (isLocalDeployment &&
       process.env.XROUTE_DEPLOY_LOCAL_INFRASTRUCTURE !== "false");
+
+  if (!isLocalDeployment) {
+    if (privateKey === defaultPrivateKey) {
+      throw new Error(
+        `refusing to deploy to ${deploymentProfile} with the local default private key`,
+      );
+    }
+
+    if (rpcUrl === "http://127.0.0.1:8545") {
+      throw new Error(
+        `refusing to deploy to ${deploymentProfile} with the default local RPC URL`,
+      );
+    }
+  }
 
   const deployer = runCast(["wallet", "address", "--private-key", privateKey], {
     rpcUrl,
   });
   const executorAddress =
-    overrides.executorAddress ?? process.env.XROUTE_ROUTER_EXECUTOR ?? deployer;
+    isLocalDeployment
+      ? overrides.executorAddress ?? process.env.XROUTE_ROUTER_EXECUTOR ?? deployer
+      : requiredSetting(
+          "XROUTE_ROUTER_EXECUTOR",
+          overrides.executorAddress ?? process.env.XROUTE_ROUTER_EXECUTOR,
+        );
   const treasuryAddress =
-    overrides.treasuryAddress ?? process.env.XROUTE_ROUTER_TREASURY ?? deployer;
+    isLocalDeployment
+      ? overrides.treasuryAddress ?? process.env.XROUTE_ROUTER_TREASURY ?? deployer
+      : requiredSetting(
+          "XROUTE_ROUTER_TREASURY",
+          overrides.treasuryAddress ?? process.env.XROUTE_ROUTER_TREASURY,
+        );
 
   const xcmAddress =
     overrides.xcmAddress ??
@@ -76,7 +113,9 @@ export function deployStack(overrides = {}) {
           rpcUrl,
           privateKey,
         })
-      : XCM_PRECOMPILE_ADDRESS);
+      : isLocalDeployment
+        ? XCM_PRECOMPILE_ADDRESS
+        : requiredSetting("XROUTE_XCM_ADDRESS", null));
 
   const dispatcherAddress = deployContract(
     "src/dispatcher/DestinationTransactDispatcherV1.sol:DestinationTransactDispatcherV1",
@@ -351,6 +390,23 @@ function assetId(symbol) {
   const bytes = Buffer.alloc(32);
   Buffer.from(symbol, "utf8").copy(bytes);
   return `0x${bytes.toString("hex")}`;
+}
+
+function assertLiveDeploymentConfirmed(flag, deploymentProfile) {
+  if (String(flag ?? "").trim().toLowerCase() !== "true") {
+    throw new Error(
+      `refusing to deploy to ${deploymentProfile} without XROUTE_ALLOW_LIVE_DEPLOY=true`,
+    );
+  }
+}
+
+function requiredSetting(name, value) {
+  const normalized = String(value ?? "").trim();
+  if (normalized === "") {
+    throw new Error(`missing required setting: ${name}`);
+  }
+
+  return normalized;
 }
 
 function writeJson(path, value) {

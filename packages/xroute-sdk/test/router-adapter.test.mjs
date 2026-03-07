@@ -6,8 +6,8 @@ import { buildDispatchRequest, createDispatchEnvelope } from "../../xroute-xcm/i
 import {
   createCastRouterAdapter,
   createStaticAssetAddressResolver,
-  InMemoryStatusIndexer,
-} from "../index.mjs";
+} from "../router-adapters.mjs";
+import { InMemoryStatusIndexer } from "../status-indexer.mjs";
 
 const signerAddress = "0x1111111111111111111111111111111111111111";
 const routerAddress = "0x2222222222222222222222222222222222222222";
