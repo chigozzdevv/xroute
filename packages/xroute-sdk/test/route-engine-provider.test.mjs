@@ -285,7 +285,7 @@ test("sdk execute derives the XCM envelope from the route-engine quote", async (
         return () => {};
       },
     },
-    assetAddressResolver: async () => "0x0000000000000000000000000000000000000401",
+    assetAddressResolver: async () => "0x0000000000000000000000000000000000000000",
   });
   const intent = createSwapIntent({
     sourceChain: "polkadot-hub",
@@ -351,7 +351,7 @@ test("sdk execute submits a runtime-call execute action", async () => {
         return () => {};
       },
     },
-    assetAddressResolver: async () => "0x0000000000000000000000000000000000000401",
+    assetAddressResolver: async () => "0x0000000000000000000000000000000000000000",
   });
   const intent = createExecuteIntent({
     sourceChain: "polkadot-hub",

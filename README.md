@@ -341,7 +341,7 @@ node scripts/deploy-stack.mjs
 
 Current live testnet deployment:
 
-- router: `0xeb1c1fb9124bc9b9574fcdf7da44624d92693b3a`
+- router: `0xb1ff3980f0193a98b5a4536ac3f34acfc0d3b322`
 - deployer / relayer: `0x2A3F3E0d1F847a43ebAF87Bb4741084CbDA0f549`
 - chain id: `420420417`
 - artifact: [contracts/polkadot-hub-router/deployments/testnet/polkadot-hub.json](/Users/chigozzdev/Desktop/xroute/contracts/polkadot-hub-router/deployments/testnet/polkadot-hub.json)
@@ -397,7 +397,7 @@ const client = createXRouteClient({
   statusProvider,
   assetAddressResolver: async ({ chainKey, assetKey }) => {
     if (chainKey === "polkadot-hub" && assetKey === "DOT") {
-      return "0x0000000000000000000000000000000000000401";
+      return "0x0000000000000000000000000000000000000000";
     }
 
     throw new Error(`unsupported ${assetKey} on ${chainKey}`);

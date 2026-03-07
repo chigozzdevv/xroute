@@ -12,3 +12,4 @@ ignition/deployments
 contracts/polkadot-hub-router/cache
 contracts/polkadot-hub-router/out
 testing/devnet/.artifacts
+services/executor-relayer/data/

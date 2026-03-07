@@ -5,6 +5,7 @@ import { createSwapIntent } from "../../xroute-intents/index.mjs";
 import { buildDispatchRequest, createDispatchEnvelope } from "../../xroute-xcm/index.mjs";
 import {
   createCastRouterAdapter,
+  NATIVE_ASSET_ADDRESS,
   createStaticAssetAddressResolver,
 } from "../router-adapters.mjs";
 import { InMemoryStatusIndexer } from "../status-indexer.mjs";
@@ -142,6 +143,81 @@ test("cast router adapter approves, submits, dispatches, and persists status eve
     calls.filter((args) => args[0] === "send").map((args) => args[1]),
     [dotAddress, routerAddress, routerAddress],
   );
+});
+
+test("cast router adapter submits a native asset intent with value instead of approval", async () => {
+  const calls = [];
+  const adapter = createCastRouterAdapter({
+    rpcUrl: "http://127.0.0.1:8545",
+    routerAddress,
+    privateKey,
+    ownerAddress: signerAddress,
+    async commandRunner({ args }) {
+      calls.push(args);
+      const [command, ...rest] = args;
+
+      if (command === "call" && rest[1] === "previewLockedAmount((uint8,address,address,uint128,uint128,uint128,uint128,uint64,bytes32))(uint128)") {
+        return { stdout: "12345\n" };
+      }
+      if (command === "call" && rest[1] === "nextIntentNonce()(uint256)") {
+        return { stdout: "8\n" };
+      }
+      if (command === "send" && rest[0] === routerAddress && rest[1] === "submitIntent((uint8,address,address,uint128,uint128,uint128,uint128,uint64,bytes32))") {
+        return { stdout: "{\"transactionHash\":\"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}\n" };
+      }
+      if (command === "abi-encode") {
+        return { stdout: "0x1234\n" };
+      }
+      if (command === "keccak") {
+        return { stdout: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n" };
+      }
+
+      throw new Error(`unexpected cast call: ${args.join(" ")}`);
+    },
+  });
+
+  const request = {
+    actionType: 0,
+    asset: NATIVE_ASSET_ADDRESS,
+    refundAddress: signerAddress,
+    amount: 10000n,
+    xcmFee: 2000n,
+    destinationFee: 300n,
+    minOutputAmount: 10000n,
+    deadline: 1773185200,
+    executionHash: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  };
+
+  const submitted = await adapter.submitIntent({
+    owner: signerAddress,
+    intent: {
+      quoteId: "quote-1",
+      sourceChain: "polkadot-hub",
+      destinationChain: "hydration",
+      refundAddress: signerAddress,
+      deadline: 1773185200,
+      action: { type: "transfer", params: { asset: "DOT", amount: 10000n, recipient: recipientAccount } },
+    },
+    quote: {
+      quoteId: "quote-1",
+      submission: {
+        action: "transfer",
+        asset: "DOT",
+        amount: 10000n,
+        xcmFee: 2000n,
+        destinationFee: 300n,
+        minOutputAmount: 10000n,
+      },
+    },
+    request,
+  });
+
+  assert.equal(submitted.lockedAmount, 12345n);
+  assert.equal(
+    calls.some((args) => args[0] === "send" && args.includes("--value") && args.includes("12345")),
+    true,
+  );
+  assert.equal(calls.some((args) => args[0] === "send" && args[1] === NATIVE_ASSET_ADDRESS), false);
 });
 
 test("cast router adapter finalizes and refunds intents onchain", async () => {

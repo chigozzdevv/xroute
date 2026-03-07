@@ -2,6 +2,8 @@
 pragma solidity ^0.8.28;
 
 interface Vm {
+    function deal(address who, uint256 newBalance) external;
+
     function prank(address caller) external;
 
     function expectRevert(bytes4 revertData) external;

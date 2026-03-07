@@ -5,6 +5,8 @@ import {IERC20} from "./interfaces/IERC20.sol";
 import {IXcm} from "./interfaces/IXcm.sol";
 
 contract XRouteHubRouter {
+    address public constant NATIVE_ASSET = address(0);
+
     enum ActionType {
         Transfer,
         Swap,
@@ -79,6 +81,7 @@ contract XRouteHubRouter {
     error InvalidRefundAmount();
     error InsufficientResultAmount();
     error AssetTransferFailed();
+    error InvalidNativeValue();
     error ReentrantCall();
 
     event IntentSubmitted(
@@ -151,8 +154,8 @@ contract XRouteHubRouter {
         emit PlatformFeeUpdated(feeBps);
     }
 
-    function submitIntent(IntentRequest calldata request) external nonReentrant returns (bytes32 intentId) {
-        if (request.asset == address(0) || request.refundAddress == address(0)) revert ZeroAddress();
+    function submitIntent(IntentRequest calldata request) external payable nonReentrant returns (bytes32 intentId) {
+        if (request.refundAddress == address(0)) revert ZeroAddress();
         if (request.amount == 0) revert InvalidAmount();
         if (request.deadline <= block.timestamp) revert InvalidDeadline();
         if (request.executionHash == bytes32(0)) revert InvalidExecutionHash();
@@ -196,7 +199,7 @@ contract XRouteHubRouter {
             refundAmount: 0
         });
 
-        _safeTransferFrom(request.asset, msg.sender, address(this), totalLocked);
+        _receiveAsset(request.asset, msg.sender, totalLocked);
 
         emit IntentSubmitted(
             intentId,
@@ -221,7 +224,7 @@ contract XRouteHubRouter {
         intent.status = IntentStatus.Dispatched;
 
         if (intent.platformFee != 0) {
-            _safeTransfer(intent.asset, treasury, intent.platformFee);
+            _transferAsset(intent.asset, treasury, intent.platformFee);
         }
 
         if (request.mode == DispatchMode.Execute) {
@@ -288,7 +291,7 @@ contract XRouteHubRouter {
         intent.status = IntentStatus.Refunded;
         intent.refundAmount = refundAmount;
 
-        _safeTransfer(intent.asset, intent.refundAddress, refundAmount);
+        _transferAsset(intent.asset, intent.refundAddress, refundAmount);
 
         emit IntentRefunded(intentId, refundAmount);
     }
@@ -302,7 +305,7 @@ contract XRouteHubRouter {
         intent.status = IntentStatus.Cancelled;
 
         uint128 lockedAmount = intent.amount + intent.xcmFee + intent.destinationFee + intent.platformFee;
-        _safeTransfer(intent.asset, intent.refundAddress, lockedAmount);
+        _transferAsset(intent.asset, intent.refundAddress, lockedAmount);
 
         emit IntentCancelled(intentId);
     }
@@ -366,6 +369,34 @@ contract XRouteHubRouter {
     function _refundableAmount(IntentRecord storage intent) internal view returns (uint128) {
         uint128 lockedNetAmount = intent.amount + intent.xcmFee + intent.destinationFee;
         return lockedNetAmount - intent.refundAmount;
+    }
+
+    function _receiveAsset(address asset, address from, uint256 amount) internal {
+        if (_isNativeAsset(asset)) {
+            if (msg.value != amount) revert InvalidNativeValue();
+            if (from != msg.sender) revert Unauthorized();
+            return;
+        }
+        if (msg.value != 0) revert InvalidNativeValue();
+        _safeTransferFrom(asset, from, address(this), amount);
+    }
+
+    function _transferAsset(address asset, address to, uint256 amount) internal {
+        if (amount == 0) return;
+        if (_isNativeAsset(asset)) {
+            _safeNativeTransfer(to, amount);
+            return;
+        }
+        _safeTransfer(asset, to, amount);
+    }
+
+    function _safeNativeTransfer(address to, uint256 amount) internal {
+        (bool success,) = payable(to).call{value: amount}("");
+        if (!success) revert AssetTransferFailed();
+    }
+
+    function _isNativeAsset(address asset) internal pure returns (bool) {
+        return asset == NATIVE_ASSET;
     }
 
     function _safeTransfer(address asset, address to, uint256 amount) internal {

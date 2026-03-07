@@ -36,6 +36,7 @@ const NEXT_INTENT_NONCE_SIGNATURE = "nextIntentNonce()(uint256)";
 const HASH_INTENT_SIGNATURE =
   "f(address,uint256,uint8,address,address,uint128,uint128,uint128,uint128,uint64,bytes32)";
 const HASH_DISPATCH_SIGNATURE = "f(uint8,bytes,bytes)";
+export const NATIVE_ASSET_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 export function createCastRouterAdapter({
   rpcUrl,
@@ -82,7 +83,7 @@ export function createCastRouterAdapter({
     }
 
     const lockedAmount = await previewLockedAmount(request);
-    if (autoApprove) {
+    if (autoApprove && !isNativeAssetAddress(request.asset)) {
       await ensureAllowance({
         assetAddress: request.asset,
         ownerAddress: signerAddress,
@@ -96,6 +97,7 @@ export function createCastRouterAdapter({
       normalizedRouterAddress,
       SUBMIT_INTENT_SIGNATURE,
       [formatIntentRequestTuple(request)],
+      { value: isNativeAssetAddress(request.asset) ? lockedAmount : null },
     );
     const intentId = await computeIntentId({
       ownerAddress: signerAddress,
@@ -354,8 +356,8 @@ export function createCastRouterAdapter({
     return parseUint256(output);
   }
 
-  async function sendTransaction(contractAddress, signature, args = []) {
-    const output = await runCast([
+  async function sendTransaction(contractAddress, signature, args = [], options = {}) {
+    const command = [
       "send",
       assertAddress("contractAddress", contractAddress),
       signature,
@@ -365,7 +367,12 @@ export function createCastRouterAdapter({
       "--private-key",
       normalizedPrivateKey,
       "--json",
-    ]);
+    ];
+    if (options.value !== undefined && options.value !== null) {
+      command.push("--value", toUintString(options.value));
+    }
+
+    const output = await runCast(command);
 
     return extractTransactionHash(output);
   }
@@ -419,6 +426,10 @@ export function createStaticAssetAddressResolver(addressesByChain) {
 
     return assertAddress("assetAddress", address);
   };
+}
+
+function isNativeAssetAddress(address) {
+  return assertAddress("assetAddress", address) === NATIVE_ASSET_ADDRESS;
 }
 
 export function encodeAssetIdSymbol(assetSymbol) {

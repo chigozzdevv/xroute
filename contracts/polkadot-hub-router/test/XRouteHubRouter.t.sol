@@ -73,6 +73,38 @@ contract XRouteHubRouterTest is TestBase {
         assertEq(xcm.lastExecutedMessage(), message);
     }
 
+    function test_submit_and_dispatch_native_transfer_intent() public {
+        bytes memory message = hex"050c000401000003";
+        bytes32 executionHash = _executionHash(XRouteHubRouter.DispatchMode.Execute, "", message);
+        XRouteHubRouter.IntentRequest memory request = XRouteHubRouter.IntentRequest({
+            actionType: XRouteHubRouter.ActionType.Transfer,
+            asset: address(0),
+            refundAddress: REFUND_RECIPIENT,
+            amount: 25 * 10 ** 10,
+            xcmFee: 100_000_000,
+            destinationFee: 20_000_000,
+            minOutputAmount: 25 * 10 ** 10,
+            deadline: uint64(block.timestamp + 1 days),
+            executionHash: executionHash
+        });
+
+        uint256 lockedAmount = router.previewLockedAmount(request);
+        vm.deal(ALICE, lockedAmount);
+
+        vm.prank(ALICE);
+        bytes32 intentId = router.submitIntent{value: lockedAmount}(request);
+
+        assertEq(address(router).balance, lockedAmount);
+
+        vm.prank(EXECUTOR);
+        router.dispatchIntent(intentId, _dispatchRequest(XRouteHubRouter.DispatchMode.Execute, "", message));
+
+        XRouteHubRouter.IntentRecord memory intent = router.getIntent(intentId);
+        assertEq(uint256(intent.status), uint256(XRouteHubRouter.IntentStatus.Dispatched));
+        assertEq(TREASURY.balance, 250_000_000);
+        assertEq(address(router).balance, lockedAmount - 250_000_000);
+    }
+
     function test_submit_and_dispatch_runtime_execute_intent() public {
         bytes memory message = hex"050c000401000003";
         bytes32 executionHash = _executionHash(XRouteHubRouter.DispatchMode.Execute, "", message);
@@ -142,6 +174,29 @@ contract XRouteHubRouterTest is TestBase {
         assertEq(token.balanceOf(ALICE), 2_000 * 10 ** 10 - lockedAmount);
         assertEq(token.balanceOf(REFUND_RECIPIENT), lockedAmount);
         assertEq(token.balanceOf(address(router)), 0);
+    }
+
+    function test_submit_native_reverts_for_wrong_value() public {
+        bytes memory message = hex"050c000401000003";
+        bytes32 executionHash = _executionHash(XRouteHubRouter.DispatchMode.Execute, "", message);
+        XRouteHubRouter.IntentRequest memory request = XRouteHubRouter.IntentRequest({
+            actionType: XRouteHubRouter.ActionType.Transfer,
+            asset: address(0),
+            refundAddress: REFUND_RECIPIENT,
+            amount: 25 * 10 ** 10,
+            xcmFee: 100_000_000,
+            destinationFee: 20_000_000,
+            minOutputAmount: 25 * 10 ** 10,
+            deadline: uint64(block.timestamp + 1 days),
+            executionHash: executionHash
+        });
+
+        uint256 lockedAmount = router.previewLockedAmount(request);
+        vm.deal(ALICE, lockedAmount);
+
+        vm.prank(ALICE);
+        vm.expectRevert(XRouteHubRouter.InvalidNativeValue.selector);
+        router.submitIntent{value: lockedAmount - 1}(request);
     }
 
     function test_dispatch_reverts_for_uncommitted_payload() public {

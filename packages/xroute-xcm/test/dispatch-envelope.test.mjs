@@ -71,11 +71,11 @@ test("buildRouterIntentRequest matches the contract-facing request shape", () =>
     intent,
     quote,
     envelope,
-    assetAddress: "0x0000000000000000000000000000000000000401",
+    assetAddress: "0x0000000000000000000000000000000000000000",
   });
 
   assert.equal(request.actionType, 1);
-  assert.equal(request.asset, "0x0000000000000000000000000000000000000401");
+  assert.equal(request.asset, "0x0000000000000000000000000000000000000000");
   assert.equal(request.refundAddress, "0x1111111111111111111111111111111111111111");
   assert.equal(request.amount, 1000000000000n);
   assert.equal(request.deadline, 1773185200);

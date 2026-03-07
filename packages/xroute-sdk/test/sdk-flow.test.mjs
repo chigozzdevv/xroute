@@ -152,7 +152,7 @@ test("sdk coordinates quote, submit, dispatch, and status tracking", async () =>
     assetAddressResolver: async ({ chainKey, assetKey }) => {
       assert.equal(chainKey, "polkadot-hub");
       assert.equal(assetKey, "DOT");
-      return "0x0000000000000000000000000000000000000401";
+      return "0x0000000000000000000000000000000000000000";
     },
   });
 
@@ -321,7 +321,7 @@ test("sdk coordinates fail and refund helpers", async () => {
     quoteProvider,
     routerAdapter: new MemoryRouterAdapter(indexer),
     statusProvider: indexer,
-    assetAddressResolver: async () => "0x0000000000000000000000000000000000000401",
+    assetAddressResolver: async () => "0x0000000000000000000000000000000000000000",
   });
 
   const intent = createSwapIntent({

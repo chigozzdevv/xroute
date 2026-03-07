@@ -20,6 +20,8 @@ import {
   normalizeDeploymentProfile,
 } from "../xroute-precompile-interfaces/index.mjs";
 
+export { NATIVE_ASSET_ADDRESS } from "./router-adapters.mjs";
+
 const execFileAsync = promisify(execFile);
 let serializedCommandQueue = Promise.resolve();
 
