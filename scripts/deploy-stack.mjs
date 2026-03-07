@@ -30,14 +30,6 @@ export function deployStack(overrides = {}) {
     "XROUTE_PRIVATE_KEY",
     overrides.privateKey ?? process.env.XROUTE_PRIVATE_KEY,
   );
-  const executorAddress = requiredSetting(
-    "XROUTE_ROUTER_EXECUTOR",
-    overrides.executorAddress ?? process.env.XROUTE_ROUTER_EXECUTOR,
-  );
-  const treasuryAddress = requiredSetting(
-    "XROUTE_ROUTER_TREASURY",
-    overrides.treasuryAddress ?? process.env.XROUTE_ROUTER_TREASURY,
-  );
   const platformFeeBps =
     overrides.platformFeeBps ?? process.env.XROUTE_PLATFORM_FEE_BPS ?? "10";
   const xcmAddress =
@@ -55,6 +47,14 @@ export function deployStack(overrides = {}) {
   const deployer = runCast(["wallet", "address", "--private-key", privateKey], {
     rpcUrl,
   });
+  const executorAddress = normalizeAddress(
+    overrides.executorAddress ?? process.env.XROUTE_ROUTER_EXECUTOR ?? deployer,
+    "XROUTE_ROUTER_EXECUTOR",
+  );
+  const treasuryAddress = normalizeAddress(
+    overrides.treasuryAddress ?? process.env.XROUTE_ROUTER_TREASURY ?? deployer,
+    "XROUTE_ROUTER_TREASURY",
+  );
   const routerAddress = deployContract("src/XRouteHubRouter.sol:XRouteHubRouter", [
     xcmAddress,
     executorAddress,
@@ -147,6 +147,15 @@ function requiredSetting(name, value) {
   const normalized = String(value ?? "").trim();
   if (normalized === "") {
     throw new Error(`missing required setting: ${name}`);
+  }
+
+  return normalized;
+}
+
+function normalizeAddress(value, name) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(normalized)) {
+    throw new Error(`invalid address for ${name}`);
   }
 
   return normalized;
