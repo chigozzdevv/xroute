@@ -154,6 +154,7 @@ fn parse_execution_type(value: &str) -> Result<ExecutionType, String> {
 fn parse_vtoken_order_operation(value: &str) -> Result<VtokenOrderOperation, String> {
     match value {
         "mint" => Ok(VtokenOrderOperation::Mint),
+        "redeem" => Ok(VtokenOrderOperation::Redeem),
         other => Err(format!("unsupported vtoken order operation: {other}")),
     }
 }
@@ -487,6 +488,20 @@ fn xcm_instruction_json(instruction: &XcmInstruction) -> String {
                 .collect::<Vec<_>>()
                 .join(","),
         ),
+        XcmInstruction::InitiateTeleport {
+            asset_count,
+            destination,
+            remote_instructions,
+        } => format!(
+            "{{\"type\":\"initiate-teleport\",\"assetCount\":{},\"destination\":{},\"remoteInstructions\":[{}]}}",
+            asset_count,
+            json_string(destination.as_str()),
+            remote_instructions
+                .iter()
+                .map(xcm_instruction_json)
+                .collect::<Vec<_>>()
+                .join(","),
+        ),
         XcmInstruction::InitiateReserveWithdraw {
             asset_count,
             reserve,
@@ -599,7 +614,7 @@ fn usage() -> String {
         "  swap: --asset-in <symbol> --asset-out <symbol> --amount-in <units> --min-amount-out <units> --recipient <address> [--settlement-chain <chain>]",
         "  execute/runtime-call: --execution-type runtime-call --asset <symbol> --max-payment-amount <units> --call-data <hex> --fallback-ref-time <u64> --fallback-proof-size <u64> [--origin-kind <sovereign-account|xcm|native|superuser>]",
         "  execute/evm-contract-call: --execution-type evm-contract-call --asset <symbol> --max-payment-amount <units> --contract-address <0x...> --calldata <hex> --gas-limit <u64> [--value <u128>] --fallback-ref-time <u64> --fallback-proof-size <u64>",
-        "  execute/vtoken-order: --execution-type vtoken-order --asset <symbol> --amount <units> --max-payment-amount <units> --operation mint --recipient <address> --recipient-account-id <0x...> [--channel-id <u32>] [--remark <text>] --fallback-ref-time <u64> --fallback-proof-size <u64>",
+        "  execute/vtoken-order: --execution-type vtoken-order --asset <DOT|VDOT> --amount <units> --max-payment-amount <units> --operation <mint|redeem> --recipient <address> --recipient-account-id <0x...> [--channel-id <u32>] [--remark <text>] --fallback-ref-time <u64> --fallback-proof-size <u64>",
     ]
     .join("\n")
 }

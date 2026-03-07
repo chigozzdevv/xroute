@@ -134,6 +134,33 @@ export const ASSETS = Object.freeze({
       }),
     }),
   }),
+  VDOT: Object.freeze({
+    symbol: "VDOT",
+    decimals: 10,
+    supportedChains: Object.freeze(["bifrost", "polkadot-hub"]),
+    xcmLocations: Object.freeze({
+      bifrost: Object.freeze({
+        parents: 0,
+        interior: Object.freeze({
+          type: "x1",
+          value: Object.freeze({
+            type: "general-key",
+            value: "0x0900",
+          }),
+        }),
+      }),
+      "polkadot-hub": Object.freeze({
+        parents: 1,
+        interior: Object.freeze({
+          type: "x2",
+          value: Object.freeze([
+            Object.freeze({ type: "parachain", value: 2030 }),
+            Object.freeze({ type: "general-key", value: "0x0900" }),
+          ]),
+        }),
+      }),
+    }),
+  }),
 });
 
 const DIRECT_ROUTES = Object.freeze([
@@ -200,9 +227,9 @@ const DIRECT_ROUTES = Object.freeze([
     destinationChain: "bifrost",
     path: Object.freeze(["polkadot-hub", "bifrost"]),
     actions: Object.freeze([ACTION_TYPES.TRANSFER, ACTION_TYPES.EXECUTE]),
-    transferableAssets: Object.freeze(["DOT"]),
+    transferableAssets: Object.freeze(["DOT", "VDOT"]),
     swapPairs: Object.freeze([]),
-    executeAssets: Object.freeze(["DOT"]),
+    executeAssets: Object.freeze(["DOT", "VDOT"]),
     executeTypes: Object.freeze([
       EXECUTION_TYPES.RUNTIME_CALL,
       EXECUTION_TYPES.VTOKEN_ORDER,
@@ -280,16 +307,19 @@ export function getRoute(sourceChain, destinationChain) {
 
 export function assertTransferRoute(sourceChain, destinationChain, assetKey) {
   const asset = getAsset(assetKey);
-  const route = getRoute(sourceChain, destinationChain);
-  assertIncluded("action", ACTION_TYPES.TRANSFER, route.actions);
-
-  if (!route.transferableAssets.includes(asset.symbol)) {
+  const path = findTransferPath(sourceChain, destinationChain, asset.symbol);
+  if (!path) {
     throw new Error(
-      `asset ${asset.symbol} is not transferable on ${route.sourceChain} -> ${route.destinationChain}`,
+      `asset ${asset.symbol} is not transferable on ${getChain(sourceChain).key} -> ${getChain(destinationChain).key}`,
     );
   }
 
-  return route;
+  return Object.freeze({
+    sourceChain: path[0],
+    destinationChain: path[path.length - 1],
+    path,
+    action: ACTION_TYPES.TRANSFER,
+  });
 }
 
 export function assertSwapRoute(
@@ -299,24 +329,59 @@ export function assertSwapRoute(
   assetOutKey,
   settlementChain = destinationChain,
 ) {
-  const route = getRoute(sourceChain, destinationChain);
-  assertIncluded("action", ACTION_TYPES.SWAP, route.actions);
+  const normalizedSource = getChain(sourceChain).key;
+  const normalizedDestination = getChain(destinationChain).key;
+  const normalizedSettlement = getChain(settlementChain).key;
   const assetIn = getAsset(assetInKey);
   const assetOut = getAsset(assetOutKey);
+  const executionPath = findTransferPath(normalizedSource, normalizedDestination, assetIn.symbol);
+  if (!executionPath) {
+    throw new Error(
+      `asset ${assetIn.symbol} cannot reach ${normalizedDestination} from ${normalizedSource}`,
+    );
+  }
+
+  const route = DIRECT_ROUTES.find(
+    (candidate) =>
+      candidate.destinationChain === normalizedDestination &&
+      candidate.actions.includes(ACTION_TYPES.SWAP),
+  );
+  if (!route) {
+    throw new Error(`unsupported swap destination: ${normalizedDestination}`);
+  }
 
   const supported = route.swapPairs.some(
     (pair) =>
       pair.assetIn === assetIn.symbol &&
       pair.assetOut === assetOut.symbol &&
-      pair.settlementChains.includes(getChain(settlementChain).key),
+      pair.settlementChains.includes(normalizedSettlement),
   );
   if (!supported) {
     throw new Error(
-      `swap ${assetIn.symbol} -> ${assetOut.symbol} is not supported on ${route.sourceChain} -> ${route.destinationChain} for settlement on ${getChain(settlementChain).key}`,
+      `swap ${assetIn.symbol} -> ${assetOut.symbol} is not supported on ${normalizedSource} -> ${normalizedDestination} for settlement on ${normalizedSettlement}`,
     );
   }
 
-  return route;
+  if (normalizedSettlement !== normalizedDestination) {
+    const settlementPath = findTransferPath(
+      normalizedDestination,
+      normalizedSettlement,
+      assetOut.symbol,
+    );
+    if (!settlementPath) {
+      throw new Error(
+        `asset ${assetOut.symbol} cannot settle from ${normalizedDestination} to ${normalizedSettlement}`,
+      );
+    }
+  }
+
+  return Object.freeze({
+    sourceChain: normalizedSource,
+    destinationChain: normalizedDestination,
+    settlementChain: normalizedSettlement,
+    executionPath,
+    action: ACTION_TYPES.SWAP,
+  });
 }
 
 export function assertExecuteRoute(
@@ -326,15 +391,83 @@ export function assertExecuteRoute(
   executionType = EXECUTION_TYPES.RUNTIME_CALL,
 ) {
   const asset = getAsset(assetKey);
-  const route = getRoute(sourceChain, destinationChain);
-  assertIncluded("action", ACTION_TYPES.EXECUTE, route.actions);
-  assertIncluded("executionType", executionType, route.executeTypes);
-
-  if (!route.executeAssets.includes(asset.symbol)) {
+  const normalizedSource = getChain(sourceChain).key;
+  const normalizedDestination = getChain(destinationChain).key;
+  const transferPath = findTransferPath(normalizedSource, normalizedDestination, asset.symbol);
+  if (!transferPath) {
     throw new Error(
-      `asset ${asset.symbol} is not supported for execute on ${route.sourceChain} -> ${route.destinationChain}`,
+      `asset ${asset.symbol} cannot reach ${normalizedDestination} from ${normalizedSource}`,
     );
   }
 
-  return route;
+  const route = DIRECT_ROUTES.find(
+    (candidate) =>
+      candidate.destinationChain === normalizedDestination &&
+      candidate.actions.includes(ACTION_TYPES.EXECUTE) &&
+      candidate.executeTypes.includes(executionType),
+  );
+  if (!route) {
+    throw new Error(
+      `execution type ${executionType} is not supported on destination ${normalizedDestination}`,
+    );
+  }
+  if (!route.executeAssets.includes(asset.symbol)) {
+    throw new Error(
+      `asset ${asset.symbol} is not supported for execute on ${normalizedSource} -> ${normalizedDestination}`,
+    );
+  }
+
+  return Object.freeze({
+    sourceChain: normalizedSource,
+    destinationChain: normalizedDestination,
+    path: transferPath,
+    executionType,
+    action: ACTION_TYPES.EXECUTE,
+  });
+}
+
+export function findTransferPath(sourceChain, destinationChain, assetKey) {
+  const normalizedSource = getChain(sourceChain).key;
+  const normalizedDestination = getChain(destinationChain).key;
+  const asset = getAsset(assetKey);
+  if (normalizedSource === normalizedDestination) {
+    return Object.freeze([normalizedSource]);
+  }
+
+  const queue = [
+    {
+      chain: normalizedSource,
+      path: [normalizedSource],
+    },
+  ];
+  const visited = new Set([normalizedSource]);
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    const nextRoutes = DIRECT_ROUTES.filter(
+      (candidate) =>
+        candidate.sourceChain === current.chain &&
+        candidate.actions.includes(ACTION_TYPES.TRANSFER) &&
+        candidate.transferableAssets.includes(asset.symbol),
+    );
+
+    for (const route of nextRoutes) {
+      if (visited.has(route.destinationChain)) {
+        continue;
+      }
+
+      const nextPath = current.path.concat(route.destinationChain);
+      if (route.destinationChain === normalizedDestination) {
+        return Object.freeze(nextPath);
+      }
+
+      visited.add(route.destinationChain);
+      queue.push({
+        chain: route.destinationChain,
+        path: nextPath,
+      });
+    }
+  }
+
+  return null;
 }

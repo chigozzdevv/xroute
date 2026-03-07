@@ -47,6 +47,11 @@ export function deployStack(overrides = {}) {
   const deployer = runCast(["wallet", "address", "--private-key", privateKey], {
     rpcUrl,
   });
+  const chainId = Number(
+    runCast(["chain-id", "--rpc-url", rpcUrl], {
+      rpcUrl,
+    }),
+  );
   const executorAddress = normalizeAddress(
     overrides.executorAddress ?? process.env.XROUTE_ROUTER_EXECUTOR ?? deployer,
     "XROUTE_ROUTER_EXECUTOR",
@@ -68,7 +73,9 @@ export function deployStack(overrides = {}) {
   const deploymentArtifact = {
     deploymentProfile,
     chainKey: "polkadot-hub",
+    chainId,
     deployer,
+    deployedAt: new Date().toISOString(),
     contracts: {
       XRouteHubRouter: routerAddress,
     },
@@ -83,6 +90,7 @@ export function deployStack(overrides = {}) {
   const deploymentSummary = {
     ...deploymentArtifact,
     rpcUrl,
+    chainId,
     routerAddress,
     xcmAddress,
     executorAddress,

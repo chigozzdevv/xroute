@@ -7,6 +7,7 @@ import {
   EXECUTION_TYPES,
   toBigInt,
   assertIncluded,
+  toPlainObject,
 } from "../xroute-types/index.mjs";
 import {
   buildExecutionEnvelope,
@@ -249,10 +250,123 @@ export function createHttpQuoteProvider({
         throw new Error(`http quote failed with status ${response.status}`);
       }
 
+      const payload = await response.json();
+      const resolvedQuote = payload?.quote ?? payload;
+      if (!resolvedQuote?.submission) {
+        throw new Error("http quote response is missing quote");
+      }
+
       return {
-        ...(await response.json()),
+        ...resolvedQuote,
         quoteId: intent.quoteId,
       };
+    },
+  };
+}
+
+export function createHttpExecutorRelayerClient({
+  endpoint,
+  authToken,
+  fetchImpl = globalThis.fetch,
+  headers = {},
+} = {}) {
+  const normalizedEndpoint = String(endpoint ?? "").replace(/\/+$/, "");
+  if (normalizedEndpoint === "") {
+    throw new Error("endpoint is required");
+  }
+  if (typeof fetchImpl !== "function") {
+    throw new Error("fetchImpl is required");
+  }
+
+  const requestHeaders = {
+    ...headers,
+  };
+  if (authToken) {
+    requestHeaders.authorization = `Bearer ${authToken}`;
+  }
+
+  return {
+    async health() {
+      return requestJson(`${normalizedEndpoint}/healthz`, {
+        method: "GET",
+        fetchImpl,
+        headers: requestHeaders,
+      });
+    },
+
+    async dispatch({ intentId, intent, quote, envelope } = {}) {
+      return requestJson(`${normalizedEndpoint}/jobs/dispatch`, {
+        method: "POST",
+        fetchImpl,
+        headers: requestHeaders,
+        body: {
+          intentId,
+          intent: toPlainIntent(intent),
+          quote: toPlainObject(quote),
+          envelope: envelope ?? undefined,
+        },
+      });
+    },
+
+    async settle({
+      intentId,
+      outcomeReference,
+      resultAssetId,
+      resultAmount,
+    } = {}) {
+      return requestJson(`${normalizedEndpoint}/jobs/settle`, {
+        method: "POST",
+        fetchImpl,
+        headers: requestHeaders,
+        body: {
+          intentId,
+          outcomeReference,
+          resultAssetId,
+          resultAmount: toBigInt(resultAmount, "resultAmount").toString(),
+        },
+      });
+    },
+
+    async fail({ intentId, outcomeReference, failureReasonHash } = {}) {
+      return requestJson(`${normalizedEndpoint}/jobs/fail`, {
+        method: "POST",
+        fetchImpl,
+        headers: requestHeaders,
+        body: {
+          intentId,
+          outcomeReference,
+          failureReasonHash,
+        },
+      });
+    },
+
+    async refund({ intentId, refundAmount, refundAsset } = {}) {
+      return requestJson(`${normalizedEndpoint}/jobs/refund`, {
+        method: "POST",
+        fetchImpl,
+        headers: requestHeaders,
+        body: {
+          intentId,
+          refundAmount: toBigInt(refundAmount, "refundAmount").toString(),
+          refundAsset: refundAsset ?? undefined,
+        },
+      });
+    },
+
+    async getJob(jobId) {
+      return requestJson(`${normalizedEndpoint}/jobs/${encodeURIComponent(jobId)}`, {
+        method: "GET",
+        fetchImpl,
+        headers: requestHeaders,
+      });
+    },
+
+    async listJobs() {
+      return requestJson(`${normalizedEndpoint}/jobs`, {
+        method: "GET",
+        fetchImpl,
+        headers: requestHeaders,
+      });
     },
   };
 }
@@ -482,4 +596,22 @@ function execSerializedCommand({
   const queued = serializedCommandQueue.then(invoke);
   serializedCommandQueue = queued.catch(() => {});
   return queued;
+}
+
+async function requestJson(url, { method, fetchImpl, headers, body }) {
+  const response = await fetchImpl(url, {
+    method,
+    headers: {
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+      ...headers,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(payload.error ?? `${method} ${url} failed with status ${response.status}`);
+  }
+
+  return payload;
 }

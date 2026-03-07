@@ -243,43 +243,77 @@ function assertQuoteSegmentsMatchExecutionPlan(quote) {
   }
 
   const topInstruction = sendStep.instructions?.[0];
-  if (!topInstruction || topInstruction.type !== "transfer-reserve-asset") {
-    throw new Error("send-xcm must begin with a transfer-reserve-asset instruction");
+  if (!topInstruction) {
+    throw new Error("send-xcm must begin with an XCM transfer instruction");
   }
 
-  const transferChain = collectTransferChain(topInstruction);
-  if (transferChain.length !== executionSegment.hops.length) {
-    throw new Error("execution segment hop count must match the nested transfer instruction chain");
-  }
-
-  executionSegment.hops.forEach((hop, index) => {
-    const instruction = transferChain[index];
-    if (instruction.asset !== hop.asset) {
-      throw new Error(`execution hop ${index} asset does not match the XCM instruction chain`);
+  if (topInstruction.type === "transfer-reserve-asset") {
+    const transferChain = collectTransferChain(topInstruction);
+    if (transferChain.length !== executionSegment.hops.length) {
+      throw new Error("execution segment hop count must match the nested transfer instruction chain");
     }
-    if (instruction.destination !== hop.destination) {
+
+    executionSegment.hops.forEach((hop, index) => {
+      const instruction = transferChain[index];
+      if (instruction.asset !== hop.asset) {
+        throw new Error(`execution hop ${index} asset does not match the XCM instruction chain`);
+      }
+      if (instruction.destination !== hop.destination) {
+        throw new Error(
+          `execution hop ${index} destination does not match the XCM instruction chain`,
+        );
+      }
+
+      const buyExecution = instruction.remoteInstructions?.[0];
+      if (!buyExecution || buyExecution.type !== "buy-execution") {
+        throw new Error(`execution hop ${index} must start with a buy-execution instruction`);
+      }
+      if (buyExecution.asset !== hop.buyExecutionFee.asset) {
+        throw new Error(`execution hop ${index} buy-execution asset must match the segment fee`);
+      }
+      if (
+        toBigInt(buyExecution.amount, "buy-execution.amount") !==
+        toBigInt(
+          hop.buyExecutionFee.amount,
+          `segments[${index}].hops[${index}].buyExecutionFee.amount`,
+        )
+      ) {
+        throw new Error(`execution hop ${index} buy-execution amount must match the segment fee`);
+      }
+    });
+    return;
+  }
+
+  if (topInstruction.type === "initiate-teleport") {
+    if (executionSegment.hops.length !== 1) {
+      throw new Error("initiate-teleport currently supports exactly one execution hop");
+    }
+    const [hop] = executionSegment.hops;
+    if (topInstruction.destination !== hop.destination) {
       throw new Error(
-        `execution hop ${index} destination does not match the XCM instruction chain`,
+        "initiate-teleport destination must match the execution segment destination",
       );
     }
-
-    const buyExecution = instruction.remoteInstructions?.[0];
+    const buyExecution = topInstruction.remoteInstructions?.[0];
     if (!buyExecution || buyExecution.type !== "buy-execution") {
-      throw new Error(`execution hop ${index} must start with a buy-execution instruction`);
+      throw new Error("initiate-teleport must start with a buy-execution instruction");
     }
     if (buyExecution.asset !== hop.buyExecutionFee.asset) {
-      throw new Error(`execution hop ${index} buy-execution asset must match the segment fee`);
+      throw new Error("initiate-teleport buy-execution asset must match the segment fee");
     }
     if (
       toBigInt(buyExecution.amount, "buy-execution.amount") !==
       toBigInt(
         hop.buyExecutionFee.amount,
-        `segments[${index}].hops[${index}].buyExecutionFee.amount`,
+        "segments[0].hops[0].buyExecutionFee.amount",
       )
     ) {
-      throw new Error(`execution hop ${index} buy-execution amount must match the segment fee`);
+      throw new Error("initiate-teleport buy-execution amount must match the segment fee");
     }
-  });
+    return;
+  }
+
+  throw new Error(`unsupported send-xcm instruction chain: ${topInstruction.type}`);
 }
 
 function composeSegmentRoute(segments) {
@@ -371,6 +405,18 @@ function buildInstruction({
       });
     case "deposit-reserve-asset":
       return Enum("DepositReserveAsset", {
+        assets: buildCountedAssetFilter(instruction.assetCount),
+        dest: buildParachainLocation(instruction.destination),
+        xcm: instruction.remoteInstructions.map((nestedInstruction) =>
+          buildInstruction({
+            instruction: nestedInstruction,
+            currentChain: instruction.destination,
+            deploymentProfile,
+          }),
+        ),
+      });
+    case "initiate-teleport":
+      return Enum("InitiateTeleport", {
         assets: buildCountedAssetFilter(instruction.assetCount),
         dest: buildParachainLocation(instruction.destination),
         xcm: instruction.remoteInstructions.map((nestedInstruction) =>
@@ -497,6 +543,16 @@ function buildJunction(junction) {
       return Enum("PalletInstance", junction.value);
     case "general-index":
       return Enum("GeneralIndex", toBigInt(junction.value, "junction.value"));
+    case "general-key":
+      {
+        const raw = hexToBytes(junction.value);
+        const data = new Uint8Array(32);
+        data.set(raw.slice(0, 32));
+        return Enum("GeneralKey", {
+          length: raw.length,
+          data: Binary.fromBytes(data),
+        });
+      }
     default:
       throw new Error(`unsupported XCM junction type: ${junction.type}`);
   }

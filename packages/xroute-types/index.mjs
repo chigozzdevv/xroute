@@ -14,6 +14,7 @@ export const EXECUTION_TYPES = Object.freeze({
 
 export const VTOKEN_ORDER_OPERATIONS = Object.freeze({
   MINT: "mint",
+  REDEEM: "redeem",
 });
 
 export const RUNTIME_CALL_ORIGIN_KINDS = Object.freeze({

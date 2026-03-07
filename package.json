@@ -3,13 +3,15 @@
   "private": true,
   "packageManager": "pnpm@10.6.0",
   "scripts": {
-    "build": "cargo build -p route-engine && npm run build:sdk-package && node --test packages/*/test/*.test.mjs",
+    "build": "cargo build -p route-engine && npm run build:sdk-package && npm run test:node",
     "build:sdk-package": "node packages/xroute-sdk/scripts/build-package.mjs",
     "check": "npm test",
     "deploy:testnet": "forge build --root contracts/polkadot-hub-router && XROUTE_DEPLOYMENT_PROFILE=testnet node scripts/deploy-stack.mjs",
     "deploy:mainnet": "forge build --root contracts/polkadot-hub-router && XROUTE_DEPLOYMENT_PROFILE=mainnet node scripts/deploy-stack.mjs",
+    "serve:quote": "node services/quote-service/index.mjs",
+    "serve:executor-relayer": "node services/executor-relayer/index.mjs",
     "test": "npm run test:rust && npm run test:solidity && npm run test:node && npm run test:package",
-    "test:node": "node --test packages/*/test/*.test.mjs",
+    "test:node": "node --test packages/*/test/*.test.mjs services/*/test/*.test.mjs services/shared/test/*.test.mjs",
     "test:package": "node packages/xroute-sdk/scripts/build-package.mjs && npm --cache ./.npm-cache pack --dry-run ./packages/xroute-sdk",
     "test:rust": "cargo test -p route-engine",
     "test:solidity": "forge test --root contracts/polkadot-hub-router"

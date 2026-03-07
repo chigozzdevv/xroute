@@ -90,6 +90,13 @@ impl Default for RouteRegistry {
                     buy_execution_fee: AssetAmount::new(AssetKey::Dot, 100_000_000),
                 },
                 TransferEdge {
+                    source: ChainKey::PolkadotHub,
+                    destination: ChainKey::Bifrost,
+                    asset: AssetKey::Vdot,
+                    transport_fee: AssetAmount::new(AssetKey::Vdot, 170_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Vdot, 100_000_000),
+                },
+                TransferEdge {
                     source: ChainKey::Bifrost,
                     destination: ChainKey::PolkadotHub,
                     asset: AssetKey::Dot,
@@ -117,33 +124,33 @@ impl Default for RouteRegistry {
             ],
             execute_capabilities: vec![
                 ExecuteCapability {
-                    source: ChainKey::PolkadotHub,
                     destination: ChainKey::Hydration,
                     asset: AssetKey::Dot,
                     execution_type: ExecutionType::RuntimeCall,
                 },
                 ExecuteCapability {
-                    source: ChainKey::PolkadotHub,
                     destination: ChainKey::Moonbeam,
                     asset: AssetKey::Dot,
                     execution_type: ExecutionType::RuntimeCall,
                 },
                 ExecuteCapability {
-                    source: ChainKey::PolkadotHub,
                     destination: ChainKey::Moonbeam,
                     asset: AssetKey::Dot,
                     execution_type: ExecutionType::EvmContractCall,
                 },
                 ExecuteCapability {
-                    source: ChainKey::PolkadotHub,
                     destination: ChainKey::Bifrost,
                     asset: AssetKey::Dot,
                     execution_type: ExecutionType::RuntimeCall,
                 },
                 ExecuteCapability {
-                    source: ChainKey::PolkadotHub,
                     destination: ChainKey::Bifrost,
                     asset: AssetKey::Dot,
+                    execution_type: ExecutionType::VtokenOrder,
+                },
+                ExecuteCapability {
+                    destination: ChainKey::Bifrost,
+                    asset: AssetKey::Vdot,
                     execution_type: ExecutionType::VtokenOrder,
                 },
             ],
@@ -212,14 +219,12 @@ impl RouteRegistry {
 
     pub fn supports_execute(
         &self,
-        source: ChainKey,
         destination: ChainKey,
         asset: AssetKey,
         execution_type: ExecutionType,
     ) -> bool {
         self.execute_capabilities.iter().any(|capability| {
-            capability.source == source
-                && capability.destination == destination
+            capability.destination == destination
                 && capability.asset == asset
                 && capability.execution_type == execution_type
         })
@@ -265,7 +270,6 @@ impl TransferEdge {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExecuteCapability {
-    pub source: ChainKey,
     pub destination: ChainKey,
     pub asset: AssetKey,
     pub execution_type: ExecutionType,

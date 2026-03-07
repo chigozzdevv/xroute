@@ -253,17 +253,17 @@ function normalizeEvmContractCall(sourceChain, destinationChain, params) {
 
 function normalizeVtokenOrder(sourceChain, destinationChain, params) {
   const asset = assertNonEmptyString("action.params.asset", params.asset).toUpperCase();
+  const operation = assertIncluded(
+    "action.params.operation",
+    params.operation,
+    Object.values(VTOKEN_ORDER_OPERATIONS),
+  );
+  assertValidVtokenOrderAsset(asset, operation);
   assertExecuteRoute(
     sourceChain,
     destinationChain,
     asset,
     EXECUTION_TYPES.VTOKEN_ORDER,
-  );
-
-  const operation = assertIncluded(
-    "action.params.operation",
-    params.operation,
-    Object.values(VTOKEN_ORDER_OPERATIONS),
   );
   const recipient = assertNonEmptyString("action.params.recipient", params.recipient);
 
@@ -334,4 +334,13 @@ function normalizeRemark(value) {
   }
 
   return normalized;
+}
+
+function assertValidVtokenOrderAsset(asset, operation) {
+  if (operation === VTOKEN_ORDER_OPERATIONS.MINT && asset !== "DOT") {
+    throw new Error("action.params.asset must be DOT for vtoken-order mint");
+  }
+  if (operation === VTOKEN_ORDER_OPERATIONS.REDEEM && asset !== "VDOT") {
+    throw new Error("action.params.asset must be VDOT for vtoken-order redeem");
+  }
 }

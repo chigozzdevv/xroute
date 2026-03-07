@@ -228,6 +228,38 @@ test("buildExecutionEnvelope encodes a bifrost vtoken order via Transact", async
   assert.match(remoteInstructions[1].value.call.asHex(), /1878726f75746507000000$/);
 });
 
+test("buildExecutionEnvelope encodes a bifrost vtoken redeem via InitiateTeleport", async () => {
+  const intent = createExecuteIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "bifrost",
+    refundAddress,
+    deadline: 1_773_185_200,
+    params: {
+      executionType: "vtoken-order",
+      asset: "VDOT",
+      amount: "250000000000",
+      maxPaymentAmount: "100000000",
+      operation: "redeem",
+      recipient: aliceAddress,
+      fallbackWeight: {
+        refTime: 600000000,
+        proofSize: 12288,
+      },
+    },
+  });
+  const quote = await testnetQuoteProvider.quote(intent);
+
+  const envelope = buildExecutionEnvelope({ intent, quote });
+  const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
+  const outerInstruction = decoded.value[1];
+  const remoteInstructions = outerInstruction.value.xcm;
+
+  assert.equal(outerInstruction.type, "InitiateTeleport");
+  assert.equal(remoteInstructions[0].type, "BuyExecution");
+  assert.equal(remoteInstructions[1].type, "Transact");
+  assert.match(remoteInstructions[1].value.call.asHex(), /^0x7d02000900/);
+});
+
 function hydrationRemoteInstructions(decoded) {
   const outerTransfer = decoded.value[1];
   const nestedTransfer = outerTransfer.value.xcm.find(

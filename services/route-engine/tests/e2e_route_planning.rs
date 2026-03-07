@@ -275,6 +275,107 @@ fn quotes_bifrost_transfer_and_builds_delivery_plan() {
 }
 
 #[test]
+fn quotes_multihop_transfer_from_moonbeam_to_hydration() {
+    let engine = RouteEngine::default();
+    let intent = Intent {
+        source_chain: ChainKey::Moonbeam,
+        destination_chain: ChainKey::Hydration,
+        action: IntentAction::Transfer(TransferIntent {
+            asset: AssetKey::Dot,
+            amount: AssetKey::Dot.units(5),
+            recipient: "5FmoonbeamHydrationRecipient".to_owned(),
+        }),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let quote = engine.quote(intent).expect("multihop transfer quote should build");
+
+    assert_eq!(
+        quote.route,
+        vec![ChainKey::Moonbeam, ChainKey::PolkadotHub, ChainKey::Hydration]
+    );
+    assert_eq!(quote.segments.len(), 1);
+    assert_eq!(quote.submission.action, SubmissionAction::Transfer);
+    assert_eq!(quote.fees.xcm_fee.amount, 330_000_000);
+    assert_eq!(quote.fees.destination_fee.amount, 200_000_000);
+
+    let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
+    assert_eq!(outer_transfer.destination(), ChainKey::PolkadotHub);
+    assert_eq!(
+        outer_transfer.remote_instructions()[0],
+        XcmInstruction::BuyExecution {
+            asset: AssetKey::Dot,
+            amount: 110_000_000,
+        }
+    );
+
+    let nested_transfer = nested_transfer_instruction(outer_transfer, 1);
+    assert_eq!(nested_transfer.destination(), ChainKey::Hydration);
+    assert_eq!(
+        nested_transfer.remote_instructions(),
+        &vec![
+            XcmInstruction::BuyExecution {
+                asset: AssetKey::Dot,
+                amount: 90_000_000,
+            },
+            XcmInstruction::DepositAsset {
+                asset: AssetKey::Dot,
+                recipient: "5FmoonbeamHydrationRecipient".to_owned(),
+                asset_count: 1,
+            },
+        ]
+    );
+}
+
+#[test]
+fn quotes_multihop_swap_from_moonbeam_to_hydration_with_hub_settlement() {
+    let engine = RouteEngine::default();
+    let intent = Intent {
+        source_chain: ChainKey::Moonbeam,
+        destination_chain: ChainKey::Hydration,
+        action: IntentAction::Swap(SwapIntent {
+            asset_in: AssetKey::Dot,
+            asset_out: AssetKey::Usdt,
+            amount_in: AssetKey::Dot.units(10),
+            min_amount_out: AssetKey::Usdt.units(49),
+            settlement_chain: ChainKey::PolkadotHub,
+            recipient: "5FhubSwapRecipient".to_owned(),
+        }),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let quote = engine.quote(intent).expect("multihop swap quote should build");
+
+    assert_eq!(
+        quote.route,
+        vec![
+            ChainKey::Moonbeam,
+            ChainKey::PolkadotHub,
+            ChainKey::Hydration,
+            ChainKey::PolkadotHub,
+        ]
+    );
+    assert_eq!(quote.segments.len(), 2);
+    assert_eq!(quote.segments[0].route, vec![ChainKey::Moonbeam, ChainKey::PolkadotHub, ChainKey::Hydration]);
+    assert_eq!(quote.segments[1].route, vec![ChainKey::Hydration, ChainKey::PolkadotHub]);
+
+    let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
+    assert_eq!(outer_transfer.destination(), ChainKey::PolkadotHub);
+    let nested_transfer = nested_transfer_instruction(outer_transfer, 1);
+    assert_eq!(nested_transfer.destination(), ChainKey::Hydration);
+    assert!(matches!(
+        nested_transfer.remote_instructions()[1],
+        XcmInstruction::ExchangeAsset { .. }
+    ));
+    assert!(matches!(
+        nested_transfer.remote_instructions()[2],
+        XcmInstruction::InitiateReserveWithdraw { .. }
+    ));
+}
+
+#[test]
 fn quotes_hydration_swap_on_testnet_without_adapter_deployments() {
     let engine = RouteEngine::new(
         RouteRegistry::default(),
@@ -428,6 +529,69 @@ fn quotes_execute_runtime_call_on_moonbeam() {
 }
 
 #[test]
+fn quotes_multihop_execute_runtime_call_on_bifrost() {
+    let engine = RouteEngine::default();
+    let intent = Intent {
+        source_chain: ChainKey::Moonbeam,
+        destination_chain: ChainKey::Bifrost,
+        action: IntentAction::Execute(ExecuteIntent::RuntimeCall(RuntimeCallExecuteIntent {
+            asset: AssetKey::Dot,
+            max_payment_amount: 210_000_000,
+            call_data: "0x09080706".to_owned(),
+            origin_kind: RuntimeCallOriginKind::SovereignAccount,
+            fallback_weight: XcmWeight {
+                ref_time: 400_000_000,
+                proof_size: 8_192,
+            },
+        })),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let quote = engine.quote(intent).expect("multihop execute quote should build");
+
+    assert_eq!(
+        quote.route,
+        vec![ChainKey::Moonbeam, ChainKey::PolkadotHub, ChainKey::Bifrost]
+    );
+    assert_eq!(quote.submission.action, SubmissionAction::Execute);
+    assert_eq!(quote.submission.amount, 210_000_000);
+    assert_eq!(quote.fees.xcm_fee.amount, 350_000_000);
+    assert_eq!(quote.fees.destination_fee.amount, 0);
+
+    let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
+    assert_eq!(outer_transfer.destination(), ChainKey::PolkadotHub);
+    assert_eq!(
+        outer_transfer.remote_instructions()[0],
+        XcmInstruction::BuyExecution {
+            asset: AssetKey::Dot,
+            amount: 110_000_000,
+        }
+    );
+
+    let nested_transfer = nested_transfer_instruction(outer_transfer, 1);
+    assert_eq!(nested_transfer.destination(), ChainKey::Bifrost);
+    assert_eq!(
+        nested_transfer.remote_instructions()[0],
+        XcmInstruction::BuyExecution {
+            asset: AssetKey::Dot,
+            amount: 100_000_000,
+        }
+    );
+    assert_eq!(
+        nested_transfer.remote_instructions()[1],
+        XcmInstruction::Transact {
+            origin_kind: RuntimeCallOriginKind::SovereignAccount,
+            fallback_weight: XcmWeight {
+                ref_time: 400_000_000,
+                proof_size: 8_192,
+            },
+            call_data: "0x09080706".to_owned(),
+        }
+    );
+}
+
+#[test]
 fn quotes_execute_evm_contract_call_on_moonbeam() {
     let engine = RouteEngine::default();
     let intent = Intent {
@@ -466,6 +630,50 @@ fn quotes_execute_evm_contract_call_on_moonbeam() {
             assert!(call_data.starts_with("0x260001"));
             assert!(call_data.contains("1111111111111111111111111111111111111111"));
             assert!(call_data.ends_with("10deadbeef00"));
+        }
+        other => panic!("expected transact instruction, got {other:?}"),
+    }
+}
+
+#[test]
+fn quotes_multihop_execute_evm_contract_call_on_moonbeam() {
+    let engine = RouteEngine::default();
+    let intent = Intent {
+        source_chain: ChainKey::Hydration,
+        destination_chain: ChainKey::Moonbeam,
+        action: IntentAction::Execute(ExecuteIntent::EvmContractCall(
+            EvmContractCallExecuteIntent {
+                asset: AssetKey::Dot,
+                max_payment_amount: 200_000_000,
+                contract_address: "0x1111111111111111111111111111111111111111".to_owned(),
+                calldata: "0xdeadbeef".to_owned(),
+                value: 0,
+                gas_limit: 250_000,
+                fallback_weight: XcmWeight {
+                    ref_time: 650_000_000,
+                    proof_size: 12_288,
+                },
+            },
+        )),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let quote = engine.quote(intent).expect("multihop evm quote should build");
+
+    assert_eq!(
+        quote.route,
+        vec![ChainKey::Hydration, ChainKey::PolkadotHub, ChainKey::Moonbeam]
+    );
+
+    let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
+    assert_eq!(outer_transfer.destination(), ChainKey::PolkadotHub);
+    let nested_transfer = nested_transfer_instruction(outer_transfer, 1);
+    assert_eq!(nested_transfer.destination(), ChainKey::Moonbeam);
+    match &nested_transfer.remote_instructions()[1] {
+        XcmInstruction::Transact { call_data, .. } => {
+            assert!(call_data.starts_with("0x260001"));
+            assert!(call_data.contains("1111111111111111111111111111111111111111"));
         }
         other => panic!("expected transact instruction, got {other:?}"),
     }
@@ -519,6 +727,98 @@ fn quotes_execute_vtoken_order_on_bifrost() {
     }
 }
 
+#[test]
+fn quotes_multihop_execute_vtoken_order_on_bifrost() {
+    let engine = RouteEngine::default();
+    let intent = Intent {
+        source_chain: ChainKey::Moonbeam,
+        destination_chain: ChainKey::Bifrost,
+        action: IntentAction::Execute(ExecuteIntent::VtokenOrder(VtokenOrderExecuteIntent {
+            asset: AssetKey::Dot,
+            amount: AssetKey::Dot.units(3),
+            max_payment_amount: 210_000_000,
+            operation: VtokenOrderOperation::Mint,
+            recipient: "5FmoonbeamBifrostRecipient".to_owned(),
+            recipient_account_id_hex:
+                "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    .to_owned(),
+            channel_id: 3,
+            remark: "route".to_owned(),
+            fallback_weight: XcmWeight {
+                ref_time: 600_000_000,
+                proof_size: 12_288,
+            },
+        })),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let quote = engine.quote(intent).expect("multihop vtoken quote should build");
+
+    assert_eq!(
+        quote.route,
+        vec![ChainKey::Moonbeam, ChainKey::PolkadotHub, ChainKey::Bifrost]
+    );
+    assert_eq!(quote.expected_output, AssetAmount::new(AssetKey::Vdot, AssetKey::Dot.units(3)));
+
+    let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
+    assert_eq!(outer_transfer.destination(), ChainKey::PolkadotHub);
+    let nested_transfer = nested_transfer_instruction(outer_transfer, 1);
+    assert_eq!(nested_transfer.destination(), ChainKey::Bifrost);
+    match &nested_transfer.remote_instructions()[1] {
+        XcmInstruction::Transact { call_data, .. } => {
+            assert!(call_data.starts_with("0x7d000800"));
+            assert!(call_data.contains(
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            ));
+        }
+        other => panic!("expected transact instruction, got {other:?}"),
+    }
+}
+
+#[test]
+fn quotes_execute_vtoken_redeem_on_bifrost() {
+    let engine = RouteEngine::default();
+    let intent = Intent {
+        source_chain: ChainKey::PolkadotHub,
+        destination_chain: ChainKey::Bifrost,
+        action: IntentAction::Execute(ExecuteIntent::VtokenOrder(VtokenOrderExecuteIntent {
+            asset: AssetKey::Vdot,
+            amount: AssetKey::Vdot.units(2),
+            max_payment_amount: 100_000_000,
+            operation: VtokenOrderOperation::Redeem,
+            recipient: "5FhubRedeemRecipient".to_owned(),
+            recipient_account_id_hex:
+                "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                    .to_owned(),
+            channel_id: 0,
+            remark: String::new(),
+            fallback_weight: XcmWeight {
+                ref_time: 600_000_000,
+                proof_size: 12_288,
+            },
+        })),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let quote = engine.quote(intent).expect("vtoken redeem quote should build");
+
+    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Bifrost]);
+    assert_eq!(quote.submission.asset, AssetKey::Vdot);
+    assert_eq!(quote.expected_output, AssetAmount::new(AssetKey::Dot, AssetKey::Vdot.units(2)));
+
+    match &quote.execution_plan.steps[4] {
+        PlanStep::SendXcm { instructions, .. } => {
+            assert!(matches!(
+                instructions[0],
+                XcmInstruction::InitiateTeleport { .. }
+            ));
+        }
+        other => panic!("unexpected plan step: {other:?}"),
+    }
+}
+
 fn first_transfer_instruction(step: &PlanStep) -> &XcmInstruction {
     match step {
         PlanStep::SendXcm { instructions, .. } => match &instructions[0] {
@@ -558,5 +858,15 @@ impl TransferInstructionExt for XcmInstruction {
             } => remote_instructions.as_slice(),
             _ => panic!("instruction is not a reserve transfer"),
         }
+    }
+}
+
+fn nested_transfer_instruction<'a>(
+    instruction: &'a XcmInstruction,
+    remote_index: usize,
+) -> &'a XcmInstruction {
+    match &instruction.remote_instructions()[remote_index] {
+        nested @ XcmInstruction::TransferReserveAsset { .. } => nested,
+        other => panic!("unexpected nested instruction: {other:?}"),
     }
 }

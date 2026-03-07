@@ -267,7 +267,10 @@ impl ExecuteIntent {
         match self {
             Self::RuntimeCall(intent) => AssetAmount::new(intent.asset, 0),
             Self::EvmContractCall(intent) => AssetAmount::new(intent.asset, 0),
-            Self::VtokenOrder(intent) => AssetAmount::new(AssetKey::Vdot, intent.amount),
+            Self::VtokenOrder(intent) => match intent.operation {
+                VtokenOrderOperation::Mint => AssetAmount::new(AssetKey::Vdot, intent.amount),
+                VtokenOrderOperation::Redeem => AssetAmount::new(AssetKey::Dot, intent.amount),
+            },
         }
     }
 
@@ -345,12 +348,14 @@ pub struct VtokenOrderExecuteIntent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VtokenOrderOperation {
     Mint,
+    Redeem,
 }
 
 impl VtokenOrderOperation {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Mint => "mint",
+            Self::Redeem => "redeem",
         }
     }
 }
@@ -518,6 +523,11 @@ pub enum XcmInstruction {
         maximal: bool,
     },
     DepositReserveAsset {
+        asset_count: u32,
+        destination: ChainKey,
+        remote_instructions: Vec<XcmInstruction>,
+    },
+    InitiateTeleport {
         asset_count: u32,
         destination: ChainKey,
         remote_instructions: Vec<XcmInstruction>,

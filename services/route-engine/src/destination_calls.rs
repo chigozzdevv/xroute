@@ -8,6 +8,7 @@ const MOONBEAM_ETHEREUM_XCM_PALLET_MAINNET: u8 = 109;
 const MOONBEAM_ETHEREUM_XCM_PALLET_TESTNET: u8 = 38;
 const BIFROST_SLPX_PALLET_INDEX: u8 = 125;
 const BIFROST_SLPX_MINT_CALL_INDEX: u8 = 0;
+const BIFROST_SLPX_REDEEM_CALL_INDEX: u8 = 2;
 const MOONBEAM_ETHEREUM_XCM_TRANSACT_CALL_INDEX: u8 = 0;
 
 pub fn build_execute_call_data(
@@ -66,6 +67,18 @@ fn build_bifrost_vtoken_order_call(
             )?);
             encoded.extend(encode_bytes(intent.remark.as_bytes()));
             encoded.extend(intent.channel_id.to_le_bytes());
+            Ok(bytes_to_hex(&encoded))
+        }
+        VtokenOrderOperation::Redeem => {
+            let mut encoded = vec![BIFROST_SLPX_PALLET_INDEX, BIFROST_SLPX_REDEEM_CALL_INDEX];
+            encoded.push(0);
+            encoded.extend([9, 0]);
+            encoded.extend(intent.amount.to_le_bytes());
+            encoded.push(6);
+            encoded.extend(parse_h256(
+                &intent.recipient_account_id_hex,
+                "recipient_account_id_hex",
+            )?);
             Ok(bytes_to_hex(&encoded))
         }
     }
@@ -225,5 +238,35 @@ mod tests {
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         ));
         assert!(call_data.ends_with("1878726f75746507000000"));
+    }
+
+    #[test]
+    fn encodes_bifrost_vtoken_redeem_order() {
+        let call_data = build_execute_call_data(
+            &ExecuteIntent::VtokenOrder(VtokenOrderExecuteIntent {
+                asset: AssetKey::Vdot,
+                amount: 1_000_000_000_000,
+                max_payment_amount: 100_000_000,
+                operation: VtokenOrderOperation::Redeem,
+                recipient: "5Frecipient".to_owned(),
+                recipient_account_id_hex:
+                    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                        .to_owned(),
+                channel_id: 0,
+                remark: String::new(),
+                fallback_weight: XcmWeight {
+                    ref_time: 600_000_000,
+                    proof_size: 12_288,
+                },
+            }),
+            ChainKey::Bifrost,
+            DeploymentProfile::Testnet,
+        )
+        .expect("bifrost redeem should encode");
+
+        assert!(call_data.starts_with("0x7d02000900"));
+        assert!(call_data.contains(
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ));
     }
 }

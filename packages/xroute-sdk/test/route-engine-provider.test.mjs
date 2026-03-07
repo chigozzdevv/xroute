@@ -213,6 +213,40 @@ test("route engine quote provider builds an execute/vtoken-order quote", async (
   assert.match(remoteInstructions[1].callData, /1878726f75746507000000$/);
 });
 
+test("route engine quote provider builds a redeem execute/vtoken-order quote", async () => {
+  const provider = createRouteEngineQuoteProvider({
+    cwd: workspaceRoot,
+  });
+  const intent = createExecuteIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "bifrost",
+    refundAddress: walletAddress,
+    deadline: 1_773_185_200,
+    params: {
+      executionType: "vtoken-order",
+      asset: "VDOT",
+      amount: "250000000000",
+      maxPaymentAmount: "100000000",
+      operation: "redeem",
+      recipient: recipientAddress,
+      fallbackWeight: {
+        refTime: 600000000,
+        proofSize: 12288,
+      },
+    },
+  });
+
+  const quote = normalizeQuote(await provider.quote(intent));
+  const remoteInstructions = finalRemoteInstructions(quote);
+
+  assert.deepEqual(quote.route, ["polkadot-hub", "bifrost"]);
+  assert.equal(quote.submission.action, "execute");
+  assert.equal(quote.submission.asset, "VDOT");
+  assert.equal(quote.expectedOutput.asset, "DOT");
+  assert.equal(remoteInstructions[1].type, "transact");
+  assert.match(remoteInstructions[1].callData, /^0x7d02000900/);
+});
+
 test("sdk execute derives the XCM envelope from the route-engine quote", async () => {
   const provider = createRouteEngineQuoteProvider({
     cwd: workspaceRoot,

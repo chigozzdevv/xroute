@@ -2,72 +2,127 @@
 
 `xroute` is a multihop XCM execution router for Polkadot.
 
-It gives developers a higher-level SDK for three live actions:
+It gives developers one intent surface for three actions:
 
-- `transfer`: move native assets across supported chains
-- `swap`: execute a Hydration swap and optionally settle the output on another chain
-- `execute`: fund and dispatch a typed destination execution request
+- `transfer`
+- `swap`
+- `execute`
 
-The current live route graph uses a Hub-centered star topology:
+The router lives on `polkadot-hub`, but the route engine composes execution across a real Hub-centered graph:
 
 - `polkadot-hub <-> hydration`
 - `polkadot-hub <-> moonbeam`
 - `polkadot-hub <-> bifrost`
-- `polkadot-hub -> hydration -> polkadot-hub` for remote-settlement swaps
 
-This is not a generic router for arbitrary parachains. It is a production-shaped router for the routes and assets it explicitly models.
+That means XRoute is not a generic router for arbitrary parachains. It is a production-shaped router for the routes, assets, and execution surfaces it explicitly models.
 
 ## Why XRoute
 
-Polkadot Hub exposes powerful primitives, but integrating them directly is still low-level:
+Building directly on Polkadot Hub still means dealing with low-level XCM details:
 
-- XCM dispatch is byte-oriented and runtime-specific
-- fees depend on the exact route and asset
-- remote execution and settlement logic are easy to get wrong
-- every dApp should not have to build and encode XCM by hand
+- route selection is chain- and asset-specific
+- fees depend on the exact path
+- remote execution payloads are runtime-specific
+- finalization, refunds, and settlement tracking need operator discipline
 
-XRoute pushes that complexity into a small set of clean layers:
+XRoute splits that into clean layers:
 
-- a thin onchain Hub router
-- an offchain route engine
-- an SDK that exposes `quote -> execute -> track`
+- `contracts/polkadot-hub-router`
+  - thin onchain trust boundary
+- `services/route-engine`
+  - pathfinding, fee estimation, payload construction
+- `services/quote-service`
+  - hosted quote API with execution policy enforcement
+- `services/executor-relayer`
+  - authenticated dispatch/finalization/refund operator service
+- `packages/xroute-sdk`
+  - developer-facing SDK
 
-## What Is Implemented
+## Supported Surface
 
-Live runtime surface:
+### Actions
 
-- `transfer` between `polkadot-hub` and `hydration`
-- `transfer` between `polkadot-hub` and `moonbeam`
-- `transfer` between `polkadot-hub` and `bifrost`
-- `swap` on `hydration`
-- remote-settlement swaps back to `polkadot-hub`
-- `execute/runtime-call` from `polkadot-hub` to `hydration`
-- `execute/runtime-call` from `polkadot-hub` to `moonbeam`
-- `execute/runtime-call` from `polkadot-hub` to `bifrost`
-- `execute/evm-contract-call` from `polkadot-hub` to `moonbeam`
-- `execute/vtoken-order` from `polkadot-hub` to `bifrost`
-- onchain intent lifecycle persistence
-- offchain status projection for app-facing reads
+- `transfer`
+  - cross-chain asset movement
+- `swap`
+  - swap on Hydration, with optional remote settlement
+- `execute`
+  - typed destination execution
 
-Current swap pairs:
+### Execute Types
 
-- `DOT -> USDT`
-- `DOT -> HDX`
+- `runtime-call`
+  - raw destination runtime call bytes
+- `evm-contract-call`
+  - Moonbeam `ethereumXcm.transact(V2)` payload generation
+- `vtoken-order`
+  - Bifrost SLPx order generation
+  - supports `mint`
+  - supports `redeem`
 
-Current profiles:
+### Assets
 
-- `testnet`
-- `mainnet`
+- `DOT`
+- `USDT`
+- `HDX`
+- `VDOT`
+
+### Current Capability Map
+
+- `transfer`
+  - any supported DOT route across the Hub star
+  - `VDOT` from `polkadot-hub -> bifrost`
+- `swap`
+  - Hydration execution for:
+    - `DOT -> USDT`
+    - `DOT -> HDX`
+  - settlement on:
+    - `hydration`
+    - `polkadot-hub`
+- `execute/runtime-call`
+  - destination capability on:
+    - `hydration`
+    - `moonbeam`
+    - `bifrost`
+  - source can be any chain with a valid transfer path into that destination
+- `execute/evm-contract-call`
+  - destination: `moonbeam`
+  - source can be any chain with a valid DOT path into `moonbeam`
+- `execute/vtoken-order`
+  - destination: `bifrost`
+  - `mint`: `DOT -> VDOT`
+  - `redeem`: `VDOT -> DOT`
+
+## Real Multihop Examples
+
+These are real routes the planner now builds:
+
+- `moonbeam -> polkadot-hub -> hydration`
+  - DOT transfer
+- `moonbeam -> polkadot-hub -> hydration -> polkadot-hub`
+  - swap on Hydration, settle back on Hub
+- `hydration -> polkadot-hub -> moonbeam`
+  - execute a Moonbeam EVM contract call after routing DOT through Hub
+- `moonbeam -> polkadot-hub -> bifrost`
+  - execute a Bifrost runtime call or vToken mint after routing through Hub
+- `polkadot-hub -> bifrost`
+  - redeem `VDOT` through Bifrost using teleport-style destination execution
+
+That is the multihop story for XRoute:
+
+- route the asset where it needs to go
+- execute on the specialized destination chain
+- optionally settle somewhere else
 
 ## How It Works
 
 ### 1. Intent
 
-The app creates an intent through the SDK.
+The app creates an intent:
 
 ```ts
 const { intent, quote } = await client.quote({
-  sourceChain: "polkadot-hub",
+  sourceChain: "moonbeam",
   destinationChain: "hydration",
   refundAddress: "0x1111111111111111111111111111111111111111",
   deadline: Math.floor(Date.now() / 1000) + 1800,
@@ -87,61 +142,47 @@ const { intent, quote } = await client.quote({
 
 Address model:
 
-- `refundAddress` is an EVM address on the source Hub side
-- `recipient` is the beneficiary account on the destination or settlement chain
+- `refundAddress`
+  - source-side EVM address on Hub
+- `recipient`
+  - destination or settlement beneficiary account
 
 ### 2. Route Engine
 
 The Rust route engine:
 
 - validates the intent
-- searches the supported route graph
+- searches the supported graph
 - chooses the lowest-cost supported path
-- estimates `xcmFee`, `destinationFee`, and `platformFee`
-- emits explicit multihop route segments
-- builds a concrete execution plan
+- emits explicit route segments and hops
+- calculates:
+  - `xcmFee`
+  - `destinationFee`
+  - `platformFee`
+- builds the exact destination call payload
 
-For live swaps, the planner emits runtime-oriented XCM instructions such as:
+### 3. XCM Builder
+
+The XCM layer converts the route-engine plan into the exact `VersionedXcm` payload that the router commits to.
+
+Current instruction families include:
 
 - `TransferReserveAsset`
 - `BuyExecution`
 - `ExchangeAsset`
-- `DepositAsset`
 - `InitiateReserveWithdraw`
-
-For live runtime execution, the planner emits:
-
-- `TransferReserveAsset`
-- `BuyExecution`
+- `InitiateTeleport`
 - `Transact`
-
-Destination execution types:
-
-- `runtime-call`
-  - raw destination runtime call bytes
-- `evm-contract-call`
-  - Moonbeam `ethereumXcm.transact(V2)` payload generation
-- `vtoken-order`
-  - Bifrost `Slpx::mint` order generation for `vDOT`
-
-### 3. XCM Builder
-
-The XCM layer turns the route-engine plan into the exact payload committed by the router contract.
-
-That keeps one important boundary clean:
-
-- the planner decides the route and instructions
-- the router only accepts the exact committed payload hash
+- `DepositAsset`
 
 ### 4. Hub Router
 
-The Solidity router on Polkadot Hub:
+The Solidity router:
 
-- escrows the input asset
-- charges the platform fee
-- verifies the dispatch payload hash
-- dispatches through the XCM precompile
-- stores the intent lifecycle onchain
+- escrows the source asset
+- verifies the committed dispatch payload hash
+- dispatches through the Hub XCM precompile
+- persists final outcome state onchain
 
 Onchain statuses:
 
@@ -152,39 +193,31 @@ Onchain statuses:
 - `cancelled`
 - `refunded`
 
-### 5. Status Projection
+### 5. Operator Services
 
-The SDK also exposes a persistent offchain indexer for:
+`services/quote-service`
 
-- timelines
-- app-friendly reads
-- local persistence across restarts
+- hosted quote endpoint
+- optional Moonbeam EVM policy enforcement
+- profile-aware deployment artifact loading
 
-The contract remains the onchain source of truth for final state.
+`services/executor-relayer`
 
-## Multihop Model
+- authenticated operator API
+- persistent dispatch/finalize/refund job store
+- retryable background processing
+- persistent status event stream
+- same execution policy enforcement before dispatch
 
-XRoute is multihop for the routes it explicitly publishes.
+### 6. Status Projection
 
-Examples:
+The SDK exposes:
 
-- direct transfer: `polkadot-hub -> hydration`
-- direct transfer: `polkadot-hub -> moonbeam`
-- direct transfer: `polkadot-hub -> bifrost`
-- direct swap: `polkadot-hub -> hydration`
-- direct execute/runtime-call: `polkadot-hub -> hydration`
-- direct execute/runtime-call: `polkadot-hub -> moonbeam`
-- direct execute/runtime-call: `polkadot-hub -> bifrost`
-- direct execute/evm-contract-call: `polkadot-hub -> moonbeam`
-- direct execute/vtoken-order: `polkadot-hub -> bifrost`
-- remote-settlement swap: `polkadot-hub -> hydration -> polkadot-hub`
+- in-memory status indexing
+- file-backed status indexing
+- timelines and app-friendly reads
 
-That means the route engine does not just hardcode one destination action. It models:
-
-- execution path
-- settlement path
-- per-hop fee data
-- nested XCM for reserve-based delivery
+The contract remains the onchain source of truth for final intent state.
 
 ## Project Structure
 
@@ -200,35 +233,35 @@ xroute/
     xroute-types/
     xroute-xcm/
   services/
+    executor-relayer/
+    quote-service/
     route-engine/
+    shared/
   scripts/
 ```
 
-Directory roles:
+Main responsibilities:
 
 - `contracts/polkadot-hub-router`
   - Hub router contract and Solidity tests
 - `services/route-engine`
-  - Rust route planner and quote engine
+  - route planning and destination payload encoding
+- `services/quote-service`
+  - hosted quoting surface
+- `services/executor-relayer`
+  - operator dispatch/finalization surface
 - `packages/xroute-sdk`
-  - publishable SDK package
-- `packages/xroute-xcm`
-  - metadata-backed XCM encoding
+  - publishable SDK
 - `packages/xroute-intents`
   - intent creation and validation
 - `packages/xroute-chain-registry`
-  - chain, asset, and supported route metadata
-- `packages/xroute-precompile-interfaces`
-  - shared Hub/XCM integration constants
-- `packages/xroute-types`
-  - common assertions and constants
-- `scripts`
-  - deployment entrypoints
+  - graph, assets, and destination capability metadata
+- `packages/xroute-xcm`
+  - metadata-backed XCM encoding
 
 Compatibility note:
 
 - `asset-hub` is accepted as an input alias and canonicalized to `polkadot-hub`
-- the current public SDK entrypoint still assumes the source-side router lives on `polkadot-hub`
 
 ## Setup
 
@@ -239,7 +272,7 @@ Requirements:
 - `forge`
 - `cast`
 
-Verification:
+Install and verify:
 
 ```bash
 npm test
@@ -253,43 +286,58 @@ npm run test:solidity
 npm run test:node
 npm run test:package
 npm run build
-npm pack --dry-run ./packages/xroute-sdk
+npm run serve:quote
+npm run serve:executor-relayer
 ```
+
+Service environment variables:
+
+- `XROUTE_EVM_POLICY_PATH`
+  - Moonbeam EVM allowlist and execution caps
+- `XROUTE_QUOTE_MAX_BODY_BYTES`
+  - max JSON request size for the quote service
+- `XROUTE_RELAYER_AUTH_TOKEN`
+  - bearer token required by the relayer API
+- `XROUTE_RELAYER_MAX_BODY_BYTES`
+  - max JSON request size for the relayer API
+- `XROUTE_RELAYER_JOB_STORE_PATH`
+  - persistent relayer job store path
+- `XROUTE_STATUS_EVENTS_PATH`
+  - persistent status event log path
 
 ## Deployment
 
-Public deployment entrypoint:
+Public Hub deployment entrypoint:
 
-- [deploy-stack.mjs](/Users/chigozzdev/Desktop/xroute/scripts/deploy-stack.mjs)
+- [scripts/deploy-stack.mjs](/Users/chigozzdev/Desktop/xroute/scripts/deploy-stack.mjs)
 
-Deployment profiles:
+Profiles:
 
 - `testnet`
 - `mainnet`
 
-Example:
+Official Hub RPC endpoints:
+
+- `testnet`: [https://services.polkadothub-rpc.com/testnet](https://services.polkadothub-rpc.com/testnet)
+- `mainnet`: [https://services.polkadothub-rpc.com/mainnet](https://services.polkadothub-rpc.com/mainnet)
+
+Example deploy:
 
 ```bash
 XROUTE_ALLOW_LIVE_DEPLOY=true \
 XROUTE_DEPLOYMENT_PROFILE=testnet \
 XROUTE_RPC_URL=https://services.polkadothub-rpc.com/testnet \
 XROUTE_PRIVATE_KEY=0x... \
-XROUTE_XCM_ADDRESS=0x... \
 node scripts/deploy-stack.mjs
 ```
 
-Official public RPC endpoints:
-
-- `testnet`: `https://services.polkadothub-rpc.com/testnet`
-- `mainnet`: `https://services.polkadothub-rpc.com/mainnet`
-
-Required variables:
+Required deploy variables:
 
 - `XROUTE_ALLOW_LIVE_DEPLOY`
 - `XROUTE_RPC_URL`
 - `XROUTE_PRIVATE_KEY`
 
-Optional:
+Optional deploy variables:
 
 - `XROUTE_ROUTER_EXECUTOR`
 - `XROUTE_ROUTER_TREASURY`
@@ -297,29 +345,29 @@ Optional:
 - `XROUTE_PLATFORM_FEE_BPS`
 - `XROUTE_STACK_OUTPUT_PATH`
 
-If `XROUTE_ROUTER_EXECUTOR` or `XROUTE_ROUTER_TREASURY` are omitted, they default to the deployer address derived from `XROUTE_PRIVATE_KEY`.
+Deployment artifacts are written to:
 
-For a first `testnet` deployment, fund the deployer with testnet tokens from the official faucet:
+- `contracts/polkadot-hub-router/deployments/<profile>/polkadot-hub.json`
 
-- [Polkadot smart contracts faucet](https://docs.polkadot.com/smart-contracts/faucet)
+Artifacts include:
 
-Deployment artifacts are written under:
+- deployed router address
+- deployer
+- chain id
+- deployment profile
+- executor/treasury/XCM settings
+- deployment timestamp
 
-- `contracts/polkadot-hub-router/deployments/testnet/`
-- `contracts/polkadot-hub-router/deployments/mainnet/`
-
-Only real deployments should be published there.
+The repo does not ship fake `testnet` or `mainnet` artifacts. Those files should only appear after a real deployment.
 
 ## SDK Usage
 
-Production quote path:
+### Quote + Submit + Relay
+
+Production SDK shape:
 
 ```ts
-import { createHttpQuoteProvider, createXRouteClient } from "@xroute/sdk";
-import {
-  createCastRouterAdapter,
-  createStaticAssetAddressResolver,
-} from "@xroute/sdk/router-adapters";
+import { createHttpExecutorRelayerClient, createHttpQuoteProvider, createXRouteClient } from "@xroute/sdk";
 import { FileBackedStatusIndexer } from "@xroute/sdk/status-indexer";
 
 const statusProvider = new FileBackedStatusIndexer({
@@ -328,76 +376,64 @@ const statusProvider = new FileBackedStatusIndexer({
 
 const client = createXRouteClient({
   quoteProvider: createHttpQuoteProvider({
-    endpoint: "https://quotes.example.com/xroute/quote",
+    endpoint: "https://quotes.example.com/quote",
   }),
-  routerAdapter: createCastRouterAdapter({
-    rpcUrl: process.env.XROUTE_RPC_URL,
-    routerAddress: process.env.XROUTE_ROUTER_ADDRESS,
-    privateKey: process.env.XROUTE_PRIVATE_KEY,
-    ownerAddress: process.env.XROUTE_OWNER_ADDRESS,
-    statusIndexer: statusProvider,
-  }),
+  routerAdapter: myWalletRouterAdapter,
   statusProvider,
-  assetAddressResolver: createStaticAssetAddressResolver({
-    "polkadot-hub": {
-      DOT: "0x0000000000000000000000000000000000000401",
-    },
-  }),
+  assetAddressResolver: async ({ chainKey, assetKey }) => {
+    if (chainKey === "polkadot-hub" && assetKey === "DOT") {
+      return "0x0000000000000000000000000000000000000401";
+    }
+
+    throw new Error(`unsupported ${assetKey} on ${chainKey}`);
+  },
+});
+
+const relayer = createHttpExecutorRelayerClient({
+  endpoint: "https://relayer.example.com",
+  authToken: process.env.XROUTE_RELAYER_TOKEN,
 });
 ```
 
-Main client methods:
-
-- `client.quote(...)`
-- `client.submit(...)`
-- `client.dispatch(...)`
-- `client.execute(...)`
-- `client.settle(...)`
-- `client.fail(...)`
-- `client.refund(...)`
-- `client.getStatus(...)`
-- `client.getTimeline(...)`
-
-Runtime notes:
-
-- use `createHttpQuoteProvider(...)` in production
-- `createRouteEngineQuoteProvider(...)` is a local operator/dev helper
-- `routerAddress` is the deployed Hub router address
-- `refundAddress` and `owner` are EVM addresses
-- `recipient` is the destination or settlement-chain beneficiary
-- `execute/vtoken-order` currently supports the Bifrost `mint` flow
-- `execute/evm-contract-call` builds a Moonbeam Ethereum XCM call; `value` spends the destination EVM account balance
-
-Runtime-call example:
+### Example: Multihop Swap
 
 ```ts
 const { intent, quote } = await client.quote({
-  sourceChain: "polkadot-hub",
+  sourceChain: "moonbeam",
   destinationChain: "hydration",
   refundAddress: "0x1111111111111111111111111111111111111111",
   deadline: Math.floor(Date.now() / 1000) + 1800,
   action: {
-    type: "execute",
+    type: "swap",
     params: {
-      executionType: "runtime-call",
-      asset: "DOT",
-      maxPaymentAmount: "10000000000",
-      callData: "0x01020304",
-      originKind: "sovereign-account",
-      fallbackWeight: {
-        refTime: 4_000_000_000,
-        proofSize: 64_000,
-      },
+      assetIn: "DOT",
+      assetOut: "USDT",
+      amountIn: "1000000000000",
+      minAmountOut: "493000000",
+      settlementChain: "polkadot-hub",
+      recipient: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
     },
   },
 });
+
+const submitted = await client.submit({
+  intent,
+  quote,
+  owner: "0x1111111111111111111111111111111111111111",
+});
+
+await relayer.dispatch({
+  intentId: submitted.intentId,
+  intent,
+  quote,
+});
 ```
 
-Moonbeam EVM contract call example:
+### Example: Moonbeam EVM Execution
 
 ```ts
 const { intent, quote } = await client.quote({
-  sourceChain: "polkadot-hub",
+  sourceChain: "hydration",
   destinationChain: "moonbeam",
   refundAddress: "0x1111111111111111111111111111111111111111",
   deadline: Math.floor(Date.now() / 1000) + 1800,
@@ -406,24 +442,24 @@ const { intent, quote } = await client.quote({
     params: {
       executionType: "evm-contract-call",
       asset: "DOT",
-      maxPaymentAmount: "110000000",
+      maxPaymentAmount: "200000000",
       contractAddress: "0x1111111111111111111111111111111111111111",
       calldata: "0xdeadbeef",
       value: "0",
       gasLimit: "250000",
       fallbackWeight: {
-        refTime: 650_000_000,
-        proofSize: 12_288,
+        refTime: 650000000,
+        proofSize: 12288,
       },
     },
   },
 });
 ```
 
-Bifrost vToken order example:
+### Example: Bifrost Mint / Redeem
 
 ```ts
-const { intent, quote } = await client.quote({
+const mintIntent = await client.quote({
   sourceChain: "polkadot-hub",
   destinationChain: "bifrost",
   refundAddress: "0x1111111111111111111111111111111111111111",
@@ -440,27 +476,89 @@ const { intent, quote } = await client.quote({
       channelId: 7,
       remark: "xroute",
       fallbackWeight: {
-        refTime: 600_000_000,
-        proofSize: 12_288,
+        refTime: 600000000,
+        proofSize: 12288,
+      },
+    },
+  },
+});
+
+const redeemIntent = await client.quote({
+  sourceChain: "polkadot-hub",
+  destinationChain: "bifrost",
+  refundAddress: "0x1111111111111111111111111111111111111111",
+  deadline: Math.floor(Date.now() / 1000) + 1800,
+  action: {
+    type: "execute",
+    params: {
+      executionType: "vtoken-order",
+      asset: "VDOT",
+      amount: "250000000000",
+      maxPaymentAmount: "100000000",
+      operation: "redeem",
+      recipient: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+      fallbackWeight: {
+        refTime: 600000000,
+        proofSize: 12288,
       },
     },
   },
 });
 ```
 
+## Execution Policy
+
+Moonbeam EVM execution is hardened by an allowlist/policy layer in both the quote service and relayer.
+
+Policy shape:
+
+```json
+{
+  "moonbeam": {
+    "evmContractCall": {
+      "allowedContracts": [
+        {
+          "address": "0x1111111111111111111111111111111111111111",
+          "selectors": ["0xdeadbeef"],
+          "maxValue": "0",
+          "maxGasLimit": "250000",
+          "maxPaymentAmount": "200000000"
+        }
+      ]
+    }
+  }
+}
+```
+
+Use:
+
+- `XROUTE_EVM_POLICY_PATH=/abs/path/policy.json`
+
+Moonbeam EVM execution is restricted by:
+
+- allowlisted contract address
+- allowlisted selector
+- max call value
+- max gas limit
+- max payment amount
+
 ## Reliability Model
 
-The current design is intentionally conservative:
+What is onchain:
 
-- the route graph is explicit
-- every quote includes a concrete route and fee breakdown
-- the router commits to the exact dispatch payload hash
-- final success, failure, and refund states are persisted onchain
-- the SDK indexer is a projection layer, not the source of truth
+- escrow
+- payload-hash commitment
+- dispatch
+- final success / failure / refund state
+
+What is offchain:
+
+- quote generation
+- operator dispatch/finalization service
+- app-facing status projection
 
 Current trust boundary:
 
-- dispatch, escrow, and final intent state are onchain
-- destination outcome reporting still depends on a trusted executor or relayer
-
-So the system is robust within its current trust model, but it is not a proof-verified cross-chain finality system.
+- the router contract is the onchain source of truth
+- outcome reporting still depends on a trusted executor/relayer
+- this is robust within that trust model, but it is not proof-verified cross-chain finality
