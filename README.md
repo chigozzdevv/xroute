@@ -302,6 +302,8 @@ Service environment variables:
   - Moonbeam EVM allowlist and execution caps
 - `XROUTE_QUOTE_MAX_BODY_BYTES`
   - max JSON request size for the quote service
+- `XROUTE_ROUTER_ADDRESS`
+  - explicit live Hub router address for the relayer when not reading from the deployment artifact
 - `XROUTE_RELAYER_AUTH_TOKEN`
   - bearer token required by the relayer API
 - `XROUTE_RELAYER_MAX_BODY_BYTES`
@@ -336,6 +338,13 @@ XROUTE_RPC_URL=https://services.polkadothub-rpc.com/testnet \
 XROUTE_PRIVATE_KEY=0x... \
 node scripts/deploy-stack.mjs
 ```
+
+Current live testnet deployment:
+
+- router: `0xeb1c1fb9124bc9b9574fcdf7da44624d92693b3a`
+- deployer / relayer: `0x2A3F3E0d1F847a43ebAF87Bb4741084CbDA0f549`
+- chain id: `420420417`
+- artifact: [contracts/polkadot-hub-router/deployments/testnet/polkadot-hub.json](/Users/chigozzdev/Desktop/xroute/contracts/polkadot-hub-router/deployments/testnet/polkadot-hub.json)
 
 Required deploy variables:
 
