@@ -2,10 +2,11 @@
 
 `xroute` is a multihop XCM execution router for Polkadot.
 
-It gives developers a higher-level SDK for two live actions:
+It gives developers a higher-level SDK for three live actions:
 
 - `transfer`: move native assets across supported chains
 - `swap`: execute a Hydration swap and optionally settle the output on another chain
+- `execute`: fund and dispatch a typed destination runtime call
 
 The current live route graph is narrow by design, but the routing model is real:
 
@@ -37,6 +38,7 @@ Live runtime surface:
 - `transfer` between `polkadot-hub` and `hydration`
 - `swap` on `hydration`
 - remote-settlement swaps back to `polkadot-hub`
+- `execute/runtime-call` from `polkadot-hub` to `hydration`
 - onchain intent lifecycle persistence
 - offchain status projection for app-facing reads
 
@@ -100,6 +102,12 @@ For live swaps, the planner emits runtime-oriented XCM instructions such as:
 - `DepositAsset`
 - `InitiateReserveWithdraw`
 
+For live runtime execution, the planner emits:
+
+- `TransferReserveAsset`
+- `BuyExecution`
+- `Transact`
+
 ### 3. XCM Builder
 
 The XCM layer turns the route-engine plan into the exact payload committed by the router contract.
@@ -146,6 +154,7 @@ Examples:
 
 - direct transfer: `polkadot-hub -> hydration`
 - direct swap: `polkadot-hub -> hydration`
+- direct execute/runtime-call: `polkadot-hub -> hydration`
 - remote-settlement swap: `polkadot-hub -> hydration -> polkadot-hub`
 
 That means the route engine does not just hardcode one destination action. It models:
@@ -333,6 +342,31 @@ Runtime notes:
 - `routerAddress` is the deployed Hub router address
 - `refundAddress` and `owner` are EVM addresses
 - `recipient` is the destination or settlement-chain beneficiary
+
+Runtime-call example:
+
+```ts
+const { intent, quote } = await client.quote({
+  sourceChain: "polkadot-hub",
+  destinationChain: "hydration",
+  refundAddress: "0x1111111111111111111111111111111111111111",
+  deadline: Math.floor(Date.now() / 1000) + 1800,
+  action: {
+    type: "execute",
+    params: {
+      executionType: "runtime-call",
+      asset: "DOT",
+      maxPaymentAmount: "10000000000",
+      callData: "0x01020304",
+      originKind: "sovereign-account",
+      fallbackWeight: {
+        refTime: 4_000_000_000,
+        proofSize: 64_000,
+      },
+    },
+  },
+});
+```
 
 ## Reliability Model
 

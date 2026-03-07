@@ -15,10 +15,19 @@ pub enum RouteError {
         asset_in: AssetKey,
         asset_out: AssetKey,
     },
+    UnsupportedExecuteRoute {
+        source: ChainKey,
+        destination: ChainKey,
+        asset: AssetKey,
+    },
     UnsupportedSettlementRoute {
         execution: ChainKey,
         settlement: ChainKey,
         asset: AssetKey,
+    },
+    ExecutionBudgetExceeded {
+        requested_max: u128,
+        required: u128,
     },
     MinOutputTooHigh {
         requested: u128,
@@ -64,6 +73,17 @@ impl Display for RouteError {
                 asset_in.symbol(),
                 asset_out.symbol()
             ),
+            Self::UnsupportedExecuteRoute {
+                source,
+                destination,
+                asset,
+            } => write!(
+                f,
+                "unsupported execute route: {} -> {} for {}",
+                source.as_str(),
+                destination.as_str(),
+                asset.symbol()
+            ),
             Self::UnsupportedSettlementRoute {
                 execution,
                 settlement,
@@ -74,6 +94,13 @@ impl Display for RouteError {
                 execution.as_str(),
                 settlement.as_str(),
                 asset.symbol()
+            ),
+            Self::ExecutionBudgetExceeded {
+                requested_max,
+                required,
+            } => write!(
+                f,
+                "execution budget {requested_max} is below the required payment amount {required}"
             ),
             Self::MinOutputTooHigh {
                 requested,

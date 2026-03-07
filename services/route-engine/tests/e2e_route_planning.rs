@@ -1,7 +1,8 @@
 use route_engine::{
-    AssetAmount, AssetKey, ChainKey, DeploymentProfile, EngineSettings, FeeType, Intent,
-    IntentAction, PlanStep, RouteEngine, RouteRegistry, RouteSegmentKind, SubmissionAction,
-    SwapIntent, TransferIntent, XcmInstruction,
+    AssetAmount, AssetKey, ChainKey, DeploymentProfile, EngineSettings, ExecuteIntent,
+    ExecutionType, FeeType, Intent, IntentAction, PlanStep, RouteEngine, RouteRegistry,
+    RouteSegmentKind, RuntimeCallOriginKind, SubmissionAction, SwapIntent, TransferIntent,
+    XcmInstruction, XcmWeight,
 };
 
 const REFUND_ADDRESS: &str = "0x1111111111111111111111111111111111111111";
@@ -262,6 +263,71 @@ fn quotes_hydration_swap_on_testnet_without_adapter_deployments() {
         outer_transfer.remote_instructions()[1],
         XcmInstruction::ExchangeAsset { .. }
     ));
+}
+
+#[test]
+fn quotes_execute_runtime_call_on_hydration() {
+    let engine = RouteEngine::default();
+    let intent = Intent {
+        source_chain: ChainKey::PolkadotHub,
+        destination_chain: ChainKey::Hydration,
+        action: IntentAction::Execute(ExecuteIntent {
+            execution_type: ExecutionType::RuntimeCall,
+            asset: AssetKey::Dot,
+            max_payment_amount: 90_000_000,
+            call_data: "0x01020304".to_owned(),
+            origin_kind: RuntimeCallOriginKind::SovereignAccount,
+            fallback_weight: XcmWeight {
+                ref_time: 250_000_000,
+                proof_size: 4_096,
+            },
+        }),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let quote = engine.quote(intent).expect("execute quote should build");
+
+    assert_eq!(quote.deployment_profile, DeploymentProfile::Testnet);
+    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Hydration]);
+    assert_eq!(quote.segments.len(), 1);
+    assert_eq!(quote.submission.action, SubmissionAction::Execute);
+    assert_eq!(quote.submission.asset, AssetKey::Dot);
+    assert_eq!(quote.submission.amount, 90_000_000);
+    assert_eq!(quote.submission.destination_fee, 0);
+    assert_eq!(quote.expected_output, AssetAmount::new(AssetKey::Dot, 0));
+    assert_eq!(quote.min_output, None);
+
+    assert_eq!(
+        quote.execution_plan.steps[0],
+        PlanStep::LockAsset {
+            chain: ChainKey::PolkadotHub,
+            asset: AssetKey::Dot,
+            amount: 240_090_000,
+        }
+    );
+
+    let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
+    assert_eq!(outer_transfer.destination(), ChainKey::Hydration);
+    assert_eq!(outer_transfer.amount(), 90_000_000);
+    assert_eq!(
+        outer_transfer.remote_instructions()[0],
+        XcmInstruction::BuyExecution {
+            asset: AssetKey::Dot,
+            amount: 90_000_000,
+        }
+    );
+    assert_eq!(
+        outer_transfer.remote_instructions()[1],
+        XcmInstruction::Transact {
+            origin_kind: RuntimeCallOriginKind::SovereignAccount,
+            fallback_weight: XcmWeight {
+                ref_time: 250_000_000,
+                proof_size: 4_096,
+            },
+            call_data: "0x01020304".to_owned(),
+        }
+    );
 }
 
 fn first_transfer_instruction(step: &PlanStep) -> &XcmInstruction {

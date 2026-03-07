@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import { createIntent, toPlainIntent } from "../xroute-intents/index.mjs";
 import {
   ACTION_TYPES,
+  EXECUTION_TYPES,
   toBigInt,
   assertIncluded,
 } from "../xroute-types/index.mjs";
@@ -382,6 +383,27 @@ function buildRouteEngineQuoteArgs(
         intent.action.params.recipient,
         "--settlement-chain",
         intent.action.params.settlementChain,
+      ]);
+    case ACTION_TYPES.EXECUTE:
+      if (intent.action.params.executionType !== EXECUTION_TYPES.RUNTIME_CALL) {
+        throw new Error(`unsupported execution type: ${intent.action.params.executionType}`);
+      }
+
+      return shared.concat([
+        "--execution-type",
+        intent.action.params.executionType,
+        "--asset",
+        intent.action.params.asset,
+        "--max-payment-amount",
+        intent.action.params.maxPaymentAmount.toString(),
+        "--call-data",
+        intent.action.params.callData,
+        "--origin-kind",
+        intent.action.params.originKind,
+        "--fallback-ref-time",
+        String(intent.action.params.fallbackWeight.refTime),
+        "--fallback-proof-size",
+        String(intent.action.params.fallbackWeight.proofSize),
       ]);
     default:
       throw new Error(`unsupported action type: ${intent.action.type}`);

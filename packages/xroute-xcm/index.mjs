@@ -393,6 +393,14 @@ function buildInstruction({
           }),
         ),
       });
+    case "transact":
+      return Enum("Transact", {
+        origin_kind: buildRuntimeCallOriginKind(instruction.originKind),
+        fallback_max_weight: buildWeight(instruction.fallbackWeight),
+        call: Binary.fromBytes(
+          hexToBytes(assertHexString("executionPlan.instructions.transact.callData", instruction.callData)),
+        ),
+      });
     case "deposit-asset":
       return Enum("DepositAsset", {
         assets: buildCountedAssetFilter(instruction.assetCount ?? 1),
@@ -439,6 +447,28 @@ function buildBeneficiaryLocation(address) {
         id: Binary.fromBytes(AccountId().enc(address)),
       }),
     ),
+  };
+}
+
+function buildRuntimeCallOriginKind(originKind) {
+  switch (originKind) {
+    case "sovereign-account":
+      return Enum("SovereignAccount", undefined);
+    case "xcm":
+      return Enum("Xcm", undefined);
+    case "native":
+      return Enum("Native", undefined);
+    case "superuser":
+      return Enum("Superuser", undefined);
+    default:
+      throw new Error(`unsupported runtime call origin kind: ${originKind}`);
+  }
+}
+
+function buildWeight(weight) {
+  return {
+    ref_time: toBigInt(weight.refTime, "transact.fallbackWeight.refTime"),
+    proof_size: toBigInt(weight.proofSize, "transact.fallbackWeight.proofSize"),
   };
 }
 

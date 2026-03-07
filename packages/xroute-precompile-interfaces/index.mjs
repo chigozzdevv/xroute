@@ -19,6 +19,7 @@ export const PRECOMPILE_METADATA = Object.freeze({
 export const ACTION_TO_CONTRACT_ENUM = Object.freeze({
   [ACTION_TYPES.TRANSFER]: 0,
   [ACTION_TYPES.SWAP]: 1,
+  [ACTION_TYPES.EXECUTE]: 2,
 });
 
 export const DISPATCH_MODE_TO_CONTRACT_ENUM = Object.freeze({

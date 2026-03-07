@@ -17,6 +17,7 @@ export const CHAINS = Object.freeze({
     supportedActions: Object.freeze([
       ACTION_TYPES.TRANSFER,
       ACTION_TYPES.SWAP,
+      ACTION_TYPES.EXECUTE,
     ]),
   }),
 });
@@ -106,6 +107,7 @@ const USER_ROUTES = Object.freeze([
     actions: Object.freeze([
       ACTION_TYPES.TRANSFER,
       ACTION_TYPES.SWAP,
+      ACTION_TYPES.EXECUTE,
     ]),
     transferableAssets: Object.freeze(["DOT"]),
     swapPairs: Object.freeze([
@@ -120,6 +122,7 @@ const USER_ROUTES = Object.freeze([
         settlementChains: Object.freeze(["hydration", "polkadot-hub"]),
       }),
     ]),
+    executeAssets: Object.freeze(["DOT"]),
   }),
   Object.freeze({
     sourceChain: "hydration",
@@ -128,6 +131,7 @@ const USER_ROUTES = Object.freeze([
     actions: Object.freeze([ACTION_TYPES.TRANSFER]),
     transferableAssets: Object.freeze(["DOT", "USDT", "HDX"]),
     swapPairs: Object.freeze([]),
+    executeAssets: Object.freeze([]),
   }),
 ]);
 
@@ -224,6 +228,20 @@ export function assertSwapRoute(
   if (!supported) {
     throw new Error(
       `swap ${assetIn.symbol} -> ${assetOut.symbol} is not supported on ${route.sourceChain} -> ${route.destinationChain} for settlement on ${getChain(settlementChain).key}`,
+    );
+  }
+
+  return route;
+}
+
+export function assertExecuteRoute(sourceChain, destinationChain, assetKey) {
+  const asset = getAsset(assetKey);
+  const route = getRoute(sourceChain, destinationChain);
+  assertIncluded("action", ACTION_TYPES.EXECUTE, route.actions);
+
+  if (!route.executeAssets.includes(asset.symbol)) {
+    throw new Error(
+      `asset ${asset.symbol} is not supported for execute on ${route.sourceChain} -> ${route.destinationChain}`,
     );
   }
 

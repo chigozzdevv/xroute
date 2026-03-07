@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  createExecuteIntent,
   createSwapIntent,
   createTransferIntent,
 } from "../../xroute-intents/index.mjs";
@@ -44,6 +45,40 @@ test("route engine quote provider bridges the rust planner", async () => {
   assert.equal(quote.submission.action, "transfer");
   assert.equal(quote.submission.amount, 250000000000n);
   assert.equal(quote.fees.totalFee.amount, 490000000n);
+});
+
+test("route engine quote provider builds an execute/runtime-call quote", async () => {
+  const provider = createRouteEngineQuoteProvider({
+    cwd: workspaceRoot,
+  });
+  const intent = createExecuteIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    refundAddress: walletAddress,
+    deadline: 1_773_185_200,
+    params: {
+      executionType: "runtime-call",
+      asset: "DOT",
+      maxPaymentAmount: "90000000",
+      callData: "0x01020304",
+      fallbackWeight: {
+        refTime: 250000000,
+        proofSize: 4096,
+      },
+    },
+  });
+
+  const quote = normalizeQuote(await provider.quote(intent));
+  const remoteInstructions = finalRemoteInstructions(quote);
+
+  assert.equal(quote.submission.action, "execute");
+  assert.equal(quote.submission.amount, 90000000n);
+  assert.equal(quote.submission.destinationFee, 0n);
+  assert.equal(quote.expectedOutput.amount, 0n);
+  assert.equal(remoteInstructions.length, 2);
+  assert.equal(remoteInstructions[1].type, "transact");
+  assert.equal(remoteInstructions[1].originKind, "sovereign-account");
+  assert.equal(remoteInstructions[1].callData, "0x01020304");
 });
 
 test("sdk execute derives the XCM envelope from the route-engine quote", async () => {
@@ -109,6 +144,73 @@ test("sdk execute derives the XCM envelope from the route-engine quote", async (
   assert.equal(execution.submitted.request.actionType, 1);
   assert.match(execution.submitted.request.executionHash, /^0x[0-9a-f]{64}$/);
   assert.equal(routerAdapter.dispatched.mode, 0);
+  assert.match(routerAdapter.dispatched.message, /^0x[0-9a-f]+$/);
+});
+
+test("sdk execute submits a runtime-call execute action", async () => {
+  const provider = createRouteEngineQuoteProvider({
+    cwd: workspaceRoot,
+  });
+
+  class MemoryRouterAdapter {
+    async submitIntent({ request }) {
+      this.submitted = request;
+      return {
+        intentId: "0xintent",
+        request,
+      };
+    }
+
+    async dispatchIntent({ request }) {
+      this.dispatched = request;
+      return {
+        intentId: "0xintent",
+        request,
+      };
+    }
+  }
+
+  const routerAdapter = new MemoryRouterAdapter();
+  const client = createXRouteClient({
+    quoteProvider: provider,
+    routerAdapter,
+    statusProvider: {
+      getStatus() {
+        return null;
+      },
+      getTimeline() {
+        return [];
+      },
+      subscribe() {
+        return () => {};
+      },
+    },
+    assetAddressResolver: async () => "0x0000000000000000000000000000000000000401",
+  });
+  const intent = createExecuteIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    refundAddress: walletAddress,
+    deadline: 1_773_185_200,
+    params: {
+      executionType: "runtime-call",
+      asset: "DOT",
+      maxPaymentAmount: "90000000",
+      callData: "0x01020304",
+      fallbackWeight: {
+        refTime: 250000000,
+        proofSize: 4096,
+      },
+    },
+  });
+
+  const execution = await client.execute({
+    intent,
+    owner: walletAddress,
+  });
+
+  assert.equal(execution.submitted.request.actionType, 2);
+  assert.equal(execution.quote.submission.action, "execute");
   assert.match(routerAdapter.dispatched.message, /^0x[0-9a-f]+$/);
 });
 

@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  createExecuteIntent,
   createSwapIntent,
   createTransferIntent,
 } from "../../xroute-intents/index.mjs";
@@ -104,6 +105,34 @@ test("buildExecutionEnvelope encodes a hydration swap that settles on polkadot h
   assert.equal(remoteInstructions[2].value.reserve.interior.type, "X1");
   assert.equal(remoteInstructions[2].value.xcm[0].type, "BuyExecution");
   assert.equal(remoteInstructions[2].value.xcm[1].type, "DepositAsset");
+});
+
+test("buildExecutionEnvelope encodes a runtime call via Transact", async () => {
+  const intent = createExecuteIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    refundAddress,
+    deadline: 1_773_185_200,
+    params: {
+      executionType: "runtime-call",
+      asset: "DOT",
+      maxPaymentAmount: "90000000",
+      callData: "0x01020304",
+      fallbackWeight: {
+        refTime: 250000000,
+        proofSize: 4096,
+      },
+    },
+  });
+  const quote = await testnetQuoteProvider.quote(intent);
+
+  const envelope = buildExecutionEnvelope({ intent, quote });
+  const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
+  const remoteInstructions = hydrationRemoteInstructions(decoded);
+
+  assert.equal(remoteInstructions.length, 2);
+  assert.equal(remoteInstructions[1].type, "Transact");
+  assert.equal(remoteInstructions[1].value.origin_kind.type, "SovereignAccount");
 });
 
 function hydrationRemoteInstructions(decoded) {

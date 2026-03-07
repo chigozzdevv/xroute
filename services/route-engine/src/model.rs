@@ -130,6 +130,20 @@ impl Intent {
                 self.refund_address,
                 self.deadline
             ),
+            IntentAction::Execute(execute) => format!(
+                "execute|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+                self.source_chain.as_str(),
+                self.destination_chain.as_str(),
+                execute.execution_type.as_str(),
+                execute.asset.symbol(),
+                execute.max_payment_amount,
+                execute.call_data,
+                execute.origin_kind.as_str(),
+                execute.fallback_weight.ref_time,
+                execute.fallback_weight.proof_size,
+                self.refund_address,
+                self.deadline
+            ),
         };
 
         format!("0x{:016x}", fnv1a64(material.as_bytes()))
@@ -139,6 +153,7 @@ impl Intent {
         match &self.action {
             IntentAction::Transfer(transfer) => AssetAmount::new(transfer.asset, transfer.amount),
             IntentAction::Swap(swap) => AssetAmount::new(swap.asset_in, swap.amount_in),
+            IntentAction::Execute(execute) => AssetAmount::new(execute.asset, 0),
         }
     }
 }
@@ -147,6 +162,7 @@ impl Intent {
 pub enum IntentAction {
     Transfer(TransferIntent),
     Swap(SwapIntent),
+    Execute(ExecuteIntent),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,6 +180,48 @@ pub struct SwapIntent {
     pub min_amount_out: u128,
     pub settlement_chain: ChainKey,
     pub recipient: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecuteIntent {
+    pub execution_type: ExecutionType,
+    pub asset: AssetKey,
+    pub max_payment_amount: u128,
+    pub call_data: String,
+    pub origin_kind: RuntimeCallOriginKind,
+    pub fallback_weight: XcmWeight,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionType {
+    RuntimeCall,
+}
+
+impl ExecutionType {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::RuntimeCall => "runtime-call",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeCallOriginKind {
+    SovereignAccount,
+    Xcm,
+    Native,
+    Superuser,
+}
+
+impl RuntimeCallOriginKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SovereignAccount => "sovereign-account",
+            Self::Xcm => "xcm",
+            Self::Native => "native",
+            Self::Superuser => "superuser",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -194,6 +252,7 @@ pub struct SubmissionTerms {
 pub enum SubmissionAction {
     Transfer,
     Swap,
+    Execute,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -208,6 +267,12 @@ pub struct FeeBreakdown {
 pub struct ExecutionPlan {
     pub route: Vec<ChainKey>,
     pub steps: Vec<PlanStep>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct XcmWeight {
+    pub ref_time: u64,
+    pub proof_size: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -294,6 +359,11 @@ pub enum XcmInstruction {
         asset_count: u32,
         reserve: ChainKey,
         remote_instructions: Vec<XcmInstruction>,
+    },
+    Transact {
+        origin_kind: RuntimeCallOriginKind,
+        fallback_weight: XcmWeight,
+        call_data: String,
     },
     DepositAsset {
         asset: AssetKey,

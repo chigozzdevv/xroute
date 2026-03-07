@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createSwapIntent, createTransferIntent } from "../index.mjs";
+import { createExecuteIntent, createSwapIntent, createTransferIntent } from "../index.mjs";
 
 test("createSwapIntent normalizes supported hydration swaps", () => {
   const intent = createSwapIntent({
@@ -47,4 +47,36 @@ test("createTransferIntent canonicalizes asset-hub to polkadot-hub", () => {
   assert.equal(intent.action.type, "transfer");
   assert.equal(intent.action.params.asset, "DOT");
   assert.equal(intent.action.params.amount, 10n);
+});
+
+test("createExecuteIntent normalizes a runtime call on hydration", () => {
+  const intent = createExecuteIntent({
+    sourceChain: "asset-hub",
+    destinationChain: "hydration",
+    refundAddress: "0x1111111111111111111111111111111111111111",
+    deadline: 1_773_185_200,
+    params: {
+      executionType: "runtime-call",
+      asset: "dot",
+      maxPaymentAmount: "90000000",
+      callData: "0x01020304",
+      fallbackWeight: {
+        refTime: 250000000,
+        proofSize: 4096,
+      },
+    },
+  });
+
+  assert.equal(intent.sourceChain, "polkadot-hub");
+  assert.equal(intent.destinationChain, "hydration");
+  assert.equal(intent.action.type, "execute");
+  assert.equal(intent.action.params.executionType, "runtime-call");
+  assert.equal(intent.action.params.asset, "DOT");
+  assert.equal(intent.action.params.maxPaymentAmount, 90000000n);
+  assert.equal(intent.action.params.callData, "0x01020304");
+  assert.equal(intent.action.params.originKind, "sovereign-account");
+  assert.deepEqual(intent.action.params.fallbackWeight, {
+    refTime: 250000000,
+    proofSize: 4096,
+  });
 });

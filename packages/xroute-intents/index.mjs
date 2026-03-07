@@ -1,15 +1,18 @@
 import {
   ACTION_TYPES,
+  EXECUTION_TYPES,
+  RUNTIME_CALL_ORIGIN_KINDS,
   assertAddress,
   assertInteger,
+  assertIncluded,
   assertHexString,
   assertNonEmptyString,
   assertPositiveBigInt,
-  assertIncluded,
   deterministicId,
   toPlainObject,
 } from "../xroute-types/index.mjs";
 import {
+  assertExecuteRoute,
   assertSwapRoute,
   assertTransferRoute,
   getChain,
@@ -30,6 +33,16 @@ export function createSwapIntent(input) {
     ...input,
     action: {
       type: ACTION_TYPES.SWAP,
+      params: input.action?.params ?? input.params,
+    },
+  });
+}
+
+export function createExecuteIntent(input) {
+  return createIntent({
+    ...input,
+    action: {
+      type: ACTION_TYPES.EXECUTE,
       params: input.action?.params ?? input.params,
     },
   });
@@ -86,6 +99,8 @@ function normalizeAction(actionType, sourceChain, destinationChain, params) {
       return normalizeTransfer(sourceChain, destinationChain, params);
     case ACTION_TYPES.SWAP:
       return normalizeSwap(sourceChain, destinationChain, params);
+    case ACTION_TYPES.EXECUTE:
+      return normalizeExecute(sourceChain, destinationChain, params);
     default:
       throw new Error(`unsupported action type: ${actionType}`);
   }
@@ -127,6 +142,58 @@ function normalizeSwap(sourceChain, destinationChain, params) {
       minAmountOut,
       settlementChain,
       recipient: assertNonEmptyString("action.params.recipient", params.recipient),
+    }),
+  });
+}
+
+function normalizeExecute(sourceChain, destinationChain, params) {
+  const executionType = assertIncluded(
+    "action.params.executionType",
+    params.executionType,
+    Object.values(EXECUTION_TYPES),
+  );
+
+  switch (executionType) {
+    case EXECUTION_TYPES.RUNTIME_CALL:
+      return normalizeRuntimeCall(sourceChain, destinationChain, params);
+    default:
+      throw new Error(`unsupported execution type: ${executionType}`);
+  }
+}
+
+function normalizeRuntimeCall(sourceChain, destinationChain, params) {
+  const asset = assertNonEmptyString("action.params.asset", params.asset).toUpperCase();
+  assertExecuteRoute(sourceChain, destinationChain, asset);
+
+  const originKind = params.originKind
+    ? assertIncluded(
+        "action.params.originKind",
+        params.originKind,
+        Object.values(RUNTIME_CALL_ORIGIN_KINDS),
+      )
+    : RUNTIME_CALL_ORIGIN_KINDS.SOVEREIGN_ACCOUNT;
+
+  return Object.freeze({
+    type: ACTION_TYPES.EXECUTE,
+    params: Object.freeze({
+      executionType: EXECUTION_TYPES.RUNTIME_CALL,
+      asset,
+      maxPaymentAmount: assertPositiveBigInt(
+        "action.params.maxPaymentAmount",
+        params.maxPaymentAmount,
+      ),
+      callData: assertHexString("action.params.callData", params.callData),
+      originKind,
+      fallbackWeight: Object.freeze({
+        refTime: assertInteger(
+          "action.params.fallbackWeight.refTime",
+          params.fallbackWeight?.refTime,
+        ),
+        proofSize: assertInteger(
+          "action.params.fallbackWeight.proofSize",
+          params.fallbackWeight?.proofSize,
+        ),
+      }),
     }),
   });
 }

@@ -3,6 +3,18 @@ import { createHash } from "node:crypto";
 export const ACTION_TYPES = Object.freeze({
   TRANSFER: "transfer",
   SWAP: "swap",
+  EXECUTE: "execute",
+});
+
+export const EXECUTION_TYPES = Object.freeze({
+  RUNTIME_CALL: "runtime-call",
+});
+
+export const RUNTIME_CALL_ORIGIN_KINDS = Object.freeze({
+  SOVEREIGN_ACCOUNT: "sovereign-account",
+  XCM: "xcm",
+  NATIVE: "native",
+  SUPERUSER: "superuser",
 });
 
 export const DISPATCH_MODES = Object.freeze({

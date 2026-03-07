@@ -1,7 +1,7 @@
 use crate::error::RouteError;
 use crate::model::{
-    AssetAmount, AssetKey, ChainKey, DeploymentProfile, FeeBreakdown, FeeType, Intent,
-    IntentAction, PlanStep, Quote, RouteSegment, RouteSegmentKind, SubmissionAction,
+    AssetAmount, AssetKey, ChainKey, DeploymentProfile, ExecuteIntent, FeeBreakdown, FeeType,
+    Intent, IntentAction, PlanStep, Quote, RouteSegment, RouteSegmentKind, SubmissionAction,
     SubmissionTerms, XcmInstruction,
 };
 use crate::registry::{RouteRegistry, SwapRoute, TransferPath};
@@ -146,6 +146,54 @@ impl RouteEngine {
                         xcm_fee: execution_path.xcm_fee.amount,
                         destination_fee: execution_path.destination_fee.amount,
                         min_output_amount: swap.min_amount_out,
+                    },
+                    execution_plan,
+                })
+            }
+            IntentAction::Execute(execute) => {
+                let path = self
+                    .registry
+                    .best_transfer_path(
+                        intent.source_chain,
+                        intent.destination_chain,
+                        execute.asset,
+                    )
+                    .ok_or(RouteError::UnsupportedExecuteRoute {
+                        source: intent.source_chain,
+                        destination: intent.destination_chain,
+                        asset: execute.asset,
+                    })?;
+                let execution_budget = path.destination_fee.amount;
+                if execution_budget > execute.max_payment_amount {
+                    return Err(RouteError::ExecutionBudgetExceeded {
+                        requested_max: execute.max_payment_amount,
+                        required: execution_budget,
+                    });
+                }
+
+                let fees = self.fee_breakdown(
+                    execution_budget,
+                    path.xcm_fee,
+                    AssetAmount::new(execute.asset, 0),
+                )?;
+                let execution_plan = build_execute_plan(&intent, &path, execute, &fees)?;
+
+                Ok(Quote {
+                    quote_id,
+                    deployment_profile: self.settings.deployment_profile,
+                    route: execution_plan.route.clone(),
+                    segments: vec![route_segment(RouteSegmentKind::Execution, &path)],
+                    fees,
+                    estimated_settlement_fee: None,
+                    expected_output: AssetAmount::new(execute.asset, 0),
+                    min_output: None,
+                    submission: SubmissionTerms {
+                        action: SubmissionAction::Execute,
+                        asset: execute.asset,
+                        amount: execution_budget,
+                        xcm_fee: path.xcm_fee.amount,
+                        destination_fee: 0,
+                        min_output_amount: 0,
                     },
                     execution_plan,
                 })
@@ -362,6 +410,59 @@ fn build_transfer_plan(
                 asset: principal.asset,
                 recipient,
                 minimum_amount: Some(principal.amount),
+            },
+        ],
+    })
+}
+
+fn build_execute_plan(
+    intent: &Intent,
+    path: &TransferPath,
+    execute: &ExecuteIntent,
+    fees: &FeeBreakdown,
+) -> Result<crate::model::ExecutionPlan, RouteError> {
+    let execution_budget = path.destination_fee.amount;
+    let locked = execution_budget
+        .checked_add(fees.total_fee.amount)
+        .ok_or(RouteError::ArithmeticOverflow)?;
+    let final_remote_instructions = vec![XcmInstruction::Transact {
+        origin_kind: execute.origin_kind,
+        fallback_weight: execute.fallback_weight,
+        call_data: execute.call_data.clone(),
+    }];
+
+    Ok(crate::model::ExecutionPlan {
+        route: path.route.clone(),
+        steps: vec![
+            PlanStep::LockAsset {
+                chain: intent.source_chain,
+                asset: execute.asset,
+                amount: locked,
+            },
+            PlanStep::ChargeFee {
+                fee_type: FeeType::Platform,
+                asset: fees.platform_fee.asset,
+                amount: fees.platform_fee.amount,
+            },
+            PlanStep::ChargeFee {
+                fee_type: FeeType::Xcm,
+                asset: fees.xcm_fee.asset,
+                amount: fees.xcm_fee.amount,
+            },
+            PlanStep::ChargeFee {
+                fee_type: FeeType::Destination,
+                asset: execute.asset,
+                amount: 0,
+            },
+            PlanStep::SendXcm {
+                origin: intent.source_chain,
+                destination: *path.route.get(1).ok_or(RouteError::ArithmeticOverflow)?,
+                instructions: vec![build_multihop_transfer_instruction(
+                    &path.hops,
+                    0,
+                    execution_budget,
+                    final_remote_instructions,
+                )],
             },
         ],
     })

@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 
 use route_engine::{
-    AssetAmount, AssetKey, ChainKey, DeploymentProfile, EngineSettings, ExecutionPlan,
-    FeeBreakdown, FeeType, Intent, IntentAction, PlanStep, Quote, RouteHop, RouteEngine,
-    RouteRegistry, RouteSegment, RouteSegmentKind, SubmissionAction, SwapIntent, TransferIntent,
-    XcmInstruction,
+    AssetAmount, AssetKey, ChainKey, DeploymentProfile, EngineSettings, ExecuteIntent,
+    ExecutionPlan, ExecutionType, FeeBreakdown, FeeType, Intent, IntentAction, PlanStep, Quote,
+    RouteHop, RouteEngine, RouteRegistry, RouteSegment, RouteSegmentKind,
+    RuntimeCallOriginKind, SubmissionAction, SwapIntent, TransferIntent, XcmInstruction,
+    XcmWeight,
 };
 
 pub fn run() -> Result<(), String> {
@@ -88,9 +89,31 @@ fn build_intent(options: &HashMap<String, String>) -> Result<Intent, String> {
                 .unwrap_or(destination_chain),
             recipient: required(options, "recipient")?.to_owned(),
         }),
+        "execute" => IntentAction::Execute(ExecuteIntent {
+            execution_type: parse_execution_type(required(options, "execution-type")?)?,
+            asset: parse_asset(required(options, "asset")?)?,
+            max_payment_amount: parse_u128(
+                required(options, "max-payment-amount")?,
+                "max-payment-amount",
+            )?,
+            call_data: parse_hex_string(required(options, "call-data")?, "call-data")?,
+            origin_kind: options
+                .get("origin-kind")
+                .map(String::as_str)
+                .map(parse_origin_kind)
+                .transpose()?
+                .unwrap_or(RuntimeCallOriginKind::SovereignAccount),
+            fallback_weight: XcmWeight {
+                ref_time: parse_u64(required(options, "fallback-ref-time")?, "fallback-ref-time")?,
+                proof_size: parse_u64(
+                    required(options, "fallback-proof-size")?,
+                    "fallback-proof-size",
+                )?,
+            },
+        }),
         other => {
             return Err(format!(
-                "unsupported action: {other} (expected transfer or swap)"
+                "unsupported action: {other} (expected transfer, swap, or execute)"
             ))
         }
     };
@@ -136,6 +159,23 @@ fn parse_deployment_profile(value: &str) -> Result<DeploymentProfile, String> {
     }
 }
 
+fn parse_execution_type(value: &str) -> Result<ExecutionType, String> {
+    match value {
+        "runtime-call" => Ok(ExecutionType::RuntimeCall),
+        other => Err(format!("unsupported execution type: {other}")),
+    }
+}
+
+fn parse_origin_kind(value: &str) -> Result<RuntimeCallOriginKind, String> {
+    match value {
+        "sovereign-account" => Ok(RuntimeCallOriginKind::SovereignAccount),
+        "xcm" => Ok(RuntimeCallOriginKind::Xcm),
+        "native" => Ok(RuntimeCallOriginKind::Native),
+        "superuser" => Ok(RuntimeCallOriginKind::Superuser),
+        other => Err(format!("unsupported origin kind: {other}")),
+    }
+}
+
 fn parse_u64(value: &str, name: &str) -> Result<u64, String> {
     value
         .parse::<u64>()
@@ -146,6 +186,19 @@ fn parse_u128(value: &str, name: &str) -> Result<u128, String> {
     value
         .parse::<u128>()
         .map_err(|_| format!("{name} must be an unsigned integer"))
+}
+
+fn parse_hex_string(value: &str, name: &str) -> Result<String, String> {
+    let normalized = value.trim().to_lowercase();
+    if normalized.len() < 2
+        || !normalized.starts_with("0x")
+        || !normalized[2..].chars().all(|char| char.is_ascii_hexdigit())
+        || normalized[2..].len() % 2 != 0
+    {
+        return Err(format!("{name} must be a 0x-prefixed even-length hex string"));
+    }
+
+    Ok(normalized)
 }
 
 fn quote_to_json(quote: &Quote) -> String {
@@ -356,6 +409,17 @@ fn xcm_instruction_json(instruction: &XcmInstruction) -> String {
             json_string(recipient),
             asset_count,
         ),
+        XcmInstruction::Transact {
+            origin_kind,
+            fallback_weight,
+            call_data,
+        } => format!(
+            "{{\"type\":\"transact\",\"originKind\":{},\"fallbackWeight\":{{\"refTime\":{},\"proofSize\":{}}},\"callData\":{}}}",
+            json_string(origin_kind.as_str()),
+            fallback_weight.ref_time,
+            fallback_weight.proof_size,
+            json_string(call_data),
+        ),
     }
 }
 
@@ -404,6 +468,7 @@ fn submission_action_label(action: SubmissionAction) -> &'static str {
     match action {
         SubmissionAction::Transfer => "transfer",
         SubmissionAction::Swap => "swap",
+        SubmissionAction::Execute => "execute",
     }
 }
 
@@ -425,11 +490,12 @@ fn route_segment_kind_label(kind: RouteSegmentKind) -> &'static str {
 fn usage() -> String {
     [
         "usage:",
-        "  route-engine quote --source-chain <chain> --destination-chain <chain> --refund-address <address> --deadline <unix-seconds> --action <transfer|swap> [action flags] [--deployment-profile <testnet|mainnet>]",
+        "  route-engine quote --source-chain <chain> --destination-chain <chain> --refund-address <address> --deadline <unix-seconds> --action <transfer|swap|execute> [action flags] [--deployment-profile <testnet|mainnet>]",
         "",
         "action flags:",
         "  transfer: --asset <symbol> --amount <units> --recipient <address>",
         "  swap: --asset-in <symbol> --asset-out <symbol> --amount-in <units> --min-amount-out <units> --recipient <address> [--settlement-chain <chain>]",
+        "  execute: --execution-type runtime-call --asset <symbol> --max-payment-amount <units> --call-data <hex> --fallback-ref-time <u64> --fallback-proof-size <u64> [--origin-kind <sovereign-account|xcm|native|superuser>]",
     ]
     .join("\n")
 }

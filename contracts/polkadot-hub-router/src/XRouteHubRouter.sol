@@ -7,7 +7,8 @@ import {IXcm} from "./interfaces/IXcm.sol";
 contract XRouteHubRouter {
     enum ActionType {
         Transfer,
-        Swap
+        Swap,
+        Execute
     }
 
     enum DispatchMode {

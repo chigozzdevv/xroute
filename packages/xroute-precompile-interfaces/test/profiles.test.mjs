@@ -20,6 +20,7 @@ test("contract enums stay stable for the live transfer and swap surface", () => 
   assert.deepEqual(ACTION_TO_CONTRACT_ENUM, {
     transfer: 0,
     swap: 1,
+    execute: 2,
   });
   assert.deepEqual(DISPATCH_MODE_TO_CONTRACT_ENUM, {
     execute: 0,
