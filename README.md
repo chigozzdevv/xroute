@@ -380,10 +380,11 @@ This smoke path exercises the full multichain SDK stack under the dedicated `int
 
 - `transfer`
 - `swap`
+- `execute/runtime-call`
 - `execute/evm-contract-call`
 - `execute/vtoken-order`
 
-It validates the JS SDK, Rust planner, and XCM envelope generation across the full four-chain graph.
+It deploys a local router plus a mock XCM precompile on Anvil, starts the Rust quote service and Rust relayer, submits intents through the JS SDK, dispatches them through the relayer, and settles them onchain across the full four-chain graph.
 
 ## SDK Usage
 
