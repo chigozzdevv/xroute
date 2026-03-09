@@ -60,7 +60,7 @@ XRoute turns that into:
 
 `hydration-snakenet` and `moonbase-alpha` are narrow public validation profiles for the real swap and execute capabilities.
 
-`integration` is the full four-chain multihop test environment.
+`integration` is the full four-chain multihop integration profile.
 
 `mainnet` is the production graph.
 
@@ -156,7 +156,7 @@ Dedicated full-graph multihop profile:
 - `moonbeam <-> bifrost`
 - `hydration <-> bifrost`
 
-This is the profile that exercises the complete four-chain `transfer + swap + execute` surface before mainnet deployment.
+This is the profile used to validate the complete four-chain `transfer + swap + execute` surface before mainnet deployment.
 
 ### Mainnet
 
@@ -384,7 +384,12 @@ This smoke path exercises the full multichain SDK stack under the dedicated `int
 - `execute/evm-contract-call`
 - `execute/vtoken-order`
 
-It deploys a local router plus a mock XCM precompile on Anvil, starts the Rust quote service and Rust relayer, submits intents through the JS SDK, dispatches them through the relayer, and settles them onchain across the full four-chain graph.
+This smoke path validates the full four-chain graph at the route-planning and envelope-building layer. It checks the multihop paths and destination payload generation for:
+
+- `transfer`
+- `swap`
+- `execute/evm-contract-call`
+- `execute/vtoken-order`
 
 ## SDK Usage
 
