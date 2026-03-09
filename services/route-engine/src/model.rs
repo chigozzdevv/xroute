@@ -30,6 +30,9 @@ impl Display for ChainKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DeploymentProfile {
     Paseo,
+    HydrationSnakenet,
+    MoonbaseAlpha,
+    Integration,
     Mainnet,
 }
 
@@ -37,6 +40,9 @@ impl DeploymentProfile {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Paseo => "paseo",
+            Self::HydrationSnakenet => "hydration-snakenet",
+            Self::MoonbaseAlpha => "moonbase-alpha",
+            Self::Integration => "integration",
             Self::Mainnet => "mainnet",
         }
     }

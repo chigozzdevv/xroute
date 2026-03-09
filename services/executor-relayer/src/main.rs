@@ -116,7 +116,7 @@ fn load_state() -> Result<RelayerState, String> {
         env::var("XROUTE_DEPLOYMENT_PROFILE")
             .ok()
             .as_deref()
-            .unwrap_or("paseo"),
+            .unwrap_or("mainnet"),
     )?;
     let max_body_bytes = parse_positive_usize(
         env::var("XROUTE_RELAYER_MAX_BODY_BYTES")
@@ -955,6 +955,13 @@ fn required_env(name: &str) -> Result<String, String> {
 fn parse_deployment_profile(value: &str) -> Result<DeploymentProfile, String> {
     match value {
         "paseo" | "testnet" => Ok(DeploymentProfile::Paseo),
+        "hydration-snakenet" | "hydration-testnet" => Ok(DeploymentProfile::HydrationSnakenet),
+        "moonbase-alpha" | "moonbeam" | "moonbase" | "moonbeam-testnet" => {
+            Ok(DeploymentProfile::MoonbaseAlpha)
+        }
+        "integration" | "integration-testnet" | "multihop" => {
+            Ok(DeploymentProfile::Integration)
+        }
         "mainnet" => Ok(DeploymentProfile::Mainnet),
         other => Err(format!("unsupported deployment profile: {other}")),
     }

@@ -57,3 +57,49 @@ test("findTransferPath exposes the paseo proof route", () => {
     "people",
   ]);
 });
+
+test("hydration-snakenet stays focused on Hub and Hydration swap flows", () => {
+  assert.deepEqual(
+    findTransferPath("polkadot-hub", "hydration", "DOT", "hydration-snakenet"),
+    ["polkadot-hub", "hydration"],
+  );
+  const route = assertSwapRoute(
+    "polkadot-hub",
+    "hydration",
+    "DOT",
+    "USDT",
+    "polkadot-hub",
+    "hydration-snakenet",
+  );
+
+  assert.deepEqual(route.executionPath, ["polkadot-hub", "hydration"]);
+});
+
+test("moonbase-alpha exposes Moonbeam execute capabilities without Bifrost edges", () => {
+  const route = assertExecuteRoute(
+    "polkadot-hub",
+    "moonbeam",
+    "DOT",
+    "evm-contract-call",
+    "moonbase-alpha",
+  );
+
+  assert.deepEqual(route.path, ["polkadot-hub", "moonbeam"]);
+  assert.throws(
+    () => findTransferPath("polkadot-hub", "bifrost", "DOT", "moonbase-alpha"),
+    /unsupported chain/,
+  );
+});
+
+test("integration exposes the full four-chain multihop graph", () => {
+  assert.deepEqual(findTransferPath("polkadot-hub", "bifrost", "DOT", "integration"), [
+    "polkadot-hub",
+    "moonbeam",
+    "bifrost",
+  ]);
+  assert.deepEqual(findTransferPath("moonbeam", "hydration", "DOT", "integration"), [
+    "moonbeam",
+    "polkadot-hub",
+    "hydration",
+  ]);
+});

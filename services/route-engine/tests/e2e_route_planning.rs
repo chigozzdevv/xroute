@@ -8,24 +8,34 @@ use route_engine::{
 
 const REFUND_ADDRESS: &str = "0x1111111111111111111111111111111111111111";
 
-fn mainnet_engine() -> RouteEngine {
+fn engine_for_profile(profile: DeploymentProfile) -> RouteEngine {
     RouteEngine::new(
-        RouteRegistry::for_profile(DeploymentProfile::Mainnet),
+        RouteRegistry::for_profile(profile),
         EngineSettings {
             platform_fee_bps: 10,
-            deployment_profile: DeploymentProfile::Mainnet,
+            deployment_profile: profile,
         },
     )
 }
 
+fn mainnet_engine() -> RouteEngine {
+    engine_for_profile(DeploymentProfile::Mainnet)
+}
+
 fn paseo_engine() -> RouteEngine {
-    RouteEngine::new(
-        RouteRegistry::for_profile(DeploymentProfile::Paseo),
-        EngineSettings {
-            platform_fee_bps: 10,
-            deployment_profile: DeploymentProfile::Paseo,
-        },
-    )
+    engine_for_profile(DeploymentProfile::Paseo)
+}
+
+fn integration_engine() -> RouteEngine {
+    engine_for_profile(DeploymentProfile::Integration)
+}
+
+fn hydration_snakenet_engine() -> RouteEngine {
+    engine_for_profile(DeploymentProfile::HydrationSnakenet)
+}
+
+fn moonbase_alpha_engine() -> RouteEngine {
+    engine_for_profile(DeploymentProfile::MoonbaseAlpha)
 }
 
 #[test]
@@ -928,6 +938,97 @@ fn quotes_execute_vtoken_redeem_on_bifrost() {
         }
         other => panic!("unexpected plan step: {other:?}"),
     }
+}
+
+#[test]
+fn quotes_swap_on_hydration_snakenet_profile() {
+    let engine = hydration_snakenet_engine();
+    let intent = Intent {
+        source_chain: ChainKey::PolkadotHub,
+        destination_chain: ChainKey::Hydration,
+        action: IntentAction::Swap(SwapIntent {
+            asset_in: AssetKey::Dot,
+            asset_out: AssetKey::Usdt,
+            amount_in: AssetKey::Dot.units(5),
+            min_amount_out: AssetKey::Usdt.units(24),
+            settlement_chain: ChainKey::PolkadotHub,
+            recipient: "5FsnakenetRecipient".to_owned(),
+        }),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let quote = engine
+        .quote(intent)
+        .expect("hydration-snakenet swap quote should build");
+
+    assert_eq!(quote.deployment_profile, DeploymentProfile::HydrationSnakenet);
+    assert_eq!(
+        quote.route,
+        vec![ChainKey::PolkadotHub, ChainKey::Hydration, ChainKey::PolkadotHub]
+    );
+    assert_eq!(quote.segments.len(), 2);
+    assert_eq!(quote.segments[0].route, vec![ChainKey::PolkadotHub, ChainKey::Hydration]);
+    assert_eq!(quote.segments[1].route, vec![ChainKey::Hydration, ChainKey::PolkadotHub]);
+}
+
+#[test]
+fn quotes_execute_evm_contract_call_on_moonbase_alpha_profile() {
+    let engine = moonbase_alpha_engine();
+    let intent = Intent {
+        source_chain: ChainKey::PolkadotHub,
+        destination_chain: ChainKey::Moonbeam,
+        action: IntentAction::Execute(ExecuteIntent::EvmContractCall(
+            EvmContractCallExecuteIntent {
+                asset: AssetKey::Dot,
+                max_payment_amount: 110_000_000,
+                contract_address: "0x1111111111111111111111111111111111111111".to_owned(),
+                calldata: "0xdeadbeef".to_owned(),
+                value: 0,
+                gas_limit: 250_000,
+                fallback_weight: XcmWeight {
+                    ref_time: 650_000_000,
+                    proof_size: 12_288,
+                },
+            },
+        )),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let quote = engine
+        .quote(intent)
+        .expect("moonbase alpha evm quote should build");
+
+    assert_eq!(quote.deployment_profile, DeploymentProfile::MoonbaseAlpha);
+    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Moonbeam]);
+}
+
+#[test]
+fn quotes_full_multihop_transfer_on_integration_profile() {
+    let engine = integration_engine();
+    let intent = Intent {
+        source_chain: ChainKey::PolkadotHub,
+        destination_chain: ChainKey::Bifrost,
+        action: IntentAction::Transfer(TransferIntent {
+            asset: AssetKey::Dot,
+            amount: AssetKey::Dot.units(2),
+            recipient: "5FintegrationRecipient".to_owned(),
+        }),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let quote = engine
+        .quote(intent)
+        .expect("integration multihop quote should build");
+
+    assert_eq!(quote.deployment_profile, DeploymentProfile::Integration);
+    assert_eq!(
+        quote.route,
+        vec![ChainKey::PolkadotHub, ChainKey::Moonbeam, ChainKey::Bifrost]
+    );
+    assert_eq!(quote.segments[0].route, quote.route);
 }
 
 fn first_transfer_instruction(step: &PlanStep) -> &XcmInstruction {

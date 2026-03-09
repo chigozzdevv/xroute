@@ -91,7 +91,10 @@ fn build_bifrost_vtoken_order_call(
 
 fn moonbeam_ethereum_xcm_pallet_index(profile: DeploymentProfile) -> u8 {
     match profile {
-        DeploymentProfile::Paseo => MOONBEAM_ETHEREUM_XCM_PALLET_TESTNET,
+        DeploymentProfile::Paseo
+        | DeploymentProfile::HydrationSnakenet
+        | DeploymentProfile::MoonbaseAlpha
+        | DeploymentProfile::Integration => MOONBEAM_ETHEREUM_XCM_PALLET_TESTNET,
         DeploymentProfile::Mainnet => MOONBEAM_ETHEREUM_XCM_PALLET_MAINNET,
     }
 }

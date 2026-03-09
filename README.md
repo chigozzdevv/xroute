@@ -34,6 +34,21 @@ XRoute turns that into:
   - public proof profile
   - live route: `polkadot-hub -> people`
   - asset: `PAS`
+- `hydration-snakenet`
+  - public Hydration validation profile
+  - routes: `polkadot-hub <-> hydration`
+  - actions: `transfer`, `swap`, `execute/runtime-call`
+- `moonbase-alpha`
+  - public Moonbeam validation profile
+  - routes: `polkadot-hub <-> moonbeam`
+  - actions: `transfer`, `execute/runtime-call`, `execute/evm-contract-call`
+- `integration`
+  - dedicated multichain integration testnet
+  - full four-chain graph
+  - `polkadot-hub <-> hydration`
+  - `polkadot-hub <-> moonbeam`
+  - `moonbeam <-> bifrost`
+  - `hydration <-> bifrost`
 - `mainnet`
   - product graph
   - `polkadot-hub <-> hydration`
@@ -43,7 +58,11 @@ XRoute turns that into:
 
 `paseo` is for public end-to-end proof.
 
-`mainnet` is the real product graph.
+`hydration-snakenet` and `moonbase-alpha` are narrow public validation profiles for the real swap and execute capabilities.
+
+`integration` is the full four-chain multihop test environment.
+
+`mainnet` is the production graph.
 
 ### Actions
 
@@ -69,6 +88,17 @@ XRoute turns that into:
 
 - `paseo`
   - `PAS`
+- `hydration-snakenet`
+  - `DOT`
+  - `USDT`
+  - `HDX`
+- `moonbase-alpha`
+  - `DOT`
+- `integration`
+  - `DOT`
+  - `USDT`
+  - `HDX`
+  - `VDOT`
 - `mainnet`
   - `DOT`
   - `USDT`
@@ -90,6 +120,43 @@ This is the route used to prove:
 - relayer dispatch
 - onchain settlement
 - final router state
+
+### Hydration Snakenet
+
+Public validation target:
+
+- `polkadot-hub -> hydration`
+- `hydration -> polkadot-hub`
+
+Supported capabilities:
+
+- `transfer`
+- `swap`
+- `execute/runtime-call`
+
+### Moonbase Alpha
+
+Public validation target:
+
+- `polkadot-hub -> moonbeam`
+- `moonbeam -> polkadot-hub`
+
+Supported capabilities:
+
+- `transfer`
+- `execute/runtime-call`
+- `execute/evm-contract-call`
+
+### Integration
+
+Dedicated full-graph multihop profile:
+
+- `polkadot-hub <-> hydration`
+- `polkadot-hub <-> moonbeam`
+- `moonbeam <-> bifrost`
+- `hydration <-> bifrost`
+
+This is the profile that exercises the complete four-chain `transfer + swap + execute` surface before mainnet deployment.
 
 ### Mainnet
 
@@ -216,7 +283,9 @@ npm run build
 npm run serve:quote
 npm run serve:executor-relayer
 npm run deploy:paseo
+npm run deploy:integration
 npm run deploy:mainnet
+npm run smoke:integration
 npm run smoke:paseo
 ```
 
@@ -229,6 +298,9 @@ Public Hub deployment entrypoint:
 Profiles:
 
 - `paseo`
+- `hydration-snakenet`
+- `moonbase-alpha`
+- `integration`
 - `mainnet`
 
 Official Hub RPC endpoints:
@@ -241,6 +313,16 @@ Example Paseo deploy:
 ```bash
 XROUTE_ALLOW_LIVE_DEPLOY=true \
 XROUTE_DEPLOYMENT_PROFILE=paseo \
+XROUTE_RPC_URL=https://services.polkadothub-rpc.com/testnet \
+XROUTE_PRIVATE_KEY=0x... \
+node scripts/deploy-stack.mjs
+```
+
+Example dedicated integration deploy:
+
+```bash
+XROUTE_ALLOW_LIVE_DEPLOY=true \
+XROUTE_DEPLOYMENT_PROFILE=integration \
 XROUTE_RPC_URL=https://services.polkadothub-rpc.com/testnet \
 XROUTE_PRIVATE_KEY=0x... \
 node scripts/deploy-stack.mjs
@@ -286,6 +368,23 @@ Optional smoke variables:
 - `XROUTE_PEOPLE_RECIPIENT`
 - `XROUTE_PASEO_TRANSFER_AMOUNT`
 
+## Integration Smoke Flow
+
+Run:
+
+```bash
+npm run smoke:integration
+```
+
+This smoke path exercises the full multichain SDK stack under the dedicated `integration` profile:
+
+- `transfer`
+- `swap`
+- `execute/evm-contract-call`
+- `execute/vtoken-order`
+
+It validates the JS SDK, Rust planner, and XCM envelope generation across the full four-chain graph.
+
 ## SDK Usage
 
 ### Client Setup
@@ -306,7 +405,7 @@ const client = createXRouteClient({
   quoteProvider: createHttpQuoteProvider({
     endpoint: "https://quotes.example.com/quote",
     headers: {
-      "x-xroute-deployment-profile": "mainnet",
+      "x-xroute-deployment-profile": "integration",
     },
   }),
   routerAdapter: myWalletRouterAdapter,
@@ -325,6 +424,8 @@ const relayer = createHttpExecutorRelayerClient({
   authToken: process.env.XROUTE_RELAYER_TOKEN,
 });
 ```
+
+Use `integration` for the dedicated four-chain multihop test environment and switch to `mainnet` when you are ready to route on the live product graph.
 
 ### Paseo Transfer
 
@@ -350,7 +451,7 @@ const { intent, quote } = await client.quote({
 
 ```ts
 const { intent, quote } = await client.quote({
-  deploymentProfile: "mainnet",
+  deploymentProfile: "integration",
   sourceChain: "moonbeam",
   destinationChain: "hydration",
   refundAddress: "0x1111111111111111111111111111111111111111",
@@ -373,7 +474,7 @@ const { intent, quote } = await client.quote({
 
 ```ts
 const { intent, quote } = await client.quote({
-  deploymentProfile: "mainnet",
+  deploymentProfile: "integration",
   sourceChain: "hydration",
   destinationChain: "moonbeam",
   refundAddress: "0x1111111111111111111111111111111111111111",
@@ -401,7 +502,7 @@ const { intent, quote } = await client.quote({
 
 ```ts
 const mintIntent = await client.quote({
-  deploymentProfile: "mainnet",
+  deploymentProfile: "integration",
   sourceChain: "polkadot-hub",
   destinationChain: "bifrost",
   refundAddress: "0x1111111111111111111111111111111111111111",
@@ -426,7 +527,7 @@ const mintIntent = await client.quote({
 });
 
 const redeemIntent = await client.quote({
-  deploymentProfile: "mainnet",
+  deploymentProfile: "integration",
   sourceChain: "moonbeam",
   destinationChain: "bifrost",
   refundAddress: "0x1111111111111111111111111111111111111111",

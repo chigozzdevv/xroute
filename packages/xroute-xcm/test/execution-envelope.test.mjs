@@ -15,6 +15,10 @@ const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..
 const mainnetQuoteProvider = createRouteEngineQuoteProvider({
   cwd: workspaceRoot,
 });
+const integrationQuoteProvider = createRouteEngineQuoteProvider({
+  cwd: workspaceRoot,
+  deploymentProfile: "integration",
+});
 const paseoQuoteProvider = createRouteEngineQuoteProvider({
   cwd: workspaceRoot,
   deploymentProfile: "paseo",
@@ -46,6 +50,32 @@ test("buildExecutionEnvelope encodes a transfer reserve XCM payload", async () =
   assert.equal(decoded.value[1].type, "TransferReserveAsset");
   assert.equal(decoded.value[1].value.xcm[0].type, "BuyExecution");
   assert.equal(decoded.value[1].value.xcm[1].type, "DepositAsset");
+});
+
+test("buildExecutionEnvelope encodes the integration multihop route to Bifrost", async () => {
+  const intent = createTransferIntent({
+    deploymentProfile: "integration",
+    sourceChain: "polkadot-hub",
+    destinationChain: "bifrost",
+    refundAddress,
+    deadline: 1_773_185_200,
+    params: {
+      asset: "DOT",
+      amount: "250000000000",
+      recipient: aliceAddress,
+    },
+  });
+  const quote = await integrationQuoteProvider.quote(intent);
+
+  const envelope = buildExecutionEnvelope({ intent, quote });
+  const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
+
+  assert.equal(decoded.value[1].type, "TransferReserveAsset");
+  assert.deepEqual(decoded.value[1].value.dest.interior.value, {
+    type: "Parachain",
+    value: 2004,
+  });
+  assert.equal(decoded.value[1].value.xcm[1].type, "TransferReserveAsset");
 });
 
 test("buildExecutionEnvelope encodes the Paseo PAS transfer route", async () => {

@@ -139,6 +139,13 @@ fn parse_asset(value: &str) -> Result<AssetKey, String> {
 fn parse_deployment_profile(value: &str) -> Result<DeploymentProfile, String> {
     match value {
         "paseo" | "testnet" => Ok(DeploymentProfile::Paseo),
+        "hydration-snakenet" | "hydration-testnet" => Ok(DeploymentProfile::HydrationSnakenet),
+        "moonbase-alpha" | "moonbeam" | "moonbase" | "moonbeam-testnet" => {
+            Ok(DeploymentProfile::MoonbaseAlpha)
+        }
+        "integration" | "integration-testnet" | "multihop" => {
+            Ok(DeploymentProfile::Integration)
+        }
         "mainnet" => Ok(DeploymentProfile::Mainnet),
         other => Err(format!("unsupported deployment profile: {other}")),
     }
@@ -643,7 +650,7 @@ fn route_segment_kind_label(kind: RouteSegmentKind) -> &'static str {
 fn usage() -> String {
     [
         "usage:",
-        "  route-engine quote --source-chain <chain> --destination-chain <chain> --refund-address <address> --deadline <unix-seconds> --action <transfer|swap|execute> [action flags] [--deployment-profile <paseo|mainnet>]",
+        "  route-engine quote --source-chain <chain> --destination-chain <chain> --refund-address <address> --deadline <unix-seconds> --action <transfer|swap|execute> [action flags] [--deployment-profile <paseo|hydration-snakenet|moonbase-alpha|integration|mainnet>]",
         "",
         "action flags:",
         "  transfer: --asset <symbol> --amount <units> --recipient <address>",

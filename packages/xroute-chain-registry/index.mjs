@@ -91,8 +91,7 @@ const PASEO_PROFILE = Object.freeze({
   ]),
 });
 
-const MAINNET_PROFILE = Object.freeze({
-  chains: Object.freeze({
+const FULL_GRAPH_CHAINS = Object.freeze({
     "polkadot-hub": Object.freeze({
       key: "polkadot-hub",
       label: "Polkadot Hub",
@@ -135,8 +134,9 @@ const MAINNET_PROFILE = Object.freeze({
         ACTION_TYPES.EXECUTE,
       ]),
     }),
-  }),
-  assets: Object.freeze({
+  });
+
+const FULL_GRAPH_ASSETS = Object.freeze({
     DOT: Object.freeze({
       symbol: "DOT",
       decimals: 10,
@@ -257,88 +257,138 @@ const MAINNET_PROFILE = Object.freeze({
         }),
       }),
     }),
+  });
+
+const FULL_GRAPH_ROUTES = Object.freeze([
+  route({
+    sourceChain: "polkadot-hub",
+    destinationChain: "moonbeam",
+    actions: [ACTION_TYPES.TRANSFER, ACTION_TYPES.EXECUTE],
+    transferableAssets: ["DOT"],
+    executeCapabilities: [
+      capability(EXECUTION_TYPES.RUNTIME_CALL, ["DOT"]),
+      capability(EXECUTION_TYPES.EVM_CONTRACT_CALL, ["DOT"]),
+    ],
   }),
-  routes: Object.freeze([
-    route({
-      sourceChain: "polkadot-hub",
-      destinationChain: "moonbeam",
-      actions: [ACTION_TYPES.TRANSFER, ACTION_TYPES.EXECUTE],
-      transferableAssets: ["DOT"],
-      executeCapabilities: [
-        capability(EXECUTION_TYPES.RUNTIME_CALL, ["DOT"]),
-        capability(EXECUTION_TYPES.EVM_CONTRACT_CALL, ["DOT"]),
-      ],
-    }),
-    route({
-      sourceChain: "polkadot-hub",
-      destinationChain: "hydration",
-      actions: [ACTION_TYPES.TRANSFER, ACTION_TYPES.SWAP, ACTION_TYPES.EXECUTE],
-      transferableAssets: ["DOT"],
-      swapPairs: [
-        {
-          assetIn: "DOT",
-          assetOut: "USDT",
-          settlementChains: ["hydration", "polkadot-hub"],
-        },
-        {
-          assetIn: "DOT",
-          assetOut: "HDX",
-          settlementChains: ["hydration", "polkadot-hub"],
-        },
-      ],
-      executeCapabilities: [
-        capability(EXECUTION_TYPES.RUNTIME_CALL, ["DOT"]),
-      ],
-    }),
-    route({
-      sourceChain: "hydration",
-      destinationChain: "polkadot-hub",
-      actions: [ACTION_TYPES.TRANSFER],
-      transferableAssets: ["DOT", "USDT", "HDX"],
-    }),
-    route({
-      sourceChain: "moonbeam",
-      destinationChain: "polkadot-hub",
-      actions: [ACTION_TYPES.TRANSFER],
-      transferableAssets: ["DOT"],
-    }),
-    route({
-      sourceChain: "moonbeam",
-      destinationChain: "bifrost",
-      actions: [ACTION_TYPES.TRANSFER, ACTION_TYPES.EXECUTE],
-      transferableAssets: ["DOT", "VDOT"],
-      executeCapabilities: [
-        capability(EXECUTION_TYPES.RUNTIME_CALL, ["DOT"]),
-        capability(EXECUTION_TYPES.VTOKEN_ORDER, ["DOT", "VDOT"]),
-      ],
-    }),
-    route({
-      sourceChain: "bifrost",
-      destinationChain: "moonbeam",
-      actions: [ACTION_TYPES.TRANSFER],
-      transferableAssets: ["DOT", "VDOT"],
-    }),
-    route({
-      sourceChain: "hydration",
-      destinationChain: "bifrost",
-      actions: [ACTION_TYPES.TRANSFER, ACTION_TYPES.EXECUTE],
-      transferableAssets: ["DOT", "VDOT"],
-      executeCapabilities: [
-        capability(EXECUTION_TYPES.RUNTIME_CALL, ["DOT"]),
-        capability(EXECUTION_TYPES.VTOKEN_ORDER, ["DOT", "VDOT"]),
-      ],
-    }),
-    route({
-      sourceChain: "bifrost",
-      destinationChain: "hydration",
-      actions: [ACTION_TYPES.TRANSFER],
-      transferableAssets: ["DOT", "VDOT"],
-    }),
-  ]),
+  route({
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    actions: [ACTION_TYPES.TRANSFER, ACTION_TYPES.SWAP, ACTION_TYPES.EXECUTE],
+    transferableAssets: ["DOT"],
+    swapPairs: [
+      {
+        assetIn: "DOT",
+        assetOut: "USDT",
+        settlementChains: ["hydration", "polkadot-hub"],
+      },
+      {
+        assetIn: "DOT",
+        assetOut: "HDX",
+        settlementChains: ["hydration", "polkadot-hub"],
+      },
+    ],
+    executeCapabilities: [
+      capability(EXECUTION_TYPES.RUNTIME_CALL, ["DOT"]),
+    ],
+  }),
+  route({
+    sourceChain: "hydration",
+    destinationChain: "polkadot-hub",
+    actions: [ACTION_TYPES.TRANSFER],
+    transferableAssets: ["DOT", "USDT", "HDX"],
+  }),
+  route({
+    sourceChain: "moonbeam",
+    destinationChain: "polkadot-hub",
+    actions: [ACTION_TYPES.TRANSFER],
+    transferableAssets: ["DOT"],
+  }),
+  route({
+    sourceChain: "moonbeam",
+    destinationChain: "bifrost",
+    actions: [ACTION_TYPES.TRANSFER, ACTION_TYPES.EXECUTE],
+    transferableAssets: ["DOT", "VDOT"],
+    executeCapabilities: [
+      capability(EXECUTION_TYPES.RUNTIME_CALL, ["DOT"]),
+      capability(EXECUTION_TYPES.VTOKEN_ORDER, ["DOT", "VDOT"]),
+    ],
+  }),
+  route({
+    sourceChain: "bifrost",
+    destinationChain: "moonbeam",
+    actions: [ACTION_TYPES.TRANSFER],
+    transferableAssets: ["DOT", "VDOT"],
+  }),
+  route({
+    sourceChain: "hydration",
+    destinationChain: "bifrost",
+    actions: [ACTION_TYPES.TRANSFER, ACTION_TYPES.EXECUTE],
+    transferableAssets: ["DOT", "VDOT"],
+    executeCapabilities: [
+      capability(EXECUTION_TYPES.RUNTIME_CALL, ["DOT"]),
+      capability(EXECUTION_TYPES.VTOKEN_ORDER, ["DOT", "VDOT"]),
+    ],
+  }),
+  route({
+    sourceChain: "bifrost",
+    destinationChain: "hydration",
+    actions: [ACTION_TYPES.TRANSFER],
+    transferableAssets: ["DOT", "VDOT"],
+  }),
+]);
+
+const FULL_GRAPH_PROFILE = Object.freeze({
+  chains: FULL_GRAPH_CHAINS,
+  assets: FULL_GRAPH_ASSETS,
+  routes: FULL_GRAPH_ROUTES,
 });
+
+function subsetProfile({ chains, assets, routes }) {
+  return Object.freeze({
+    chains: Object.freeze(
+      Object.fromEntries(chains.map((chainKey) => [chainKey, FULL_GRAPH_CHAINS[chainKey]])),
+    ),
+    assets: Object.freeze(
+      Object.fromEntries(assets.map((assetKey) => [assetKey, FULL_GRAPH_ASSETS[assetKey]])),
+    ),
+    routes: Object.freeze(
+      FULL_GRAPH_ROUTES.filter((candidate) =>
+        routes.some(
+          (routeKey) =>
+            routeKey.sourceChain === candidate.sourceChain &&
+            routeKey.destinationChain === candidate.destinationChain,
+        ),
+      ),
+    ),
+  });
+}
+
+const HYDRATION_SNAKENET_PROFILE = subsetProfile({
+  chains: ["polkadot-hub", "hydration"],
+  assets: ["DOT", "USDT", "HDX"],
+  routes: [
+    { sourceChain: "polkadot-hub", destinationChain: "hydration" },
+    { sourceChain: "hydration", destinationChain: "polkadot-hub" },
+  ],
+});
+
+const MOONBASE_ALPHA_PROFILE = subsetProfile({
+  chains: ["polkadot-hub", "moonbeam"],
+  assets: ["DOT"],
+  routes: [
+    { sourceChain: "polkadot-hub", destinationChain: "moonbeam" },
+    { sourceChain: "moonbeam", destinationChain: "polkadot-hub" },
+  ],
+});
+
+const INTEGRATION_PROFILE = FULL_GRAPH_PROFILE;
+const MAINNET_PROFILE = FULL_GRAPH_PROFILE;
 
 const ROUTE_PROFILES = Object.freeze({
   [DEPLOYMENT_PROFILES.PASEO]: PASEO_PROFILE,
+  [DEPLOYMENT_PROFILES.HYDRATION_SNAKENET]: HYDRATION_SNAKENET_PROFILE,
+  [DEPLOYMENT_PROFILES.MOONBASE_ALPHA]: MOONBASE_ALPHA_PROFILE,
+  [DEPLOYMENT_PROFILES.INTEGRATION]: INTEGRATION_PROFILE,
   [DEPLOYMENT_PROFILES.MAINNET]: MAINNET_PROFILE,
 });
 

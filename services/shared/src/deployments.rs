@@ -113,6 +113,13 @@ pub fn load_hub_deployment_artifact(
 fn parse_deployment_profile(value: &str) -> Result<DeploymentProfile, String> {
     match value {
         "paseo" | "testnet" => Ok(DeploymentProfile::Paseo),
+        "hydration-snakenet" | "hydration-testnet" => Ok(DeploymentProfile::HydrationSnakenet),
+        "moonbase-alpha" | "moonbeam" | "moonbase" | "moonbeam-testnet" => {
+            Ok(DeploymentProfile::MoonbaseAlpha)
+        }
+        "integration" | "integration-testnet" | "multihop" => {
+            Ok(DeploymentProfile::Integration)
+        }
         "mainnet" => Ok(DeploymentProfile::Mainnet),
         other => Err(format!("unsupported deployment profile: {other}")),
     }

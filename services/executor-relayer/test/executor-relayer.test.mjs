@@ -45,7 +45,7 @@ test("executor relayer authenticates and dispatches a queued job", async () => {
 
     const quoteProvider = createRouteEngineQuoteProvider({
       cwd: workspaceRoot,
-      deploymentProfile: "mainnet",
+      deploymentProfile: "integration",
     });
     const intent = createTransferIntent({
       sourceChain: "polkadot-hub",
@@ -150,7 +150,7 @@ test("executor relayer enforces moonbeam evm execution policy before dispatch", 
     });
     const quote = await createRouteEngineQuoteProvider({
       cwd: workspaceRoot,
-      deploymentProfile: "mainnet",
+      deploymentProfile: "moonbase-alpha",
     }).quote(intent);
     const relayer = createHttpExecutorRelayerClient({
       endpoint: service.url,

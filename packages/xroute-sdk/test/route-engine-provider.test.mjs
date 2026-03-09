@@ -72,6 +72,86 @@ test("route engine quote provider supports a hub to bifrost transfer", async () 
   assert.equal(quote.fees.destinationFee.amount, 190000000n);
 });
 
+test("route engine quote provider supports the full four-chain graph under integration", async () => {
+  const provider = createRouteEngineQuoteProvider({
+    cwd: workspaceRoot,
+    deploymentProfile: "integration",
+  });
+  const intent = createTransferIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "bifrost",
+    refundAddress: walletAddress,
+    deadline: 1_773_185_200,
+    params: {
+      asset: "DOT",
+      amount: "250000000000",
+      recipient: recipientAddress,
+    },
+  });
+
+  const quote = normalizeQuote(await provider.quote(intent));
+
+  assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.INTEGRATION);
+  assert.deepEqual(quote.route, ["polkadot-hub", "moonbeam", "bifrost"]);
+});
+
+test("route engine quote provider supports swap validation on hydration-snakenet", async () => {
+  const provider = createRouteEngineQuoteProvider({
+    cwd: workspaceRoot,
+    deploymentProfile: "hydration-snakenet",
+  });
+  const intent = createSwapIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    refundAddress: walletAddress,
+    deadline: 1_773_185_200,
+    params: {
+      assetIn: "DOT",
+      assetOut: "USDT",
+      amountIn: "1000000000000",
+      minAmountOut: "493000000",
+      settlementChain: "polkadot-hub",
+      recipient: recipientAddress,
+    },
+  });
+
+  const quote = normalizeQuote(await provider.quote(intent));
+
+  assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.HYDRATION_SNAKENET);
+  assert.deepEqual(quote.route, ["polkadot-hub", "hydration", "polkadot-hub"]);
+});
+
+test("route engine quote provider supports execute validation on moonbase-alpha", async () => {
+  const provider = createRouteEngineQuoteProvider({
+    cwd: workspaceRoot,
+    deploymentProfile: "moonbase-alpha",
+  });
+  const intent = createExecuteIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "moonbeam",
+    refundAddress: walletAddress,
+    deadline: 1_773_185_200,
+    params: {
+      executionType: "evm-contract-call",
+      asset: "DOT",
+      maxPaymentAmount: "110000000",
+      contractAddress: "0x1111111111111111111111111111111111111111",
+      calldata: "0xdeadbeef",
+      value: "0",
+      gasLimit: "250000",
+      fallbackWeight: {
+        refTime: 650000000,
+        proofSize: 12288,
+      },
+    },
+  });
+
+  const quote = normalizeQuote(await provider.quote(intent));
+
+  assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.MOONBASE_ALPHA);
+  assert.deepEqual(quote.route, ["polkadot-hub", "moonbeam"]);
+});
+
 test("route engine quote provider builds an execute/runtime-call quote", async () => {
   const provider = createRouteEngineQuoteProvider({
     cwd: workspaceRoot,

@@ -15,7 +15,7 @@ test("quote service serves health and quote responses", async () => {
     cwd: workspaceRoot,
     env: {
       XROUTE_QUOTE_PORT: "0",
-      XROUTE_DEPLOYMENT_PROFILE: "mainnet",
+      XROUTE_DEPLOYMENT_PROFILE: "integration",
       XROUTE_WORKSPACE_ROOT: workspaceRoot,
     },
   });
@@ -25,7 +25,7 @@ test("quote service serves health and quote responses", async () => {
     assert.equal(healthResponse.status, 200);
     const health = await healthResponse.json();
     assert.equal(health.ok, true);
-    assert.equal(health.deploymentProfile, "mainnet");
+    assert.equal(health.deploymentProfile, "integration");
 
     const quoteResponse = await fetch(`${service.url}/quote`, {
       method: "POST",
@@ -88,7 +88,7 @@ test("quote service enforces moonbeam evm execution policy", async () => {
     cwd: workspaceRoot,
     env: {
       XROUTE_QUOTE_PORT: "0",
-      XROUTE_DEPLOYMENT_PROFILE: "mainnet",
+      XROUTE_DEPLOYMENT_PROFILE: "moonbase-alpha",
       XROUTE_WORKSPACE_ROOT: workspaceRoot,
       XROUTE_EVM_POLICY_PATH: policyPath,
     },
