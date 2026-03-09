@@ -82,9 +82,8 @@ impl JobStore {
     pub fn load(path: impl Into<PathBuf>) -> Result<Self, String> {
         let path = path.into();
         let jobs = if path.exists() {
-            let raw = read_to_string(&path).map_err(|error| {
-                format!("failed to read job store {}: {error}", path.display())
-            })?;
+            let raw = read_to_string(&path)
+                .map_err(|error| format!("failed to read job store {}: {error}", path.display()))?;
             serde_json::from_str::<StoreSnapshot>(&raw)
                 .map_err(|error| format!("invalid job store {}: {error}", path.display()))?
                 .jobs
@@ -116,8 +115,12 @@ impl JobStore {
 
 fn persist_snapshot(path: &Path, jobs: &BTreeMap<String, Job>) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        create_dir_all(parent)
-            .map_err(|error| format!("failed to create job store directory {}: {error}", parent.display()))?;
+        create_dir_all(parent).map_err(|error| {
+            format!(
+                "failed to create job store directory {}: {error}",
+                parent.display()
+            )
+        })?;
     }
 
     let snapshot = StoreSnapshot { jobs: jobs.clone() };

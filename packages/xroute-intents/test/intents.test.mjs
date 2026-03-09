@@ -229,7 +229,7 @@ test("createExecuteIntent normalizes a bifrost vtoken order", () => {
 
 test("createExecuteIntent normalizes a bifrost vtoken redeem order", () => {
   const intent = createExecuteIntent({
-    sourceChain: "polkadot-hub",
+    sourceChain: "moonbeam",
     destinationChain: "bifrost",
     refundAddress: "0x1111111111111111111111111111111111111111",
     deadline: 1_773_185_200,
@@ -248,6 +248,7 @@ test("createExecuteIntent normalizes a bifrost vtoken redeem order", () => {
   });
 
   assert.equal(intent.action.params.executionType, "vtoken-order");
+  assert.equal(intent.sourceChain, "moonbeam");
   assert.equal(intent.action.params.asset, "VDOT");
   assert.equal(intent.action.params.operation, "redeem");
   assert.equal(intent.action.params.channelId, 0);

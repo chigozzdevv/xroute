@@ -11,13 +11,14 @@ test("findTransferPath composes hub-centered multihop spokes", () => {
   ]);
   assert.deepEqual(findTransferPath("hydration", "bifrost", "DOT"), [
     "hydration",
-    "polkadot-hub",
     "bifrost",
   ]);
-  assert.deepEqual(findTransferPath("polkadot-hub", "bifrost", "VDOT"), [
+  assert.deepEqual(findTransferPath("polkadot-hub", "bifrost", "DOT"), [
     "polkadot-hub",
+    "moonbeam",
     "bifrost",
   ]);
+  assert.equal(findTransferPath("polkadot-hub", "bifrost", "VDOT"), null);
 });
 
 test("assertSwapRoute accepts multihop source paths into hydration", () => {
@@ -46,13 +47,12 @@ test("assertExecuteRoute accepts multihop execution into destination capabilitie
 
   assert.deepEqual(route.path, [
     "moonbeam",
-    "polkadot-hub",
     "bifrost",
   ]);
 });
 
 test("findTransferPath exposes the paseo proof route", () => {
-  assert.deepEqual(findTransferPath("polkadot-hub", "people", "PAS", "testnet"), [
+  assert.deepEqual(findTransferPath("polkadot-hub", "people", "PAS", "paseo"), [
     "polkadot-hub",
     "people",
   ]);

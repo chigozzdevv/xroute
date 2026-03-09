@@ -9,9 +9,10 @@ import {
   normalizeDeploymentProfile,
 } from "../index.mjs";
 
-test("deployment profiles stay limited to testnet and mainnet", () => {
+test("deployment profiles stay limited to paseo and mainnet", () => {
   assert.equal(DEFAULT_DEPLOYMENT_PROFILE, DEPLOYMENT_PROFILES.MAINNET);
-  assert.equal(normalizeDeploymentProfile("testnet"), DEPLOYMENT_PROFILES.TESTNET);
+  assert.equal(normalizeDeploymentProfile("testnet"), DEPLOYMENT_PROFILES.PASEO);
+  assert.equal(normalizeDeploymentProfile("paseo"), DEPLOYMENT_PROFILES.PASEO);
   assert.equal(normalizeDeploymentProfile("mainnet"), DEPLOYMENT_PROFILES.MAINNET);
   assert.throws(() => normalizeDeploymentProfile("staging"));
 });

@@ -35,12 +35,17 @@ pub fn build_execute_call_data(
             encoded.push(0);
             encoded.extend(parse_h160(&intent.contract_address, "contract_address")?);
             encoded.extend(encode_u256(intent.value));
-            encoded.extend(encode_bytes(&parse_hex_bytes(&intent.calldata, "calldata")?));
+            encoded.extend(encode_bytes(&parse_hex_bytes(
+                &intent.calldata,
+                "calldata",
+            )?));
             encoded.push(0);
 
             Ok(bytes_to_hex(&encoded))
         }
-        ExecuteIntent::VtokenOrder(intent) => build_bifrost_vtoken_order_call(intent, destination_chain),
+        ExecuteIntent::VtokenOrder(intent) => {
+            build_bifrost_vtoken_order_call(intent, destination_chain)
+        }
     }
 }
 
@@ -86,7 +91,7 @@ fn build_bifrost_vtoken_order_call(
 
 fn moonbeam_ethereum_xcm_pallet_index(profile: DeploymentProfile) -> u8 {
     match profile {
-        DeploymentProfile::Testnet => MOONBEAM_ETHEREUM_XCM_PALLET_TESTNET,
+        DeploymentProfile::Paseo => MOONBEAM_ETHEREUM_XCM_PALLET_TESTNET,
         DeploymentProfile::Mainnet => MOONBEAM_ETHEREUM_XCM_PALLET_MAINNET,
     }
 }
@@ -200,7 +205,7 @@ mod tests {
                 },
             }),
             ChainKey::Moonbeam,
-            DeploymentProfile::Testnet,
+            DeploymentProfile::Paseo,
         )
         .expect("moonbeam call should encode");
 
@@ -219,8 +224,7 @@ mod tests {
                 operation: VtokenOrderOperation::Mint,
                 recipient: "5Frecipient".to_owned(),
                 recipient_account_id_hex:
-                    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                        .to_owned(),
+                    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
                 channel_id: 7,
                 remark: "xroute".to_owned(),
                 fallback_weight: XcmWeight {
@@ -229,14 +233,14 @@ mod tests {
                 },
             }),
             ChainKey::Bifrost,
-            DeploymentProfile::Testnet,
+            DeploymentProfile::Paseo,
         )
         .expect("bifrost order should encode");
 
         assert!(call_data.starts_with("0x7d000800"));
-        assert!(call_data.contains(
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-        ));
+        assert!(
+            call_data.contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
         assert!(call_data.ends_with("1878726f75746507000000"));
     }
 
@@ -250,8 +254,7 @@ mod tests {
                 operation: VtokenOrderOperation::Redeem,
                 recipient: "5Frecipient".to_owned(),
                 recipient_account_id_hex:
-                    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-                        .to_owned(),
+                    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned(),
                 channel_id: 0,
                 remark: String::new(),
                 fallback_weight: XcmWeight {
@@ -260,13 +263,13 @@ mod tests {
                 },
             }),
             ChainKey::Bifrost,
-            DeploymentProfile::Testnet,
+            DeploymentProfile::Paseo,
         )
         .expect("bifrost redeem should encode");
 
         assert!(call_data.starts_with("0x7d02000900"));
-        assert!(call_data.contains(
-            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        ));
+        assert!(
+            call_data.contains("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        );
     }
 }

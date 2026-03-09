@@ -123,13 +123,8 @@ impl RouteEngine {
                     execution_path.xcm_fee,
                     execution_path.destination_fee,
                 )?;
-                let execution_plan = build_swap_plan(
-                    &intent,
-                    &execution_path,
-                    &route,
-                    &settlement,
-                    &fees,
-                )?;
+                let execution_plan =
+                    build_swap_plan(&intent, &execution_path, &route, &settlement, &fees)?;
 
                 Ok(Quote {
                     quote_id,
@@ -358,7 +353,12 @@ fn route_segment(kind: RouteSegmentKind, path: &TransferPath) -> RouteSegment {
     RouteSegment {
         kind,
         route: path.route.clone(),
-        hops: path.hops.iter().copied().map(|hop| hop.to_route_hop()).collect(),
+        hops: path
+            .hops
+            .iter()
+            .copied()
+            .map(|hop| hop.to_route_hop())
+            .collect(),
         xcm_fee: path.xcm_fee,
         destination_fee: path.destination_fee,
     }
@@ -517,7 +517,8 @@ fn build_execute_plan(
         execute,
         ExecuteIntent::VtokenOrder(order)
             if order.operation == VtokenOrderOperation::Redeem
-                && path.route == vec![ChainKey::PolkadotHub, ChainKey::Bifrost]
+                && execute.asset().reserve_chain() == intent.destination_chain
+                && path.hops.len() == 1
     );
     let send_instructions = if is_redeem_teleport {
         vec![build_teleport_execute_instruction(
@@ -686,13 +687,11 @@ fn build_swap_settlement_instructions(
             destination: settlement.settlement_chain,
             remote_instructions: settlement_remote_instructions,
         },
-        SwapSettlementMode::InitiateReserveWithdraw => {
-            XcmInstruction::InitiateReserveWithdraw {
-                asset_count: SWAP_OUTPUT_ASSET_COUNT,
-                reserve: settlement.reserve_chain,
-                remote_instructions: settlement_remote_instructions,
-            }
-        }
+        SwapSettlementMode::InitiateReserveWithdraw => XcmInstruction::InitiateReserveWithdraw {
+            asset_count: SWAP_OUTPUT_ASSET_COUNT,
+            reserve: settlement.reserve_chain,
+            remote_instructions: settlement_remote_instructions,
+        },
     };
 
     Ok(vec![instruction])

@@ -8,10 +8,10 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use xroute_service_shared::{
-    assert_intent_allowed_by_execution_policy, health_json, json_response,
+    assert_intent_allowed_by_execution_policy, health_json, intent_to_json_value, json_response,
     load_execution_policy_from_file, load_hub_deployment_artifact, quote_request_from_slice,
     quote_to_json_value, read_request_body, resolve_workspace_root, summarize_execution_policy,
-    intent_to_json_value, ExecutionPolicy, HubDeploymentArtifact, HttpError,
+    ExecutionPolicy, HttpError, HubDeploymentArtifact,
 };
 
 #[derive(Clone)]
@@ -74,7 +74,7 @@ fn load_state() -> Result<QuoteState, String> {
         env::var("XROUTE_DEPLOYMENT_PROFILE")
             .ok()
             .as_deref()
-            .unwrap_or("testnet"),
+            .unwrap_or("paseo"),
     )?;
     let max_body_bytes = parse_positive_usize(
         env::var("XROUTE_QUOTE_MAX_BODY_BYTES")
@@ -85,7 +85,9 @@ fn load_state() -> Result<QuoteState, String> {
     )?;
     let workspace_root = resolve_workspace_root(env::var("XROUTE_WORKSPACE_ROOT").ok().as_deref());
     let policy = match env::var("XROUTE_EVM_POLICY_PATH").ok() {
-        Some(path) if !path.trim().is_empty() => Some(load_execution_policy_from_file(PathBuf::from(path).as_path())?),
+        Some(path) if !path.trim().is_empty() => Some(load_execution_policy_from_file(
+            PathBuf::from(path).as_path(),
+        )?),
         _ => None,
     };
     let deployment = load_hub_deployment_artifact(&workspace_root, deployment_profile).ok();
@@ -119,7 +121,10 @@ async fn route_request(
             StatusCode::OK,
             &health_json(
                 state.deployment_profile,
-                state.deployment.as_ref().map(|deployment| deployment.router_address.as_str()),
+                state
+                    .deployment
+                    .as_ref()
+                    .map(|deployment| deployment.router_address.as_str()),
                 json!({
                     "policy": summarize_execution_policy(state.policy.as_ref()),
                 }),
@@ -196,7 +201,7 @@ fn parse_positive_usize(value: &str, name: &str) -> Result<usize, String> {
 
 fn parse_deployment_profile(value: &str) -> Result<DeploymentProfile, String> {
     match value {
-        "testnet" => Ok(DeploymentProfile::Testnet),
+        "paseo" | "testnet" => Ok(DeploymentProfile::Paseo),
         "mainnet" => Ok(DeploymentProfile::Mainnet),
         other => Err(format!("unsupported deployment profile: {other}")),
     }

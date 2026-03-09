@@ -3,8 +3,8 @@ use route_engine::{
     AssetAmount, AssetKey, ChainKey, DeploymentProfile, EvmContractCallExecuteIntent,
     ExecuteIntent, ExecutionPlan, ExecutionType, FeeBreakdown, FeeType, Intent, IntentAction,
     PlanStep, Quote, RouteHop, RouteSegment, RouteSegmentKind, RuntimeCallExecuteIntent,
-    RuntimeCallOriginKind, SubmissionAction, SwapIntent, TransferIntent,
-    VtokenOrderExecuteIntent, VtokenOrderOperation, XcmInstruction, XcmWeight,
+    RuntimeCallOriginKind, SubmissionAction, SwapIntent, TransferIntent, VtokenOrderExecuteIntent,
+    VtokenOrderOperation, XcmInstruction, XcmWeight,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -187,8 +187,7 @@ pub fn quote_request_from_slice(body: &[u8]) -> Result<QuoteRequest, HttpError> 
         .quote_id
         .clone()
         .unwrap_or_else(|| payload.intent.clone().into_internal_id());
-    let intent = wire_intent_to_internal(&payload.intent)
-        .map_err(HttpError::bad_request)?;
+    let intent = wire_intent_to_internal(&payload.intent).map_err(HttpError::bad_request)?;
 
     Ok(QuoteRequest {
         quote_id,
@@ -243,18 +242,14 @@ pub fn fail_job_request_from_slice(body: &[u8]) -> Result<FailJobRequest, HttpEr
             .map_err(HttpError::bad_request)?,
         outcome_reference: normalize_bytes32(&payload.outcome_reference, "outcomeReference")
             .map_err(HttpError::bad_request)?,
-        failure_reason_hash: normalize_bytes32(
-            &payload.failure_reason_hash,
-            "failureReasonHash",
-        )
-        .map_err(HttpError::bad_request)?,
+        failure_reason_hash: normalize_bytes32(&payload.failure_reason_hash, "failureReasonHash")
+            .map_err(HttpError::bad_request)?,
     })
 }
 
 pub fn refund_job_request_from_slice(body: &[u8]) -> Result<RefundJobRequest, HttpError> {
-    let payload: RefundJobBody = serde_json::from_slice(body).map_err(|error| {
-        HttpError::bad_request(format!("invalid refund job request: {error}"))
-    })?;
+    let payload: RefundJobBody = serde_json::from_slice(body)
+        .map_err(|error| HttpError::bad_request(format!("invalid refund job request: {error}")))?;
     parse_u128(&payload.refund_amount, "refundAmount").map_err(HttpError::bad_request)?;
 
     Ok(RefundJobRequest {
@@ -317,12 +312,7 @@ pub fn health_json(
     value
 }
 
-pub fn summary_json(
-    queued: usize,
-    running: usize,
-    completed: usize,
-    failed: usize,
-) -> Value {
+pub fn summary_json(queued: usize, running: usize, completed: usize, failed: usize) -> Value {
     json!({
         "queued": queued,
         "running": running,
@@ -376,10 +366,7 @@ fn parse_action(
                 asset_in: parse_asset(&params.asset_in)?,
                 asset_out: parse_asset(&params.asset_out)?,
                 amount_in: parse_u128(&params.amount_in, "action.params.amountIn")?,
-                min_amount_out: parse_u128(
-                    &params.min_amount_out,
-                    "action.params.minAmountOut",
-                )?,
+                min_amount_out: parse_u128(&params.min_amount_out, "action.params.minAmountOut")?,
                 settlement_chain: parse_chain(&params.settlement_chain)?,
                 recipient: require_non_empty(&params.recipient, "action.params.recipient")?,
             }))
@@ -425,24 +412,26 @@ fn parse_execute_intent(
                 destination_chain,
                 ExecutionType::EvmContractCall,
             )?;
-            Ok(ExecuteIntent::EvmContractCall(EvmContractCallExecuteIntent {
-                asset: parse_asset(&params.asset)?,
-                max_payment_amount: parse_u128(
-                    &params.max_payment_amount,
-                    "action.params.maxPaymentAmount",
-                )?,
-                contract_address: normalize_address(
-                    &params.contract_address,
-                    "action.params.contractAddress",
-                )?,
-                calldata: normalize_hex(&params.calldata, "action.params.calldata")?,
-                value: parse_u128(&params.value, "action.params.value")?,
-                gas_limit: parse_u64(&params.gas_limit, "action.params.gasLimit")?,
-                fallback_weight: XcmWeight {
-                    ref_time: params.fallback_weight.ref_time,
-                    proof_size: params.fallback_weight.proof_size,
+            Ok(ExecuteIntent::EvmContractCall(
+                EvmContractCallExecuteIntent {
+                    asset: parse_asset(&params.asset)?,
+                    max_payment_amount: parse_u128(
+                        &params.max_payment_amount,
+                        "action.params.maxPaymentAmount",
+                    )?,
+                    contract_address: normalize_address(
+                        &params.contract_address,
+                        "action.params.contractAddress",
+                    )?,
+                    calldata: normalize_hex(&params.calldata, "action.params.calldata")?,
+                    value: parse_u128(&params.value, "action.params.value")?,
+                    gas_limit: parse_u64(&params.gas_limit, "action.params.gasLimit")?,
+                    fallback_weight: XcmWeight {
+                        ref_time: params.fallback_weight.ref_time,
+                        proof_size: params.fallback_weight.proof_size,
+                    },
                 },
-            }))
+            ))
         }
         "vtoken-order" => {
             let params: VtokenOrderParams = serde_json::from_value(params.clone())
@@ -599,7 +588,11 @@ fn execution_plan_to_json_value(plan: &ExecutionPlan) -> Value {
 
 fn plan_step_to_json_value(step: &PlanStep) -> Value {
     match step {
-        PlanStep::LockAsset { chain, asset, amount } => json!({
+        PlanStep::LockAsset {
+            chain,
+            asset,
+            amount,
+        } => json!({
             "type": "lock-asset",
             "chain": chain.as_str(),
             "asset": asset.symbol(),
@@ -828,9 +821,13 @@ fn normalize_hex(value: &str, name: &str) -> Result<String, String> {
     if normalized.len() < 2
         || !normalized.starts_with("0x")
         || normalized[2..].len() % 2 != 0
-        || !normalized[2..].chars().all(|character| character.is_ascii_hexdigit())
+        || !normalized[2..]
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
     {
-        return Err(format!("{name} must be a 0x-prefixed even-length hex string"));
+        return Err(format!(
+            "{name} must be a 0x-prefixed even-length hex string"
+        ));
     }
 
     Ok(normalized)

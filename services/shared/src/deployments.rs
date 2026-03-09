@@ -78,8 +78,8 @@ pub fn load_hub_deployment_artifact(
             artifact_path.display()
         )
     })?;
-    let file: DeploymentArtifactFile =
-        serde_json::from_str(&raw).map_err(|error| format!("invalid deployment artifact: {error}"))?;
+    let file: DeploymentArtifactFile = serde_json::from_str(&raw)
+        .map_err(|error| format!("invalid deployment artifact: {error}"))?;
     let profile = file
         .deployment_profile
         .as_deref()
@@ -90,9 +90,7 @@ pub fn load_hub_deployment_artifact(
     Ok(HubDeploymentArtifact {
         artifact_path,
         deployment_profile: profile,
-        chain_key: file
-            .chain_key
-            .unwrap_or_else(|| "polkadot-hub".to_owned()),
+        chain_key: file.chain_key.unwrap_or_else(|| "polkadot-hub".to_owned()),
         chain_id: file.chain_id,
         deployer: file.deployer,
         deployed_at: file.deployed_at,
@@ -114,7 +112,7 @@ pub fn load_hub_deployment_artifact(
 
 fn parse_deployment_profile(value: &str) -> Result<DeploymentProfile, String> {
     match value {
-        "testnet" => Ok(DeploymentProfile::Testnet),
+        "paseo" | "testnet" => Ok(DeploymentProfile::Paseo),
         "mainnet" => Ok(DeploymentProfile::Mainnet),
         other => Err(format!("unsupported deployment profile: {other}")),
     }
@@ -127,17 +125,14 @@ mod tests {
 
     #[test]
     fn loads_hub_deployment_artifact() {
-        let temp_root = std::env::temp_dir().join(format!(
-            "xroute-deployments-{}",
-            std::process::id()
-        ));
-        let artifact_path =
-            get_hub_deployment_artifact_path(&temp_root, DeploymentProfile::Testnet);
+        let temp_root =
+            std::env::temp_dir().join(format!("xroute-deployments-{}", std::process::id()));
+        let artifact_path = get_hub_deployment_artifact_path(&temp_root, DeploymentProfile::Paseo);
         create_dir_all(artifact_path.parent().unwrap()).unwrap();
         write(
             &artifact_path,
             r#"{
-  "deploymentProfile": "testnet",
+  "deploymentProfile": "paseo",
   "chainKey": "polkadot-hub",
   "chainId": 420420,
   "deployer": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -151,9 +146,8 @@ mod tests {
         )
         .unwrap();
 
-        let artifact =
-            load_hub_deployment_artifact(&temp_root, DeploymentProfile::Testnet).unwrap();
-        assert_eq!(artifact.deployment_profile, DeploymentProfile::Testnet);
+        let artifact = load_hub_deployment_artifact(&temp_root, DeploymentProfile::Paseo).unwrap();
+        assert_eq!(artifact.deployment_profile, DeploymentProfile::Paseo);
         assert_eq!(artifact.chain_id, Some(420420));
         assert_eq!(
             artifact.router_address,

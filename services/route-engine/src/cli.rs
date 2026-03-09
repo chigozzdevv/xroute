@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use route_engine::{
     AssetAmount, AssetKey, ChainKey, DeploymentProfile, EngineSettings,
     EvmContractCallExecuteIntent, ExecuteIntent, ExecutionPlan, ExecutionType, FeeBreakdown,
-    FeeType, Intent, IntentAction, PlanStep, Quote, RouteHop, RouteEngine, RouteRegistry,
+    FeeType, Intent, IntentAction, PlanStep, Quote, RouteEngine, RouteHop, RouteRegistry,
     RouteSegment, RouteSegmentKind, RuntimeCallExecuteIntent, RuntimeCallOriginKind,
     SubmissionAction, SwapIntent, TransferIntent, VtokenOrderExecuteIntent, VtokenOrderOperation,
     XcmInstruction, XcmWeight,
@@ -138,7 +138,7 @@ fn parse_asset(value: &str) -> Result<AssetKey, String> {
 
 fn parse_deployment_profile(value: &str) -> Result<DeploymentProfile, String> {
     match value {
-        "testnet" => Ok(DeploymentProfile::Testnet),
+        "paseo" | "testnet" => Ok(DeploymentProfile::Paseo),
         "mainnet" => Ok(DeploymentProfile::Mainnet),
         other => Err(format!("unsupported deployment profile: {other}")),
     }
@@ -190,7 +190,9 @@ fn parse_hex_string(value: &str, name: &str) -> Result<String, String> {
         || !normalized[2..].chars().all(|char| char.is_ascii_hexdigit())
         || normalized[2..].len() % 2 != 0
     {
-        return Err(format!("{name} must be a 0x-prefixed even-length hex string"));
+        return Err(format!(
+            "{name} must be a 0x-prefixed even-length hex string"
+        ));
     }
 
     Ok(normalized)
@@ -254,8 +256,8 @@ fn build_execute_intent(options: &HashMap<String, String>) -> Result<ExecuteInte
                 .unwrap_or(RuntimeCallOriginKind::SovereignAccount),
             fallback_weight,
         })),
-        ExecutionType::EvmContractCall => {
-            Ok(ExecuteIntent::EvmContractCall(EvmContractCallExecuteIntent {
+        ExecutionType::EvmContractCall => Ok(ExecuteIntent::EvmContractCall(
+            EvmContractCallExecuteIntent {
                 asset: parse_asset(required(options, "asset")?)?,
                 max_payment_amount: parse_u128(
                     required(options, "max-payment-amount")?,
@@ -274,8 +276,8 @@ fn build_execute_intent(options: &HashMap<String, String>) -> Result<ExecuteInte
                     .unwrap_or(0),
                 gas_limit: parse_u64(required(options, "gas-limit")?, "gas-limit")?,
                 fallback_weight,
-            }))
-        }
+            },
+        )),
         ExecutionType::VtokenOrder => Ok(ExecuteIntent::VtokenOrder(VtokenOrderExecuteIntent {
             asset: parse_asset(required(options, "asset")?)?,
             amount: parse_u128(required(options, "amount")?, "amount")?,
@@ -641,7 +643,7 @@ fn route_segment_kind_label(kind: RouteSegmentKind) -> &'static str {
 fn usage() -> String {
     [
         "usage:",
-        "  route-engine quote --source-chain <chain> --destination-chain <chain> --refund-address <address> --deadline <unix-seconds> --action <transfer|swap|execute> [action flags] [--deployment-profile <testnet|mainnet>]",
+        "  route-engine quote --source-chain <chain> --destination-chain <chain> --refund-address <address> --deadline <unix-seconds> --action <transfer|swap|execute> [action flags] [--deployment-profile <paseo|mainnet>]",
         "",
         "action flags:",
         "  transfer: --asset <symbol> --amount <units> --recipient <address>",

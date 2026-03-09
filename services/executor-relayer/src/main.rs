@@ -3,6 +3,7 @@ mod store;
 use crate::store::{Job, JobPayload, JobStatus, JobStore, JobType};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
+use route_engine::DeploymentProfile;
 use serde_json::{json, Value};
 use std::convert::Infallible;
 use std::env;
@@ -16,13 +17,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::task;
 use tokio::time::sleep;
 use xroute_service_shared::{
-    assert_bearer_token, assert_intent_allowed_by_execution_policy, dispatch_job_request_from_slice,
-    fail_job_request_from_slice, health_json, json_response, load_execution_policy_from_file,
-    load_hub_deployment_artifact, read_request_body, refund_job_request_from_slice,
-    resolve_workspace_root, settle_job_request_from_slice, summarize_execution_policy, summary_json,
-    DispatchRequest, ExecutionPolicy, HttpError, WireIntent,
+    assert_bearer_token, assert_intent_allowed_by_execution_policy,
+    dispatch_job_request_from_slice, fail_job_request_from_slice, health_json, json_response,
+    load_execution_policy_from_file, load_hub_deployment_artifact, read_request_body,
+    refund_job_request_from_slice, resolve_workspace_root, settle_job_request_from_slice,
+    summarize_execution_policy, summary_json, DispatchRequest, ExecutionPolicy, HttpError,
+    WireIntent,
 };
-use route_engine::DeploymentProfile;
 
 const DISPATCH_INTENT_SIGNATURE: &str = "dispatchIntent(bytes32,(uint8,bytes,bytes))";
 const FINALIZE_SUCCESS_SIGNATURE: &str = "finalizeSuccess(bytes32,bytes32,bytes32,uint128)";
@@ -115,7 +116,7 @@ fn load_state() -> Result<RelayerState, String> {
         env::var("XROUTE_DEPLOYMENT_PROFILE")
             .ok()
             .as_deref()
-            .unwrap_or("testnet"),
+            .unwrap_or("paseo"),
     )?;
     let max_body_bytes = parse_positive_usize(
         env::var("XROUTE_RELAYER_MAX_BODY_BYTES")
@@ -132,13 +133,22 @@ fn load_state() -> Result<RelayerState, String> {
     let router_address = env::var("XROUTE_ROUTER_ADDRESS")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .or_else(|| deployment.as_ref().map(|artifact| artifact.router_address.clone()))
+        .or_else(|| {
+            deployment
+                .as_ref()
+                .map(|artifact| artifact.router_address.clone())
+        })
         .ok_or_else(|| "routerAddress or a deployment artifact is required".to_owned())?;
     let policy = match env::var("XROUTE_EVM_POLICY_PATH").ok() {
-        Some(path) if !path.trim().is_empty() => Some(load_execution_policy_from_file(Path::new(&path))?),
+        Some(path) if !path.trim().is_empty() => {
+            Some(load_execution_policy_from_file(Path::new(&path))?)
+        }
         _ => None,
     };
-    let data_root = workspace_root.join("services").join("executor-relayer").join("data");
+    let data_root = workspace_root
+        .join("services")
+        .join("executor-relayer")
+        .join("data");
     let job_store_path = env::var("XROUTE_RELAYER_JOB_STORE_PATH")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -148,7 +158,9 @@ fn load_state() -> Result<RelayerState, String> {
         .ok()
         .filter(|value| !value.trim().is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| data_root.join(format!("{}-status.ndjson", deployment_profile.as_str())));
+        .unwrap_or_else(|| {
+            data_root.join(format!("{}-status.ndjson", deployment_profile.as_str()))
+        });
 
     Ok(RelayerState {
         deployment_profile,
@@ -435,8 +447,8 @@ async fn run_job(state: Arc<RelayerState>, job: &Job) -> Result<Value, String> {
             payload,
         )
     })
-        .await
-        .map_err(|error| format!("job worker failed: {error}"))?
+    .await
+    .map_err(|error| format!("job worker failed: {error}"))?
 }
 
 fn run_job_blocking(
@@ -457,7 +469,8 @@ fn run_job_blocking(
             let uses_external_source_dispatch =
                 should_use_external_source_dispatch(deployment_profile, &wire_intent);
             let tx_hash = if uses_external_source_dispatch {
-                let (ref_time, proof_size) = weigh_xcm_message(xcm_address, &request.message, rpc_url)?;
+                let (ref_time, proof_size) =
+                    weigh_xcm_message(xcm_address, &request.message, rpc_url)?;
                 send_transaction(
                     xcm_address,
                     XCM_EXECUTE_SIGNATURE,
@@ -473,10 +486,7 @@ fn run_job_blocking(
                 send_transaction(
                     router_address,
                     DISPATCH_INTENT_SIGNATURE,
-                    &[
-                        intent_id.clone(),
-                        format_dispatch_request_tuple(&request),
-                    ],
+                    &[intent_id.clone(), format_dispatch_request_tuple(&request)],
                     rpc_url,
                     private_key,
                     gas_limit,
@@ -499,11 +509,12 @@ fn run_job_blocking(
             result_asset_id,
             result_amount,
         } => {
-            let settle_signature = if should_use_external_settlement(router_address, rpc_url, &intent_id)? {
-                FINALIZE_EXTERNAL_SUCCESS_SIGNATURE
-            } else {
-                FINALIZE_SUCCESS_SIGNATURE
-            };
+            let settle_signature =
+                if should_use_external_settlement(router_address, rpc_url, &intent_id)? {
+                    FINALIZE_EXTERNAL_SUCCESS_SIGNATURE
+                } else {
+                    FINALIZE_SUCCESS_SIGNATURE
+                };
             let tx_hash = send_transaction(
                 router_address,
                 settle_signature,
@@ -617,7 +628,11 @@ fn send_transaction(
     Ok(tx_hash)
 }
 
-fn weigh_xcm_message(xcm_address: &str, message: &str, rpc_url: &str) -> Result<(u64, u64), String> {
+fn weigh_xcm_message(
+    xcm_address: &str,
+    message: &str,
+    rpc_url: &str,
+) -> Result<(u64, u64), String> {
     let output = Command::new("cast")
         .arg("call")
         .arg(xcm_address)
@@ -661,7 +676,7 @@ fn should_use_external_source_dispatch(
     deployment_profile: DeploymentProfile,
     wire_intent: &WireIntent,
 ) -> bool {
-    if deployment_profile != DeploymentProfile::Testnet {
+    if deployment_profile != DeploymentProfile::Paseo {
         return false;
     }
 
@@ -705,7 +720,14 @@ fn should_use_external_settlement(
         .trim_start_matches('(')
         .trim_end_matches(')')
         .split(", ")
-        .map(|value| value.trim().split_whitespace().next().unwrap_or("").to_owned())
+        .map(|value| {
+            value
+                .trim()
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_owned()
+        })
         .collect::<Vec<_>>();
     if fields.len() != 17 {
         return Err(format!("unexpected getIntent tuple: {tuple}"));
@@ -735,7 +757,11 @@ fn extract_transaction_hash(value: &str) -> Result<String, String> {
             .get("transactionHash")
             .or_else(|| parsed.get("txHash"))
             .or_else(|| parsed.get("hash"))
-            .or_else(|| parsed.get("receipt").and_then(|receipt| receipt.get("transactionHash")))
+            .or_else(|| {
+                parsed
+                    .get("receipt")
+                    .and_then(|receipt| receipt.get("transactionHash"))
+            })
             .and_then(Value::as_str)
         {
             return Ok(candidate.to_lowercase());
@@ -767,9 +793,11 @@ fn read_transaction_receipt(tx_hash: &str, rpc_url: &str) -> Result<Value, Strin
 }
 
 fn receipt_status_succeeded(value: &Value) -> Option<bool> {
-    let status = value
-        .get("status")
-        .or_else(|| value.get("receipt").and_then(|receipt| receipt.get("status")))?;
+    let status = value.get("status").or_else(|| {
+        value
+            .get("receipt")
+            .and_then(|receipt| receipt.get("status"))
+    })?;
 
     match status {
         Value::String(text) => match text.trim().to_ascii_lowercase().as_str() {
@@ -785,7 +813,11 @@ fn receipt_status_succeeded(value: &Value) -> Option<bool> {
 fn extract_revert_reason(value: &Value) -> Option<String> {
     value
         .get("revertReason")
-        .or_else(|| value.get("receipt").and_then(|receipt| receipt.get("revertReason")))
+        .or_else(|| {
+            value
+                .get("receipt")
+                .and_then(|receipt| receipt.get("revertReason"))
+        })
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|reason| !reason.is_empty())
@@ -800,8 +832,12 @@ fn extract_revert_reason_from_output(value: &str) -> Option<String> {
 
 fn append_status_event(path: &Path, event: Value) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        create_dir_all(parent)
-            .map_err(|error| format!("failed to create event log directory {}: {error}", parent.display()))?;
+        create_dir_all(parent).map_err(|error| {
+            format!(
+                "failed to create event log directory {}: {error}",
+                parent.display()
+            )
+        })?;
     }
     let mut file = OpenOptions::new()
         .create(true)
@@ -918,7 +954,7 @@ fn required_env(name: &str) -> Result<String, String> {
 
 fn parse_deployment_profile(value: &str) -> Result<DeploymentProfile, String> {
     match value {
-        "testnet" => Ok(DeploymentProfile::Testnet),
+        "paseo" | "testnet" => Ok(DeploymentProfile::Paseo),
         "mainnet" => Ok(DeploymentProfile::Mainnet),
         other => Err(format!("unsupported deployment profile: {other}")),
     }

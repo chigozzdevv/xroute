@@ -17,7 +17,7 @@ export function deployStack(overrides = {}) {
   const deploymentProfile = normalizeDeploymentProfile(
     overrides.deploymentProfile ??
       process.env.XROUTE_DEPLOYMENT_PROFILE ??
-      DEPLOYMENT_PROFILES.TESTNET,
+      DEPLOYMENT_PROFILES.PASEO,
   );
 
   assertLiveDeploymentConfirmed(

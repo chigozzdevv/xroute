@@ -1,9 +1,9 @@
 use route_engine::{
     AssetAmount, AssetKey, ChainKey, DeploymentProfile, EngineSettings,
-    EvmContractCallExecuteIntent, ExecuteIntent, FeeType, Intent, IntentAction,
-    PlanStep, RouteEngine, RouteRegistry, RouteSegmentKind, RuntimeCallExecuteIntent,
-    RuntimeCallOriginKind, SubmissionAction, SwapIntent, TransferIntent,
-    VtokenOrderExecuteIntent, VtokenOrderOperation, XcmInstruction, XcmWeight,
+    EvmContractCallExecuteIntent, ExecuteIntent, FeeType, Intent, IntentAction, PlanStep,
+    RouteEngine, RouteRegistry, RouteSegmentKind, RuntimeCallExecuteIntent, RuntimeCallOriginKind,
+    SubmissionAction, SwapIntent, TransferIntent, VtokenOrderExecuteIntent, VtokenOrderOperation,
+    XcmInstruction, XcmWeight,
 };
 
 const REFUND_ADDRESS: &str = "0x1111111111111111111111111111111111111111";
@@ -18,12 +18,12 @@ fn mainnet_engine() -> RouteEngine {
     )
 }
 
-fn testnet_engine() -> RouteEngine {
+fn paseo_engine() -> RouteEngine {
     RouteEngine::new(
-        RouteRegistry::for_profile(DeploymentProfile::Testnet),
+        RouteRegistry::for_profile(DeploymentProfile::Paseo),
         EngineSettings {
             platform_fee_bps: 10,
-            deployment_profile: DeploymentProfile::Testnet,
+            deployment_profile: DeploymentProfile::Paseo,
         },
     )
 }
@@ -49,7 +49,10 @@ fn quotes_hydration_swap_over_a_multihop_path() {
     let quote = engine.quote(intent).expect("swap quote should build");
 
     assert_eq!(quote.deployment_profile, DeploymentProfile::Mainnet);
-    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Hydration]);
+    assert_eq!(
+        quote.route,
+        vec![ChainKey::PolkadotHub, ChainKey::Hydration]
+    );
     assert_eq!(quote.segments.len(), 1);
     assert_eq!(quote.segments[0].kind, RouteSegmentKind::Execution);
     assert_eq!(quote.segments[0].route, quote.route);
@@ -221,7 +224,10 @@ fn quotes_asset_transfer_and_builds_delivery_plan() {
     let quote = engine.quote(intent).expect("transfer quote should build");
 
     assert_eq!(quote.deployment_profile, DeploymentProfile::Mainnet);
-    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Hydration]);
+    assert_eq!(
+        quote.route,
+        vec![ChainKey::PolkadotHub, ChainKey::Hydration]
+    );
     assert_eq!(quote.segments.len(), 1);
     assert_eq!(quote.fees.xcm_fee.amount, 150_000_000);
     assert_eq!(quote.fees.destination_fee.amount, 90_000_000);
@@ -270,25 +276,39 @@ fn quotes_bifrost_transfer_and_builds_delivery_plan() {
 
     let quote = engine.quote(intent).expect("transfer quote should build");
 
-    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Bifrost]);
+    assert_eq!(
+        quote.route,
+        vec![ChainKey::PolkadotHub, ChainKey::Moonbeam, ChainKey::Bifrost]
+    );
     assert_eq!(quote.segments.len(), 1);
-    assert_eq!(quote.fees.xcm_fee.amount, 170_000_000);
-    assert_eq!(quote.fees.destination_fee.amount, 100_000_000);
+    assert_eq!(quote.fees.xcm_fee.amount, 310_000_000);
+    assert_eq!(quote.fees.destination_fee.amount, 190_000_000);
     assert_eq!(quote.submission.action, SubmissionAction::Transfer);
 
     let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
-    assert_eq!(outer_transfer.destination(), ChainKey::Bifrost);
+    assert_eq!(outer_transfer.destination(), ChainKey::Moonbeam);
     assert_eq!(
         outer_transfer.remote_instructions(),
         &vec![
             XcmInstruction::BuyExecution {
                 asset: AssetKey::Dot,
-                amount: 100_000_000,
+                amount: 110_000_000,
             },
-            XcmInstruction::DepositAsset {
+            XcmInstruction::TransferReserveAsset {
                 asset: AssetKey::Dot,
-                recipient: "5FbifrostRecipient".to_owned(),
-                asset_count: 1,
+                amount: AssetKey::Dot.units(25),
+                destination: ChainKey::Bifrost,
+                remote_instructions: vec![
+                    XcmInstruction::BuyExecution {
+                        asset: AssetKey::Dot,
+                        amount: 80_000_000,
+                    },
+                    XcmInstruction::DepositAsset {
+                        asset: AssetKey::Dot,
+                        recipient: "5FbifrostRecipient".to_owned(),
+                        asset_count: 1,
+                    },
+                ],
             },
         ]
     );
@@ -309,11 +329,17 @@ fn quotes_multihop_transfer_from_moonbeam_to_hydration() {
         deadline: 1_773_185_200,
     };
 
-    let quote = engine.quote(intent).expect("multihop transfer quote should build");
+    let quote = engine
+        .quote(intent)
+        .expect("multihop transfer quote should build");
 
     assert_eq!(
         quote.route,
-        vec![ChainKey::Moonbeam, ChainKey::PolkadotHub, ChainKey::Hydration]
+        vec![
+            ChainKey::Moonbeam,
+            ChainKey::PolkadotHub,
+            ChainKey::Hydration
+        ]
     );
     assert_eq!(quote.segments.len(), 1);
     assert_eq!(quote.submission.action, SubmissionAction::Transfer);
@@ -366,7 +392,9 @@ fn quotes_multihop_swap_from_moonbeam_to_hydration_with_hub_settlement() {
         deadline: 1_773_185_200,
     };
 
-    let quote = engine.quote(intent).expect("multihop swap quote should build");
+    let quote = engine
+        .quote(intent)
+        .expect("multihop swap quote should build");
 
     assert_eq!(
         quote.route,
@@ -378,8 +406,18 @@ fn quotes_multihop_swap_from_moonbeam_to_hydration_with_hub_settlement() {
         ]
     );
     assert_eq!(quote.segments.len(), 2);
-    assert_eq!(quote.segments[0].route, vec![ChainKey::Moonbeam, ChainKey::PolkadotHub, ChainKey::Hydration]);
-    assert_eq!(quote.segments[1].route, vec![ChainKey::Hydration, ChainKey::PolkadotHub]);
+    assert_eq!(
+        quote.segments[0].route,
+        vec![
+            ChainKey::Moonbeam,
+            ChainKey::PolkadotHub,
+            ChainKey::Hydration
+        ]
+    );
+    assert_eq!(
+        quote.segments[1].route,
+        vec![ChainKey::Hydration, ChainKey::PolkadotHub]
+    );
 
     let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
     assert_eq!(outer_transfer.destination(), ChainKey::PolkadotHub);
@@ -396,8 +434,8 @@ fn quotes_multihop_swap_from_moonbeam_to_hydration_with_hub_settlement() {
 }
 
 #[test]
-fn quotes_pas_transfer_on_testnet_people_route() {
-    let engine = testnet_engine();
+fn quotes_pas_transfer_on_paseo_people_route() {
+    let engine = paseo_engine();
     let intent = Intent {
         source_chain: ChainKey::PolkadotHub,
         destination_chain: ChainKey::People,
@@ -410,8 +448,10 @@ fn quotes_pas_transfer_on_testnet_people_route() {
         deadline: 1_773_185_200,
     };
 
-    let quote = engine.quote(intent).expect("testnet transfer quote should build");
-    assert_eq!(quote.deployment_profile, DeploymentProfile::Testnet);
+    let quote = engine
+        .quote(intent)
+        .expect("paseo transfer quote should build");
+    assert_eq!(quote.deployment_profile, DeploymentProfile::Paseo);
     assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::People]);
     assert_eq!(quote.submission.asset, AssetKey::Pas);
     match &quote.execution_plan.steps[4] {
@@ -446,7 +486,10 @@ fn quotes_pas_transfer_on_testnet_people_route() {
                     assert_eq!(*remote_fee_asset, AssetKey::Pas);
                     assert_eq!(*remote_fee_amount, 100_000_000);
                     assert!(!preserve_origin);
-                    assert!(matches!(remote_instructions[0], XcmInstruction::DepositAsset { .. }));
+                    assert!(matches!(
+                        remote_instructions[0],
+                        XcmInstruction::DepositAsset { .. }
+                    ));
                 }
                 other => panic!("unexpected instruction: {other:?}"),
             }
@@ -478,7 +521,10 @@ fn quotes_execute_runtime_call_on_hydration() {
     let quote = engine.quote(intent).expect("execute quote should build");
 
     assert_eq!(quote.deployment_profile, DeploymentProfile::Mainnet);
-    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Hydration]);
+    assert_eq!(
+        quote.route,
+        vec![ChainKey::PolkadotHub, ChainKey::Hydration]
+    );
     assert_eq!(quote.segments.len(), 1);
     assert_eq!(quote.submission.action, SubmissionAction::Execute);
     assert_eq!(quote.submission.asset, AssetKey::Dot);
@@ -595,38 +641,27 @@ fn quotes_multihop_execute_runtime_call_on_bifrost() {
         deadline: 1_773_185_200,
     };
 
-    let quote = engine.quote(intent).expect("multihop execute quote should build");
+    let quote = engine
+        .quote(intent)
+        .expect("multihop execute quote should build");
 
-    assert_eq!(
-        quote.route,
-        vec![ChainKey::Moonbeam, ChainKey::PolkadotHub, ChainKey::Bifrost]
-    );
+    assert_eq!(quote.route, vec![ChainKey::Moonbeam, ChainKey::Bifrost]);
     assert_eq!(quote.submission.action, SubmissionAction::Execute);
-    assert_eq!(quote.submission.amount, 210_000_000);
-    assert_eq!(quote.fees.xcm_fee.amount, 350_000_000);
+    assert_eq!(quote.submission.amount, 80_000_000);
+    assert_eq!(quote.fees.xcm_fee.amount, 130_000_000);
     assert_eq!(quote.fees.destination_fee.amount, 0);
 
     let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
-    assert_eq!(outer_transfer.destination(), ChainKey::PolkadotHub);
+    assert_eq!(outer_transfer.destination(), ChainKey::Bifrost);
     assert_eq!(
         outer_transfer.remote_instructions()[0],
         XcmInstruction::BuyExecution {
             asset: AssetKey::Dot,
-            amount: 110_000_000,
-        }
-    );
-
-    let nested_transfer = nested_transfer_instruction(outer_transfer, 1);
-    assert_eq!(nested_transfer.destination(), ChainKey::Bifrost);
-    assert_eq!(
-        nested_transfer.remote_instructions()[0],
-        XcmInstruction::BuyExecution {
-            asset: AssetKey::Dot,
-            amount: 100_000_000,
+            amount: 80_000_000,
         }
     );
     assert_eq!(
-        nested_transfer.remote_instructions()[1],
+        outer_transfer.remote_instructions()[1],
         XcmInstruction::Transact {
             origin_kind: RuntimeCallOriginKind::SovereignAccount,
             fallback_weight: XcmWeight {
@@ -662,7 +697,9 @@ fn quotes_execute_evm_contract_call_on_moonbeam() {
         deadline: 1_773_185_200,
     };
 
-    let quote = engine.quote(intent).expect("evm contract quote should build");
+    let quote = engine
+        .quote(intent)
+        .expect("evm contract quote should build");
 
     assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Moonbeam]);
     assert_eq!(quote.submission.action, SubmissionAction::Execute);
@@ -706,11 +743,17 @@ fn quotes_multihop_execute_evm_contract_call_on_moonbeam() {
         deadline: 1_773_185_200,
     };
 
-    let quote = engine.quote(intent).expect("multihop evm quote should build");
+    let quote = engine
+        .quote(intent)
+        .expect("multihop evm quote should build");
 
     assert_eq!(
         quote.route,
-        vec![ChainKey::Hydration, ChainKey::PolkadotHub, ChainKey::Moonbeam]
+        vec![
+            ChainKey::Hydration,
+            ChainKey::PolkadotHub,
+            ChainKey::Moonbeam
+        ]
     );
 
     let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
@@ -735,12 +778,11 @@ fn quotes_execute_vtoken_order_on_bifrost() {
         action: IntentAction::Execute(ExecuteIntent::VtokenOrder(VtokenOrderExecuteIntent {
             asset: AssetKey::Dot,
             amount: AssetKey::Dot.units(25),
-            max_payment_amount: 100_000_000,
+            max_payment_amount: 200_000_000,
             operation: VtokenOrderOperation::Mint,
             recipient: "5FbifrostRecipient".to_owned(),
             recipient_account_id_hex:
-                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                    .to_owned(),
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
             channel_id: 7,
             remark: "xroute".to_owned(),
             fallback_weight: XcmWeight {
@@ -752,22 +794,42 @@ fn quotes_execute_vtoken_order_on_bifrost() {
         deadline: 1_773_185_200,
     };
 
-    let quote = engine.quote(intent).expect("vtoken order quote should build");
+    let quote = engine
+        .quote(intent)
+        .expect("vtoken order quote should build");
 
-    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Bifrost]);
+    assert_eq!(
+        quote.route,
+        vec![ChainKey::PolkadotHub, ChainKey::Moonbeam, ChainKey::Bifrost]
+    );
     assert_eq!(quote.submission.action, SubmissionAction::Execute);
     assert_eq!(quote.submission.amount, AssetKey::Dot.units(25));
-    assert_eq!(quote.submission.destination_fee, 100_000_000);
-    assert_eq!(quote.expected_output, AssetAmount::new(AssetKey::Vdot, AssetKey::Dot.units(25)));
+    assert_eq!(quote.submission.destination_fee, 190_000_000);
+    assert_eq!(
+        quote.expected_output,
+        AssetAmount::new(AssetKey::Vdot, AssetKey::Dot.units(25))
+    );
 
     let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
-    assert_eq!(outer_transfer.amount(), AssetKey::Dot.units(25) + 100_000_000);
-    match &outer_transfer.remote_instructions()[1] {
+    assert_eq!(outer_transfer.destination(), ChainKey::Moonbeam);
+    assert_eq!(
+        outer_transfer.remote_instructions()[0],
+        XcmInstruction::BuyExecution {
+            asset: AssetKey::Dot,
+            amount: 110_000_000,
+        }
+    );
+    let nested_transfer = nested_transfer_instruction(outer_transfer, 1);
+    assert_eq!(nested_transfer.destination(), ChainKey::Bifrost);
+    assert_eq!(
+        nested_transfer.amount(),
+        AssetKey::Dot.units(25) + 190_000_000
+    );
+    match &nested_transfer.remote_instructions()[1] {
         XcmInstruction::Transact { call_data, .. } => {
             assert!(call_data.starts_with("0x7d000800"));
-            assert!(call_data.contains(
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            ));
+            assert!(call_data
+                .contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
             assert!(call_data.ends_with("1878726f75746507000000"));
         }
         other => panic!("expected transact instruction, got {other:?}"),
@@ -775,7 +837,7 @@ fn quotes_execute_vtoken_order_on_bifrost() {
 }
 
 #[test]
-fn quotes_multihop_execute_vtoken_order_on_bifrost() {
+fn quotes_execute_vtoken_order_on_bifrost_from_moonbeam() {
     let engine = mainnet_engine();
     let intent = Intent {
         source_chain: ChainKey::Moonbeam,
@@ -787,8 +849,7 @@ fn quotes_multihop_execute_vtoken_order_on_bifrost() {
             operation: VtokenOrderOperation::Mint,
             recipient: "5FmoonbeamBifrostRecipient".to_owned(),
             recipient_account_id_hex:
-                "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-                    .to_owned(),
+                "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned(),
             channel_id: 3,
             remark: "route".to_owned(),
             fallback_weight: XcmWeight {
@@ -800,24 +861,23 @@ fn quotes_multihop_execute_vtoken_order_on_bifrost() {
         deadline: 1_773_185_200,
     };
 
-    let quote = engine.quote(intent).expect("multihop vtoken quote should build");
+    let quote = engine
+        .quote(intent)
+        .expect("multihop vtoken quote should build");
 
+    assert_eq!(quote.route, vec![ChainKey::Moonbeam, ChainKey::Bifrost]);
     assert_eq!(
-        quote.route,
-        vec![ChainKey::Moonbeam, ChainKey::PolkadotHub, ChainKey::Bifrost]
+        quote.expected_output,
+        AssetAmount::new(AssetKey::Vdot, AssetKey::Dot.units(3))
     );
-    assert_eq!(quote.expected_output, AssetAmount::new(AssetKey::Vdot, AssetKey::Dot.units(3)));
 
     let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
-    assert_eq!(outer_transfer.destination(), ChainKey::PolkadotHub);
-    let nested_transfer = nested_transfer_instruction(outer_transfer, 1);
-    assert_eq!(nested_transfer.destination(), ChainKey::Bifrost);
-    match &nested_transfer.remote_instructions()[1] {
+    assert_eq!(outer_transfer.destination(), ChainKey::Bifrost);
+    match &outer_transfer.remote_instructions()[1] {
         XcmInstruction::Transact { call_data, .. } => {
             assert!(call_data.starts_with("0x7d000800"));
-            assert!(call_data.contains(
-                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-            ));
+            assert!(call_data
+                .contains("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
         }
         other => panic!("expected transact instruction, got {other:?}"),
     }
@@ -827,7 +887,7 @@ fn quotes_multihop_execute_vtoken_order_on_bifrost() {
 fn quotes_execute_vtoken_redeem_on_bifrost() {
     let engine = mainnet_engine();
     let intent = Intent {
-        source_chain: ChainKey::PolkadotHub,
+        source_chain: ChainKey::Moonbeam,
         destination_chain: ChainKey::Bifrost,
         action: IntentAction::Execute(ExecuteIntent::VtokenOrder(VtokenOrderExecuteIntent {
             asset: AssetKey::Vdot,
@@ -836,8 +896,7 @@ fn quotes_execute_vtoken_redeem_on_bifrost() {
             operation: VtokenOrderOperation::Redeem,
             recipient: "5FhubRedeemRecipient".to_owned(),
             recipient_account_id_hex:
-                "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-                    .to_owned(),
+                "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_owned(),
             channel_id: 0,
             remark: String::new(),
             fallback_weight: XcmWeight {
@@ -849,11 +908,16 @@ fn quotes_execute_vtoken_redeem_on_bifrost() {
         deadline: 1_773_185_200,
     };
 
-    let quote = engine.quote(intent).expect("vtoken redeem quote should build");
+    let quote = engine
+        .quote(intent)
+        .expect("vtoken redeem quote should build");
 
-    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Bifrost]);
+    assert_eq!(quote.route, vec![ChainKey::Moonbeam, ChainKey::Bifrost]);
     assert_eq!(quote.submission.asset, AssetKey::Vdot);
-    assert_eq!(quote.expected_output, AssetAmount::new(AssetKey::Dot, AssetKey::Vdot.units(2)));
+    assert_eq!(
+        quote.expected_output,
+        AssetAmount::new(AssetKey::Dot, AssetKey::Vdot.units(2))
+    );
 
     match &quote.execution_plan.steps[4] {
         PlanStep::SendXcm { instructions, .. } => {

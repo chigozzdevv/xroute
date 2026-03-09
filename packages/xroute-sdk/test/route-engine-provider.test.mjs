@@ -65,11 +65,11 @@ test("route engine quote provider supports a hub to bifrost transfer", async () 
 
   const quote = normalizeQuote(await provider.quote(intent));
 
-  assert.deepEqual(quote.route, ["polkadot-hub", "bifrost"]);
+  assert.deepEqual(quote.route, ["polkadot-hub", "moonbeam", "bifrost"]);
   assert.equal(quote.submission.action, "transfer");
   assert.equal(quote.submission.asset, "DOT");
-  assert.equal(quote.fees.xcmFee.amount, 170000000n);
-  assert.equal(quote.fees.destinationFee.amount, 100000000n);
+  assert.equal(quote.fees.xcmFee.amount, 310000000n);
+  assert.equal(quote.fees.destinationFee.amount, 190000000n);
 });
 
 test("route engine quote provider builds an execute/runtime-call quote", async () => {
@@ -185,7 +185,7 @@ test("route engine quote provider builds an execute/vtoken-order quote", async (
       executionType: "vtoken-order",
       asset: "DOT",
       amount: "250000000000",
-      maxPaymentAmount: "100000000",
+      maxPaymentAmount: "200000000",
       operation: "mint",
       recipient: recipientAddress,
       channelId: 7,
@@ -200,10 +200,10 @@ test("route engine quote provider builds an execute/vtoken-order quote", async (
   const quote = normalizeQuote(await provider.quote(intent));
   const remoteInstructions = finalRemoteInstructions(quote);
 
-  assert.deepEqual(quote.route, ["polkadot-hub", "bifrost"]);
+  assert.deepEqual(quote.route, ["polkadot-hub", "moonbeam", "bifrost"]);
   assert.equal(quote.submission.action, "execute");
   assert.equal(quote.submission.amount, 250000000000n);
-  assert.equal(quote.submission.destinationFee, 100000000n);
+  assert.equal(quote.submission.destinationFee, 190000000n);
   assert.deepEqual(quote.expectedOutput, {
     asset: "VDOT",
     amount: 250000000000n,
@@ -218,7 +218,7 @@ test("route engine quote provider builds a redeem execute/vtoken-order quote", a
     cwd: workspaceRoot,
   });
   const intent = createExecuteIntent({
-    sourceChain: "polkadot-hub",
+    sourceChain: "moonbeam",
     destinationChain: "bifrost",
     refundAddress: walletAddress,
     deadline: 1_773_185_200,
@@ -239,7 +239,7 @@ test("route engine quote provider builds a redeem execute/vtoken-order quote", a
   const quote = normalizeQuote(await provider.quote(intent));
   const remoteInstructions = finalRemoteInstructions(quote);
 
-  assert.deepEqual(quote.route, ["polkadot-hub", "bifrost"]);
+  assert.deepEqual(quote.route, ["moonbeam", "bifrost"]);
   assert.equal(quote.submission.action, "execute");
   assert.equal(quote.submission.asset, "VDOT");
   assert.equal(quote.expectedOutput.asset, "DOT");

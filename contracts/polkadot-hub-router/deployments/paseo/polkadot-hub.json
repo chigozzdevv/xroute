@@ -1,5 +1,5 @@
 {
-  "deploymentProfile": "testnet",
+  "deploymentProfile": "paseo",
   "chainKey": "polkadot-hub",
   "chainId": 420420417,
   "deployer": "0x2A3F3E0d1F847a43ebAF87Bb4741084CbDA0f549",

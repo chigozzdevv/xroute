@@ -71,10 +71,7 @@ pub fn json_response<T: Serialize>(status_code: StatusCode, value: &T) -> Respon
         .expect("json response must be constructible")
 }
 
-pub fn assert_bearer_token(
-    request: &Request<Body>,
-    expected_token: &str,
-) -> Result<(), HttpError> {
+pub fn assert_bearer_token(request: &Request<Body>, expected_token: &str) -> Result<(), HttpError> {
     let normalized_expected = expected_token.trim();
     if normalized_expected.is_empty() {
         return Err(HttpError::bad_request("expected bearer token is required"));

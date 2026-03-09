@@ -45,12 +45,12 @@ impl Default for RouteRegistry {
 impl RouteRegistry {
     pub fn for_profile(profile: DeploymentProfile) -> Self {
         match profile {
-            DeploymentProfile::Testnet => Self::testnet(),
+            DeploymentProfile::Paseo => Self::paseo(),
             DeploymentProfile::Mainnet => Self::mainnet(),
         }
     }
 
-    fn testnet() -> Self {
+    fn paseo() -> Self {
         Self {
             transfer_edges: vec![TransferEdge {
                 source: ChainKey::PolkadotHub,
@@ -110,25 +110,60 @@ impl RouteRegistry {
                     buy_execution_fee: AssetAmount::new(AssetKey::Dot, 110_000_000),
                 },
                 TransferEdge {
-                    source: ChainKey::PolkadotHub,
+                    source: ChainKey::Moonbeam,
                     destination: ChainKey::Bifrost,
                     asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 170_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 100_000_000),
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 130_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 80_000_000),
                 },
                 TransferEdge {
-                    source: ChainKey::PolkadotHub,
+                    source: ChainKey::Moonbeam,
                     destination: ChainKey::Bifrost,
                     asset: AssetKey::Vdot,
-                    transport_fee: AssetAmount::new(AssetKey::Vdot, 170_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Vdot, 100_000_000),
+                    transport_fee: AssetAmount::new(AssetKey::Vdot, 130_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Vdot, 80_000_000),
                 },
                 TransferEdge {
                     source: ChainKey::Bifrost,
-                    destination: ChainKey::PolkadotHub,
+                    destination: ChainKey::Moonbeam,
                     asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 170_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 100_000_000),
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 130_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 80_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Bifrost,
+                    destination: ChainKey::Moonbeam,
+                    asset: AssetKey::Vdot,
+                    transport_fee: AssetAmount::new(AssetKey::Vdot, 130_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Vdot, 80_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Hydration,
+                    destination: ChainKey::Bifrost,
+                    asset: AssetKey::Dot,
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 175_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 105_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Hydration,
+                    destination: ChainKey::Bifrost,
+                    asset: AssetKey::Vdot,
+                    transport_fee: AssetAmount::new(AssetKey::Vdot, 175_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Vdot, 105_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Bifrost,
+                    destination: ChainKey::Hydration,
+                    asset: AssetKey::Dot,
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 175_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 105_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Bifrost,
+                    destination: ChainKey::Hydration,
+                    asset: AssetKey::Vdot,
+                    transport_fee: AssetAmount::new(AssetKey::Vdot, 175_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Vdot, 105_000_000),
                 },
             ],
             swap_routes: vec![
@@ -195,7 +230,18 @@ impl RouteRegistry {
 
         while let Some(candidate) = frontier.pop() {
             if candidate.chain == destination {
-                return Some(transfer_path_from_hops(asset, &candidate.route, &candidate.hops));
+                return Some(transfer_path_from_hops(
+                    asset,
+                    &candidate.route,
+                    &candidate.hops,
+                ));
+            }
+
+            if candidate.chain != source
+                && candidate.chain != destination
+                && !allows_transit(candidate.chain)
+            {
+                continue;
             }
 
             for edge in self
@@ -254,7 +300,6 @@ impl RouteRegistry {
                 && capability.execution_type == execution_type
         })
     }
-
 }
 
 impl TransferPath {
@@ -265,7 +310,11 @@ impl TransferPath {
     }
 }
 
-fn transfer_path_from_hops(asset: AssetKey, route: &[ChainKey], hops: &[TransferEdge]) -> TransferPath {
+fn transfer_path_from_hops(
+    asset: AssetKey,
+    route: &[ChainKey],
+    hops: &[TransferEdge],
+) -> TransferPath {
     let xcm_fee = hops.iter().fold(0u128, |total, hop| {
         total.saturating_add(hop.transport_fee.amount)
     });
@@ -341,4 +390,8 @@ fn route_key(route: &[ChainKey]) -> String {
         .map(|chain| chain.as_str())
         .collect::<Vec<_>>()
         .join(">")
+}
+
+fn allows_transit(chain: ChainKey) -> bool {
+    !matches!(chain, ChainKey::People | ChainKey::Bifrost)
 }

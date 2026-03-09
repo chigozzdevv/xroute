@@ -3,11 +3,14 @@ import { ACTION_TYPES, DISPATCH_MODES, assertIncluded, assertNonEmptyString } fr
 export const XCM_PRECOMPILE_ADDRESS = "0x00000000000000000000000000000000000a0000";
 
 export const DEPLOYMENT_PROFILES = Object.freeze({
-  TESTNET: "testnet",
+  PASEO: "paseo",
   MAINNET: "mainnet",
 });
 
 export const DEFAULT_DEPLOYMENT_PROFILE = DEPLOYMENT_PROFILES.MAINNET;
+const DEPLOYMENT_PROFILE_ALIASES = Object.freeze({
+  testnet: DEPLOYMENT_PROFILES.PASEO,
+});
 
 export const PRECOMPILE_METADATA = Object.freeze({
   xcm: Object.freeze({
@@ -29,5 +32,9 @@ export const DISPATCH_MODE_TO_CONTRACT_ENUM = Object.freeze({
 
 export function normalizeDeploymentProfile(profile) {
   const normalized = assertNonEmptyString("deploymentProfile", profile);
-  return assertIncluded("deploymentProfile", normalized, Object.values(DEPLOYMENT_PROFILES));
+  return assertIncluded(
+    "deploymentProfile",
+    DEPLOYMENT_PROFILE_ALIASES[normalized] ?? normalized,
+    Object.values(DEPLOYMENT_PROFILES),
+  );
 }

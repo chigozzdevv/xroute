@@ -40,7 +40,7 @@ const intentStatuses = Object.freeze([
 loadDotEnv(join(workspaceRoot, ".env"));
 
 const settings = await resolveSettings();
-const runtimeDir = mkdtempSync(join(tmpdir(), "xroute-testnet-e2e-"));
+const runtimeDir = mkdtempSync(join(tmpdir(), "xroute-paseo-e2e-"));
 const statusEventsPath = join(runtimeDir, "sdk-status.ndjson");
 
 let quoteService;
@@ -125,7 +125,7 @@ try {
 
   if (balanceBefore < totalLocked) {
     throw new Error(
-      `insufficient PAS for testnet run: balance=${balanceBefore} required=${totalLocked}`,
+      `insufficient PAS for paseo run: balance=${balanceBefore} required=${totalLocked}`,
     );
   }
 
@@ -234,9 +234,9 @@ try {
 
 async function resolveSettings() {
   const deploymentProfile = requireEnv("XROUTE_DEPLOYMENT_PROFILE");
-  if (deploymentProfile !== "testnet") {
+  if (deploymentProfile !== "paseo") {
     throw new Error(
-      `scripts/run-testnet-e2e.mjs only supports XROUTE_DEPLOYMENT_PROFILE=testnet, received ${deploymentProfile}`,
+      `scripts/run-paseo-e2e.mjs only supports XROUTE_DEPLOYMENT_PROFILE=paseo, received ${deploymentProfile}`,
     );
   }
 
@@ -251,8 +251,8 @@ async function resolveSettings() {
     deployerAddress:
       process.env.XROUTE_DEPLOYER_ADDRESS ??
       (await runCast(["wallet", "address", "--private-key", requireEnv("XROUTE_PRIVATE_KEY")])),
-    amount: (process.env.XROUTE_TESTNET_TRANSFER_AMOUNT ?? "10000000000").trim(),
-    gasLimit: (process.env.XROUTE_TESTNET_GAS_LIMIT ?? "1000000").trim(),
+    amount: (process.env.XROUTE_PASEO_TRANSFER_AMOUNT ?? "10000000000").trim(),
+    gasLimit: (process.env.XROUTE_PASEO_GAS_LIMIT ?? "1000000").trim(),
     peopleRecipient:
       process.env.XROUTE_PEOPLE_RECIPIENT?.trim() || defaultPeopleRecipient,
   };
@@ -463,7 +463,7 @@ function readDeploymentArtifact() {
     "contracts",
     "polkadot-hub-router",
     "deployments",
-    "testnet",
+    "paseo",
     "polkadot-hub.json",
   );
   if (!existsSync(deploymentPath)) {

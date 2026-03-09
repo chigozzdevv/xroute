@@ -12,12 +12,12 @@ import { createRouteEngineQuoteProvider } from "../../xroute-sdk/index.mjs";
 import { buildExecutionEnvelope, getDefaultXcmCodecContext } from "../index.mjs";
 
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const testnetQuoteProvider = createRouteEngineQuoteProvider({
+const mainnetQuoteProvider = createRouteEngineQuoteProvider({
   cwd: workspaceRoot,
 });
 const paseoQuoteProvider = createRouteEngineQuoteProvider({
   cwd: workspaceRoot,
-  deploymentProfile: "testnet",
+  deploymentProfile: "paseo",
 });
 const aliceAddress = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
 const refundAddress = "0x2222222222222222222222222222222222222222";
@@ -34,7 +34,7 @@ test("buildExecutionEnvelope encodes a transfer reserve XCM payload", async () =
       recipient: aliceAddress,
     },
   });
-  const quote = await testnetQuoteProvider.quote(intent);
+  const quote = await mainnetQuoteProvider.quote(intent);
 
   const envelope = buildExecutionEnvelope({ intent, quote });
   const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
@@ -50,7 +50,7 @@ test("buildExecutionEnvelope encodes a transfer reserve XCM payload", async () =
 
 test("buildExecutionEnvelope encodes the Paseo PAS transfer route", async () => {
   const intent = createTransferIntent({
-    deploymentProfile: "testnet",
+    deploymentProfile: "paseo",
     sourceChain: "polkadot-hub",
     destinationChain: "people",
     refundAddress,
@@ -93,7 +93,7 @@ test("buildExecutionEnvelope encodes the hydration runtime swap path", async () 
       recipient: aliceAddress,
     },
   });
-  const quote = await testnetQuoteProvider.quote(intent);
+  const quote = await mainnetQuoteProvider.quote(intent);
 
   const envelope = buildExecutionEnvelope({ intent, quote });
   const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
@@ -127,11 +127,11 @@ test("buildExecutionEnvelope encodes a hydration swap that settles on polkadot h
       recipient: aliceAddress,
     },
   });
-  const quote = await testnetQuoteProvider.quote(intent);
+  const quote = await mainnetQuoteProvider.quote(intent);
 
   const envelope = buildExecutionEnvelope({ intent, quote });
   const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
-  const remoteInstructions = hydrationRemoteInstructions(decoded);
+  const remoteInstructions = finalRemoteInstructions(decoded);
 
   assert.equal(remoteInstructions.length, 3);
   assert.equal(remoteInstructions[1].type, "ExchangeAsset");
@@ -158,11 +158,11 @@ test("buildExecutionEnvelope encodes a runtime call via Transact", async () => {
       },
     },
   });
-  const quote = await testnetQuoteProvider.quote(intent);
+  const quote = await mainnetQuoteProvider.quote(intent);
 
   const envelope = buildExecutionEnvelope({ intent, quote });
   const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
-  const remoteInstructions = hydrationRemoteInstructions(decoded);
+  const remoteInstructions = finalRemoteInstructions(decoded);
 
   assert.equal(remoteInstructions.length, 2);
   assert.equal(remoteInstructions[1].type, "Transact");
@@ -186,7 +186,7 @@ test("buildExecutionEnvelope encodes a moonbeam runtime call via Transact", asyn
       },
     },
   });
-  const quote = await testnetQuoteProvider.quote(intent);
+  const quote = await mainnetQuoteProvider.quote(intent);
 
   const envelope = buildExecutionEnvelope({ intent, quote });
   const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
@@ -219,11 +219,11 @@ test("buildExecutionEnvelope encodes a moonbeam evm contract call via Transact",
       },
     },
   });
-  const quote = await testnetQuoteProvider.quote(intent);
+  const quote = await mainnetQuoteProvider.quote(intent);
 
   const envelope = buildExecutionEnvelope({ intent, quote });
   const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
-  const remoteInstructions = decoded.value[1].value.xcm;
+  const remoteInstructions = finalRemoteInstructions(decoded);
 
   assert.equal(remoteInstructions[1].type, "Transact");
   assert.match(remoteInstructions[1].value.call.asHex(), /^0x6d0001/);
@@ -240,7 +240,7 @@ test("buildExecutionEnvelope encodes a bifrost vtoken order via Transact", async
       executionType: "vtoken-order",
       asset: "DOT",
       amount: "250000000000",
-      maxPaymentAmount: "100000000",
+      maxPaymentAmount: "200000000",
       operation: "mint",
       recipient: aliceAddress,
       channelId: 7,
@@ -251,11 +251,11 @@ test("buildExecutionEnvelope encodes a bifrost vtoken order via Transact", async
       },
     },
   });
-  const quote = await testnetQuoteProvider.quote(intent);
+  const quote = await mainnetQuoteProvider.quote(intent);
 
   const envelope = buildExecutionEnvelope({ intent, quote });
   const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
-  const remoteInstructions = decoded.value[1].value.xcm;
+  const remoteInstructions = finalRemoteInstructions(decoded);
 
   assert.equal(remoteInstructions[1].type, "Transact");
   assert.match(remoteInstructions[1].value.call.asHex(), /^0x7d000800/);
@@ -264,7 +264,7 @@ test("buildExecutionEnvelope encodes a bifrost vtoken order via Transact", async
 
 test("buildExecutionEnvelope encodes a bifrost vtoken redeem via InitiateTeleport", async () => {
   const intent = createExecuteIntent({
-    sourceChain: "polkadot-hub",
+    sourceChain: "moonbeam",
     destinationChain: "bifrost",
     refundAddress,
     deadline: 1_773_185_200,
@@ -281,7 +281,7 @@ test("buildExecutionEnvelope encodes a bifrost vtoken redeem via InitiateTelepor
       },
     },
   });
-  const quote = await testnetQuoteProvider.quote(intent);
+  const quote = await mainnetQuoteProvider.quote(intent);
 
   const envelope = buildExecutionEnvelope({ intent, quote });
   const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
@@ -294,7 +294,7 @@ test("buildExecutionEnvelope encodes a bifrost vtoken redeem via InitiateTelepor
   assert.match(remoteInstructions[1].value.call.asHex(), /^0x7d02000900/);
 });
 
-function hydrationRemoteInstructions(decoded) {
+function finalRemoteInstructions(decoded) {
   const outerTransfer = decoded.value[1];
   const nestedTransfer = outerTransfer.value.xcm.find(
     (instruction) => instruction.type === "TransferReserveAsset",

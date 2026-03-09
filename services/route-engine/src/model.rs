@@ -29,14 +29,14 @@ impl Display for ChainKey {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DeploymentProfile {
-    Testnet,
+    Paseo,
     Mainnet,
 }
 
 impl DeploymentProfile {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Testnet => "testnet",
+            Self::Paseo => "paseo",
             Self::Mainnet => "mainnet",
         }
     }

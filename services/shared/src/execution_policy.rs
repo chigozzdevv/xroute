@@ -49,8 +49,12 @@ struct AllowedContractFile {
 }
 
 pub fn load_execution_policy_from_file(path: &Path) -> Result<ExecutionPolicy, String> {
-    let raw = read_to_string(path)
-        .map_err(|error| format!("failed to read execution policy {}: {error}", path.display()))?;
+    let raw = read_to_string(path).map_err(|error| {
+        format!(
+            "failed to read execution policy {}: {error}",
+            path.display()
+        )
+    })?;
     let file: ExecutionPolicyFile =
         serde_json::from_str(&raw).map_err(|error| format!("invalid execution policy: {error}"))?;
 
@@ -138,7 +142,11 @@ pub fn assert_intent_allowed_by_execution_policy(
             .get(..10)
             .ok_or_else(|| "action.params.calldata must contain a selector".to_owned())?,
     )?;
-    if !entry.selectors.iter().any(|candidate| candidate == &selector) {
+    if !entry
+        .selectors
+        .iter()
+        .any(|candidate| candidate == &selector)
+    {
         return Err(format!(
             "selector {selector} is not allowlisted for moonbeam contract {address}"
         ));
@@ -211,10 +219,7 @@ mod tests {
 
     #[test]
     fn validates_allowlisted_moonbeam_contracts() {
-        let path = std::env::temp_dir().join(format!(
-            "xroute-policy-{}.json",
-            std::process::id()
-        ));
+        let path = std::env::temp_dir().join(format!("xroute-policy-{}.json", std::process::id()));
         write(
             &path,
             r#"{
