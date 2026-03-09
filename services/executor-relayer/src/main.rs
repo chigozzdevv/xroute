@@ -20,14 +20,19 @@ use xroute_service_shared::{
     fail_job_request_from_slice, health_json, json_response, load_execution_policy_from_file,
     load_hub_deployment_artifact, read_request_body, refund_job_request_from_slice,
     resolve_workspace_root, settle_job_request_from_slice, summarize_execution_policy, summary_json,
-    DispatchRequest, ExecutionPolicy, HttpError,
+    DispatchRequest, ExecutionPolicy, HttpError, WireIntent,
 };
 use route_engine::DeploymentProfile;
 
 const DISPATCH_INTENT_SIGNATURE: &str = "dispatchIntent(bytes32,(uint8,bytes,bytes))";
 const FINALIZE_SUCCESS_SIGNATURE: &str = "finalizeSuccess(bytes32,bytes32,bytes32,uint128)";
+const FINALIZE_EXTERNAL_SUCCESS_SIGNATURE: &str =
+    "finalizeExternalSuccess(bytes32,bytes32,bytes32,uint128)";
 const FINALIZE_FAILURE_SIGNATURE: &str = "finalizeFailure(bytes32,bytes32,bytes32)";
 const REFUND_FAILED_INTENT_SIGNATURE: &str = "refundFailedIntent(bytes32,uint128)";
+const XCM_EXECUTE_SIGNATURE: &str = "execute(bytes,(uint64,uint64))";
+const XCM_WEIGH_MESSAGE_SIGNATURE: &str = "weighMessage(bytes)((uint64,uint64))";
+const XCM_PRECOMPILE_ADDRESS: &str = "0x00000000000000000000000000000000000a0000";
 
 #[derive(Clone)]
 struct RelayerState {
@@ -37,9 +42,11 @@ struct RelayerState {
     rpc_url: String,
     private_key: String,
     router_address: String,
+    xcm_address: String,
     policy: Option<ExecutionPolicy>,
     job_store: Arc<JobStore>,
     event_log_path: PathBuf,
+    gas_limit: Option<u64>,
     max_attempts: u32,
     retry_delay_ms: u64,
     poll_interval_ms: u64,
@@ -150,9 +157,18 @@ fn load_state() -> Result<RelayerState, String> {
         rpc_url,
         private_key,
         router_address,
+        xcm_address: env::var("XROUTE_XCM_ADDRESS")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| XCM_PRECOMPILE_ADDRESS.to_owned()),
         policy,
         job_store: Arc::new(JobStore::load(job_store_path)?),
         event_log_path,
+        gas_limit: env::var("XROUTE_RELAYER_GAS_LIMIT")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| parse_positive_u64(&value, "XROUTE_RELAYER_GAS_LIMIT"))
+            .transpose()?,
         max_attempts: parse_positive_u32(
             env::var("XROUTE_RELAYER_MAX_ATTEMPTS")
                 .ok()
@@ -246,6 +262,7 @@ async fn route_authenticated_request(
                 JobType::Dispatch,
                 JobPayload::Dispatch {
                     intent_id: parsed.intent_id,
+                    wire_intent: parsed.wire_intent,
                     request: parsed.request,
                 },
                 state.max_attempts,
@@ -400,36 +417,79 @@ async fn process_ready_jobs(state: Arc<RelayerState>) -> Result<(), String> {
 }
 
 async fn run_job(state: Arc<RelayerState>, job: &Job) -> Result<Value, String> {
+    let deployment_profile = state.deployment_profile;
     let rpc_url = state.rpc_url.clone();
     let private_key = state.private_key.clone();
     let router_address = state.router_address.clone();
+    let xcm_address = state.xcm_address.clone();
+    let gas_limit = state.gas_limit;
     let payload = job.payload.clone();
-    task::spawn_blocking(move || run_job_blocking(&rpc_url, &private_key, &router_address, payload))
+    task::spawn_blocking(move || {
+        run_job_blocking(
+            deployment_profile,
+            &rpc_url,
+            &private_key,
+            &router_address,
+            &xcm_address,
+            gas_limit,
+            payload,
+        )
+    })
         .await
         .map_err(|error| format!("job worker failed: {error}"))?
 }
 
 fn run_job_blocking(
+    deployment_profile: DeploymentProfile,
     rpc_url: &str,
     private_key: &str,
     router_address: &str,
+    xcm_address: &str,
+    gas_limit: Option<u64>,
     payload: JobPayload,
 ) -> Result<Value, String> {
     match payload {
-        JobPayload::Dispatch { intent_id, request } => {
-            let tx_hash = send_transaction(
-                router_address,
-                DISPATCH_INTENT_SIGNATURE,
-                &[
-                    intent_id.clone(),
-                    format_dispatch_request_tuple(&request),
-                ],
-                rpc_url,
-                private_key,
-            )?;
+        JobPayload::Dispatch {
+            intent_id,
+            wire_intent,
+            request,
+        } => {
+            let uses_external_source_dispatch =
+                should_use_external_source_dispatch(deployment_profile, &wire_intent);
+            let tx_hash = if uses_external_source_dispatch {
+                let (ref_time, proof_size) = weigh_xcm_message(xcm_address, &request.message, rpc_url)?;
+                send_transaction(
+                    xcm_address,
+                    XCM_EXECUTE_SIGNATURE,
+                    &[
+                        request.message.clone(),
+                        format!("({ref_time},{proof_size})"),
+                    ],
+                    rpc_url,
+                    private_key,
+                    gas_limit,
+                )?
+            } else {
+                send_transaction(
+                    router_address,
+                    DISPATCH_INTENT_SIGNATURE,
+                    &[
+                        intent_id.clone(),
+                        format_dispatch_request_tuple(&request),
+                    ],
+                    rpc_url,
+                    private_key,
+                    gas_limit,
+                )?
+            };
             Ok(json!({
                 "intentId": intent_id,
                 "txHash": tx_hash,
+                "strategy": if uses_external_source_dispatch {
+                    "external-source-execute"
+                } else {
+                    "router-dispatch"
+                },
                 "request": request,
             }))
         }
@@ -439,9 +499,14 @@ fn run_job_blocking(
             result_asset_id,
             result_amount,
         } => {
+            let settle_signature = if should_use_external_settlement(router_address, rpc_url, &intent_id)? {
+                FINALIZE_EXTERNAL_SUCCESS_SIGNATURE
+            } else {
+                FINALIZE_SUCCESS_SIGNATURE
+            };
             let tx_hash = send_transaction(
                 router_address,
-                FINALIZE_SUCCESS_SIGNATURE,
+                settle_signature,
                 &[
                     intent_id.clone(),
                     outcome_reference.clone(),
@@ -450,6 +515,7 @@ fn run_job_blocking(
                 ],
                 rpc_url,
                 private_key,
+                gas_limit,
             )?;
             Ok(json!({
                 "intentId": intent_id,
@@ -474,6 +540,7 @@ fn run_job_blocking(
                 ],
                 rpc_url,
                 private_key,
+                gas_limit,
             )?;
             Ok(json!({
                 "intentId": intent_id,
@@ -493,6 +560,7 @@ fn run_job_blocking(
                 &[intent_id.clone(), refund_amount.clone()],
                 rpc_url,
                 private_key,
+                gas_limit,
             )?;
             Ok(json!({
                 "intentId": intent_id,
@@ -510,6 +578,7 @@ fn send_transaction(
     args: &[String],
     rpc_url: &str,
     private_key: &str,
+    gas_limit: Option<u64>,
 ) -> Result<String, String> {
     let mut command = Command::new("cast");
     command.arg("send");
@@ -522,8 +591,11 @@ fn send_transaction(
         .arg("--rpc-url")
         .arg(rpc_url)
         .arg("--private-key")
-        .arg(private_key)
-        .arg("--json");
+        .arg(private_key);
+    if let Some(gas_limit) = gas_limit {
+        command.arg("--gas-limit").arg(gas_limit.to_string());
+    }
+    command.arg("--json");
     let output = command
         .output()
         .map_err(|error| format!("failed to run cast send: {error}"))?;
@@ -531,7 +603,123 @@ fn send_transaction(
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
     }
 
-    extract_transaction_hash(String::from_utf8_lossy(&output.stdout).trim())
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let tx_hash = extract_transaction_hash(&stdout)?;
+    let receipt = read_transaction_receipt(&tx_hash, rpc_url)?;
+
+    if !receipt_status_succeeded(&receipt).unwrap_or(false) {
+        let revert_reason = extract_revert_reason(&receipt)
+            .or_else(|| extract_revert_reason_from_output(&stdout))
+            .unwrap_or_else(|| format!("transaction {tx_hash} reverted"));
+        return Err(revert_reason);
+    }
+
+    Ok(tx_hash)
+}
+
+fn weigh_xcm_message(xcm_address: &str, message: &str, rpc_url: &str) -> Result<(u64, u64), String> {
+    let output = Command::new("cast")
+        .arg("call")
+        .arg(xcm_address)
+        .arg(XCM_WEIGH_MESSAGE_SIGNATURE)
+        .arg(message)
+        .arg("--rpc-url")
+        .arg(rpc_url)
+        .output()
+        .map_err(|error| format!("failed to run cast call weighMessage: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+    }
+
+    parse_weight_tuple(String::from_utf8_lossy(&output.stdout).trim())
+}
+
+fn parse_weight_tuple(raw: &str) -> Result<(u64, u64), String> {
+    let normalized = raw.trim().trim_start_matches('(').trim_end_matches(')');
+    let mut parts = normalized.split(',').map(str::trim);
+    let ref_time = parts
+        .next()
+        .ok_or_else(|| format!("invalid weight tuple: {raw}"))?
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| format!("invalid weight tuple: {raw}"))?
+        .parse::<u64>()
+        .map_err(|error| format!("invalid weighMessage refTime: {error}"))?;
+    let proof_size = parts
+        .next()
+        .ok_or_else(|| format!("invalid weight tuple: {raw}"))?
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| format!("invalid weight tuple: {raw}"))?
+        .parse::<u64>()
+        .map_err(|error| format!("invalid weighMessage proofSize: {error}"))?;
+
+    Ok((ref_time, proof_size))
+}
+
+fn should_use_external_source_dispatch(
+    deployment_profile: DeploymentProfile,
+    wire_intent: &WireIntent,
+) -> bool {
+    if deployment_profile != DeploymentProfile::Testnet {
+        return false;
+    }
+
+    if wire_intent.source_chain != "polkadot-hub" || wire_intent.destination_chain != "people" {
+        return false;
+    }
+
+    if wire_intent.action.action_type != "transfer" {
+        return false;
+    }
+
+    wire_intent
+        .action
+        .params
+        .get("asset")
+        .and_then(Value::as_str)
+        .map(|asset| asset == "PAS")
+        .unwrap_or(false)
+}
+
+fn should_use_external_settlement(
+    router_address: &str,
+    rpc_url: &str,
+    intent_id: &str,
+) -> Result<bool, String> {
+    let output = Command::new("cast")
+        .arg("call")
+        .arg(router_address)
+        .arg("getIntent(bytes32)((address,address,address,uint128,uint128,uint128,uint128,uint128,uint64,uint8,uint8,bytes32,bytes32,bytes32,bytes32,uint128,uint128))")
+        .arg(intent_id)
+        .arg("--rpc-url")
+        .arg(rpc_url)
+        .output()
+        .map_err(|error| format!("failed to run cast call getIntent: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+    }
+
+    let tuple = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let fields = tuple
+        .trim_start_matches('(')
+        .trim_end_matches(')')
+        .split(", ")
+        .map(|value| value.trim().split_whitespace().next().unwrap_or("").to_owned())
+        .collect::<Vec<_>>();
+    if fields.len() != 17 {
+        return Err(format!("unexpected getIntent tuple: {tuple}"));
+    }
+
+    let asset = fields[1].to_ascii_lowercase();
+    let action_type = fields[9]
+        .parse::<u8>()
+        .map_err(|error| format!("invalid action type in getIntent tuple: {error}"))?;
+    let status = fields[10]
+        .parse::<u8>()
+        .map_err(|error| format!("invalid status in getIntent tuple: {error}"))?;
+
+    Ok(status == 1 && action_type == 0 && asset == "0x0000000000000000000000000000000000000000")
 }
 
 fn format_dispatch_request_tuple(request: &DispatchRequest) -> String {
@@ -559,6 +747,55 @@ fn extract_transaction_hash(value: &str) -> Result<String, String> {
         .find(|token| token.starts_with("0x") && token.len() == 66)
         .map(|hash| hash.to_lowercase())
         .ok_or_else(|| format!("unable to parse transaction hash from cast output: {value}"))
+}
+
+fn read_transaction_receipt(tx_hash: &str, rpc_url: &str) -> Result<Value, String> {
+    let output = Command::new("cast")
+        .arg("receipt")
+        .arg(tx_hash)
+        .arg("--rpc-url")
+        .arg(rpc_url)
+        .arg("--json")
+        .output()
+        .map_err(|error| format!("failed to run cast receipt: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+    }
+
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("failed to decode cast receipt output: {error}"))
+}
+
+fn receipt_status_succeeded(value: &Value) -> Option<bool> {
+    let status = value
+        .get("status")
+        .or_else(|| value.get("receipt").and_then(|receipt| receipt.get("status")))?;
+
+    match status {
+        Value::String(text) => match text.trim().to_ascii_lowercase().as_str() {
+            "0x1" | "1" => Some(true),
+            "0x0" | "0" => Some(false),
+            _ => None,
+        },
+        Value::Number(number) => number.as_u64().map(|candidate| candidate == 1),
+        _ => None,
+    }
+}
+
+fn extract_revert_reason(value: &Value) -> Option<String> {
+    value
+        .get("revertReason")
+        .or_else(|| value.get("receipt").and_then(|receipt| receipt.get("revertReason")))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty())
+        .map(str::to_owned)
+}
+
+fn extract_revert_reason_from_output(value: &str) -> Option<String> {
+    serde_json::from_str::<Value>(value)
+        .ok()
+        .and_then(|parsed| extract_revert_reason(&parsed))
 }
 
 fn append_status_event(path: &Path, event: Value) -> Result<(), String> {

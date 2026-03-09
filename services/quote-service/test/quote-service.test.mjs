@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { spawnRustService } from "../../../testing/spawn-rust-service.mjs";
+import { spawnRustService } from "../../../scripts/lib/spawn-rust-service.mjs";
 
 const workspaceRoot = process.cwd();
 const refundAddress = "0x1111111111111111111111111111111111111111";
@@ -15,7 +15,7 @@ test("quote service serves health and quote responses", async () => {
     cwd: workspaceRoot,
     env: {
       XROUTE_QUOTE_PORT: "0",
-      XROUTE_DEPLOYMENT_PROFILE: "testnet",
+      XROUTE_DEPLOYMENT_PROFILE: "mainnet",
       XROUTE_WORKSPACE_ROOT: workspaceRoot,
     },
   });
@@ -25,7 +25,7 @@ test("quote service serves health and quote responses", async () => {
     assert.equal(healthResponse.status, 200);
     const health = await healthResponse.json();
     assert.equal(health.ok, true);
-    assert.equal(health.deploymentProfile, "testnet");
+    assert.equal(health.deploymentProfile, "mainnet");
 
     const quoteResponse = await fetch(`${service.url}/quote`, {
       method: "POST",
@@ -88,7 +88,7 @@ test("quote service enforces moonbeam evm execution policy", async () => {
     cwd: workspaceRoot,
     env: {
       XROUTE_QUOTE_PORT: "0",
-      XROUTE_DEPLOYMENT_PROFILE: "testnet",
+      XROUTE_DEPLOYMENT_PROFILE: "mainnet",
       XROUTE_WORKSPACE_ROOT: workspaceRoot,
       XROUTE_EVM_POLICY_PATH: policyPath,
     },

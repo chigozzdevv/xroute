@@ -8,9 +8,29 @@ use route_engine::{
 
 const REFUND_ADDRESS: &str = "0x1111111111111111111111111111111111111111";
 
+fn mainnet_engine() -> RouteEngine {
+    RouteEngine::new(
+        RouteRegistry::for_profile(DeploymentProfile::Mainnet),
+        EngineSettings {
+            platform_fee_bps: 10,
+            deployment_profile: DeploymentProfile::Mainnet,
+        },
+    )
+}
+
+fn testnet_engine() -> RouteEngine {
+    RouteEngine::new(
+        RouteRegistry::for_profile(DeploymentProfile::Testnet),
+        EngineSettings {
+            platform_fee_bps: 10,
+            deployment_profile: DeploymentProfile::Testnet,
+        },
+    )
+}
+
 #[test]
 fn quotes_hydration_swap_over_a_multihop_path() {
-    let engine = RouteEngine::default();
+    let engine = mainnet_engine();
     let intent = Intent {
         source_chain: ChainKey::PolkadotHub,
         destination_chain: ChainKey::Hydration,
@@ -28,7 +48,7 @@ fn quotes_hydration_swap_over_a_multihop_path() {
 
     let quote = engine.quote(intent).expect("swap quote should build");
 
-    assert_eq!(quote.deployment_profile, DeploymentProfile::Testnet);
+    assert_eq!(quote.deployment_profile, DeploymentProfile::Mainnet);
     assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Hydration]);
     assert_eq!(quote.segments.len(), 1);
     assert_eq!(quote.segments[0].kind, RouteSegmentKind::Execution);
@@ -97,7 +117,7 @@ fn quotes_hydration_swap_over_a_multihop_path() {
 
 #[test]
 fn quotes_hydration_swap_and_settles_on_polkadot_hub() {
-    let engine = RouteEngine::default();
+    let engine = mainnet_engine();
     let intent = Intent {
         source_chain: ChainKey::PolkadotHub,
         destination_chain: ChainKey::Hydration,
@@ -185,7 +205,7 @@ fn quotes_hydration_swap_and_settles_on_polkadot_hub() {
 
 #[test]
 fn quotes_asset_transfer_and_builds_delivery_plan() {
-    let engine = RouteEngine::default();
+    let engine = mainnet_engine();
     let intent = Intent {
         source_chain: ChainKey::PolkadotHub,
         destination_chain: ChainKey::Hydration,
@@ -200,7 +220,7 @@ fn quotes_asset_transfer_and_builds_delivery_plan() {
 
     let quote = engine.quote(intent).expect("transfer quote should build");
 
-    assert_eq!(quote.deployment_profile, DeploymentProfile::Testnet);
+    assert_eq!(quote.deployment_profile, DeploymentProfile::Mainnet);
     assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Hydration]);
     assert_eq!(quote.segments.len(), 1);
     assert_eq!(quote.fees.xcm_fee.amount, 150_000_000);
@@ -235,7 +255,7 @@ fn quotes_asset_transfer_and_builds_delivery_plan() {
 
 #[test]
 fn quotes_bifrost_transfer_and_builds_delivery_plan() {
-    let engine = RouteEngine::default();
+    let engine = mainnet_engine();
     let intent = Intent {
         source_chain: ChainKey::PolkadotHub,
         destination_chain: ChainKey::Bifrost,
@@ -276,7 +296,7 @@ fn quotes_bifrost_transfer_and_builds_delivery_plan() {
 
 #[test]
 fn quotes_multihop_transfer_from_moonbeam_to_hydration() {
-    let engine = RouteEngine::default();
+    let engine = mainnet_engine();
     let intent = Intent {
         source_chain: ChainKey::Moonbeam,
         destination_chain: ChainKey::Hydration,
@@ -330,7 +350,7 @@ fn quotes_multihop_transfer_from_moonbeam_to_hydration() {
 
 #[test]
 fn quotes_multihop_swap_from_moonbeam_to_hydration_with_hub_settlement() {
-    let engine = RouteEngine::default();
+    let engine = mainnet_engine();
     let intent = Intent {
         source_chain: ChainKey::Moonbeam,
         destination_chain: ChainKey::Hydration,
@@ -376,41 +396,68 @@ fn quotes_multihop_swap_from_moonbeam_to_hydration_with_hub_settlement() {
 }
 
 #[test]
-fn quotes_hydration_swap_on_testnet_without_adapter_deployments() {
-    let engine = RouteEngine::new(
-        RouteRegistry::default(),
-        EngineSettings {
-            platform_fee_bps: 10,
-            deployment_profile: DeploymentProfile::Testnet,
-        },
-    );
+fn quotes_pas_transfer_on_testnet_people_route() {
+    let engine = testnet_engine();
     let intent = Intent {
         source_chain: ChainKey::PolkadotHub,
-        destination_chain: ChainKey::Hydration,
-        action: IntentAction::Swap(SwapIntent {
-            asset_in: AssetKey::Dot,
-            asset_out: AssetKey::Usdt,
-            amount_in: AssetKey::Dot.units(10),
-            min_amount_out: AssetKey::Usdt.units(49),
-            settlement_chain: ChainKey::Hydration,
-            recipient: "5FswapRecipient".to_owned(),
+        destination_chain: ChainKey::People,
+        action: IntentAction::Transfer(TransferIntent {
+            asset: AssetKey::Pas,
+            amount: AssetKey::Pas.units(10),
+            recipient: "5FpeopleRecipient".to_owned(),
         }),
         refund_address: REFUND_ADDRESS.to_owned(),
         deadline: 1_773_185_200,
     };
 
-    let quote = engine.quote(intent).expect("testnet swap quote should build");
+    let quote = engine.quote(intent).expect("testnet transfer quote should build");
     assert_eq!(quote.deployment_profile, DeploymentProfile::Testnet);
-    let outer_transfer = first_transfer_instruction(&quote.execution_plan.steps[4]);
-    assert!(matches!(
-        outer_transfer.remote_instructions()[1],
-        XcmInstruction::ExchangeAsset { .. }
-    ));
+    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::People]);
+    assert_eq!(quote.submission.asset, AssetKey::Pas);
+    match &quote.execution_plan.steps[4] {
+        PlanStep::SendXcm { instructions, .. } => {
+            assert!(matches!(
+                instructions[0],
+                XcmInstruction::WithdrawAsset {
+                    asset: AssetKey::Pas,
+                    ..
+                }
+            ));
+            assert!(matches!(
+                instructions[1],
+                XcmInstruction::PayFees {
+                    asset: AssetKey::Pas,
+                    amount: 100_000_000,
+                }
+            ));
+            match &instructions[2] {
+                XcmInstruction::InitiateTransfer {
+                    asset,
+                    amount,
+                    destination,
+                    remote_fee_asset,
+                    remote_fee_amount,
+                    preserve_origin,
+                    remote_instructions,
+                } => {
+                    assert_eq!(*asset, AssetKey::Pas);
+                    assert_eq!(*amount, AssetKey::Pas.units(10));
+                    assert_eq!(*destination, ChainKey::People);
+                    assert_eq!(*remote_fee_asset, AssetKey::Pas);
+                    assert_eq!(*remote_fee_amount, 100_000_000);
+                    assert!(!preserve_origin);
+                    assert!(matches!(remote_instructions[0], XcmInstruction::DepositAsset { .. }));
+                }
+                other => panic!("unexpected instruction: {other:?}"),
+            }
+        }
+        other => panic!("unexpected plan step: {other:?}"),
+    }
 }
 
 #[test]
 fn quotes_execute_runtime_call_on_hydration() {
-    let engine = RouteEngine::default();
+    let engine = mainnet_engine();
     let intent = Intent {
         source_chain: ChainKey::PolkadotHub,
         destination_chain: ChainKey::Hydration,
@@ -430,7 +477,7 @@ fn quotes_execute_runtime_call_on_hydration() {
 
     let quote = engine.quote(intent).expect("execute quote should build");
 
-    assert_eq!(quote.deployment_profile, DeploymentProfile::Testnet);
+    assert_eq!(quote.deployment_profile, DeploymentProfile::Mainnet);
     assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Hydration]);
     assert_eq!(quote.segments.len(), 1);
     assert_eq!(quote.submission.action, SubmissionAction::Execute);
@@ -474,7 +521,7 @@ fn quotes_execute_runtime_call_on_hydration() {
 
 #[test]
 fn quotes_execute_runtime_call_on_moonbeam() {
-    let engine = RouteEngine::default();
+    let engine = mainnet_engine();
     let intent = Intent {
         source_chain: ChainKey::PolkadotHub,
         destination_chain: ChainKey::Moonbeam,
@@ -530,7 +577,7 @@ fn quotes_execute_runtime_call_on_moonbeam() {
 
 #[test]
 fn quotes_multihop_execute_runtime_call_on_bifrost() {
-    let engine = RouteEngine::default();
+    let engine = mainnet_engine();
     let intent = Intent {
         source_chain: ChainKey::Moonbeam,
         destination_chain: ChainKey::Bifrost,
@@ -593,7 +640,7 @@ fn quotes_multihop_execute_runtime_call_on_bifrost() {
 
 #[test]
 fn quotes_execute_evm_contract_call_on_moonbeam() {
-    let engine = RouteEngine::default();
+    let engine = mainnet_engine();
     let intent = Intent {
         source_chain: ChainKey::PolkadotHub,
         destination_chain: ChainKey::Moonbeam,
@@ -627,7 +674,7 @@ fn quotes_execute_evm_contract_call_on_moonbeam() {
     assert_eq!(outer_transfer.amount(), 110_000_000);
     match &outer_transfer.remote_instructions()[1] {
         XcmInstruction::Transact { call_data, .. } => {
-            assert!(call_data.starts_with("0x260001"));
+            assert!(call_data.starts_with("0x6d0001"));
             assert!(call_data.contains("1111111111111111111111111111111111111111"));
             assert!(call_data.ends_with("10deadbeef00"));
         }
@@ -637,7 +684,7 @@ fn quotes_execute_evm_contract_call_on_moonbeam() {
 
 #[test]
 fn quotes_multihop_execute_evm_contract_call_on_moonbeam() {
-    let engine = RouteEngine::default();
+    let engine = mainnet_engine();
     let intent = Intent {
         source_chain: ChainKey::Hydration,
         destination_chain: ChainKey::Moonbeam,
@@ -672,7 +719,7 @@ fn quotes_multihop_execute_evm_contract_call_on_moonbeam() {
     assert_eq!(nested_transfer.destination(), ChainKey::Moonbeam);
     match &nested_transfer.remote_instructions()[1] {
         XcmInstruction::Transact { call_data, .. } => {
-            assert!(call_data.starts_with("0x260001"));
+            assert!(call_data.starts_with("0x6d0001"));
             assert!(call_data.contains("1111111111111111111111111111111111111111"));
         }
         other => panic!("expected transact instruction, got {other:?}"),
@@ -681,7 +728,7 @@ fn quotes_multihop_execute_evm_contract_call_on_moonbeam() {
 
 #[test]
 fn quotes_execute_vtoken_order_on_bifrost() {
-    let engine = RouteEngine::default();
+    let engine = mainnet_engine();
     let intent = Intent {
         source_chain: ChainKey::PolkadotHub,
         destination_chain: ChainKey::Bifrost,
@@ -729,7 +776,7 @@ fn quotes_execute_vtoken_order_on_bifrost() {
 
 #[test]
 fn quotes_multihop_execute_vtoken_order_on_bifrost() {
-    let engine = RouteEngine::default();
+    let engine = mainnet_engine();
     let intent = Intent {
         source_chain: ChainKey::Moonbeam,
         destination_chain: ChainKey::Bifrost,
@@ -778,7 +825,7 @@ fn quotes_multihop_execute_vtoken_order_on_bifrost() {
 
 #[test]
 fn quotes_execute_vtoken_redeem_on_bifrost() {
-    let engine = RouteEngine::default();
+    let engine = mainnet_engine();
     let intent = Intent {
         source_chain: ChainKey::PolkadotHub,
         destination_chain: ChainKey::Bifrost,

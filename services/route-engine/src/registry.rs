@@ -1,4 +1,4 @@
-use crate::model::{AssetAmount, AssetKey, ChainKey, ExecutionType, RouteHop};
+use crate::model::{AssetAmount, AssetKey, ChainKey, DeploymentProfile, ExecutionType, RouteHop};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
@@ -38,6 +38,33 @@ pub struct RouteRegistry {
 
 impl Default for RouteRegistry {
     fn default() -> Self {
+        Self::for_profile(DeploymentProfile::Mainnet)
+    }
+}
+
+impl RouteRegistry {
+    pub fn for_profile(profile: DeploymentProfile) -> Self {
+        match profile {
+            DeploymentProfile::Testnet => Self::testnet(),
+            DeploymentProfile::Mainnet => Self::mainnet(),
+        }
+    }
+
+    fn testnet() -> Self {
+        Self {
+            transfer_edges: vec![TransferEdge {
+                source: ChainKey::PolkadotHub,
+                destination: ChainKey::People,
+                asset: AssetKey::Pas,
+                transport_fee: AssetAmount::new(AssetKey::Pas, 100_000_000),
+                buy_execution_fee: AssetAmount::new(AssetKey::Pas, 100_000_000),
+            }],
+            swap_routes: vec![],
+            execute_capabilities: vec![],
+        }
+    }
+
+    fn mainnet() -> Self {
         Self {
             transfer_edges: vec![
                 TransferEdge {
@@ -156,9 +183,7 @@ impl Default for RouteRegistry {
             ],
         }
     }
-}
 
-impl RouteRegistry {
     pub fn best_transfer_path(
         &self,
         source: ChainKey,

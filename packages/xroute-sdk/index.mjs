@@ -47,7 +47,13 @@ export function createXRouteClient({
   }
 
   async function quoteIntent(intentInput) {
-    const intent = intentInput.quoteId ? intentInput : createIntent(intentInput);
+    const intent = intentInput.quoteId
+      ? intentInput
+      : createIntent({
+          ...intentInput,
+          deploymentProfile:
+            intentInput.deploymentProfile ?? quoteProvider.deploymentProfile,
+        });
     const quote = normalizeQuote(await quoteProvider.quote(intent));
 
     if (quote.quoteId !== intent.quoteId) {
@@ -58,7 +64,12 @@ export function createXRouteClient({
   }
 
   async function submitIntent({ intent, quote, envelope, owner }) {
-    const normalizedIntent = intent.quoteId ? intent : createIntent(intent);
+    const normalizedIntent = intent.quoteId
+      ? intent
+      : createIntent({
+          ...intent,
+          deploymentProfile: intent.deploymentProfile ?? quoteProvider.deploymentProfile,
+        });
     const normalizedQuote = normalizeQuote(quote);
     const normalizedEnvelope = createDispatchEnvelope(
       envelope ?? xcmEnvelopeBuilder({ intent: normalizedIntent, quote: normalizedQuote }),
@@ -93,7 +104,13 @@ export function createXRouteClient({
   async function executeIntent({ intent, quote, envelope, owner }) {
     const quoted = quote
       ? {
-          intent: intent.quoteId ? intent : createIntent(intent),
+          intent: intent.quoteId
+            ? intent
+            : createIntent({
+                ...intent,
+                deploymentProfile:
+                  intent.deploymentProfile ?? quoteProvider.deploymentProfile,
+              }),
           quote: normalizeQuote(quote),
         }
       : await quoteIntent(intent);
@@ -195,8 +212,15 @@ export function createRouteEngineQuoteProvider({
   const normalizedDeploymentProfile = normalizeDeploymentProfile(deploymentProfile);
 
   return {
+    deploymentProfile: normalizedDeploymentProfile,
     async quote(intentInput) {
-      const intent = intentInput.quoteId ? intentInput : createIntent(intentInput);
+      const intent = intentInput.quoteId
+        ? intentInput
+        : createIntent({
+            ...intentInput,
+            deploymentProfile:
+              intentInput.deploymentProfile ?? normalizedDeploymentProfile,
+          });
       const args = commandArgs.concat(
         buildRouteEngineQuoteArgs(intent, normalizedDeploymentProfile),
       );
@@ -234,9 +258,19 @@ export function createHttpQuoteProvider({
     throw new Error("fetchImpl is required");
   }
 
+  const normalizedDeploymentProfile =
+    headers["x-xroute-deployment-profile"] ?? headers["X-XRoute-Deployment-Profile"] ?? null;
+
   return {
+    deploymentProfile: normalizedDeploymentProfile ?? undefined,
     async quote(intentInput) {
-      const intent = intentInput.quoteId ? intentInput : createIntent(intentInput);
+      const intent = intentInput.quoteId
+        ? intentInput
+        : createIntent({
+            ...intentInput,
+            deploymentProfile:
+              intentInput.deploymentProfile ?? normalizedDeploymentProfile ?? undefined,
+          });
       const response = await fetchImpl(normalizedEndpoint, {
         method: "POST",
         headers: {
@@ -301,7 +335,13 @@ export function createHttpExecutorRelayerClient({
         throw new Error("intent is required");
       }
 
-      const normalizedIntent = intent.quoteId ? intent : createIntent(intent);
+      const normalizedProfile = quote?.deploymentProfile ?? undefined;
+      const normalizedIntent = intent.quoteId
+        ? intent
+        : createIntent({
+            ...intent,
+            deploymentProfile: intent.deploymentProfile ?? normalizedProfile,
+          });
       const normalizedRequest =
         request ??
         buildDispatchRequest(

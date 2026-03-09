@@ -10,7 +10,7 @@ import {
 } from "../index.mjs";
 
 test("deployment profiles stay limited to testnet and mainnet", () => {
-  assert.equal(DEFAULT_DEPLOYMENT_PROFILE, DEPLOYMENT_PROFILES.TESTNET);
+  assert.equal(DEFAULT_DEPLOYMENT_PROFILE, DEPLOYMENT_PROFILES.MAINNET);
   assert.equal(normalizeDeploymentProfile("testnet"), DEPLOYMENT_PROFILES.TESTNET);
   assert.equal(normalizeDeploymentProfile("mainnet"), DEPLOYMENT_PROFILES.MAINNET);
   assert.throws(() => normalizeDeploymentProfile("staging"));

@@ -9,6 +9,7 @@
     "deploy:testnet": "forge build --root contracts/polkadot-hub-router && XROUTE_DEPLOYMENT_PROFILE=testnet node scripts/deploy-stack.mjs",
     "deploy:mainnet": "forge build --root contracts/polkadot-hub-router && XROUTE_DEPLOYMENT_PROFILE=mainnet node scripts/deploy-stack.mjs",
     "serve:quote": "cargo run -q -p quote-service --",
+    "smoke:testnet": "node scripts/run-testnet-e2e.mjs",
     "serve:executor-relayer": "cargo run -q -p executor-relayer --",
     "test": "npm run test:rust && npm run test:solidity && npm run test:node && npm run test:package",
     "test:node": "node --test packages/*/test/*.test.mjs services/*/test/*.test.mjs",

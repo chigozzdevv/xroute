@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::fs::{create_dir_all, read_to_string, rename, write};
 use std::path::{Path, PathBuf};
 use tokio::sync::Mutex;
-use xroute_service_shared::DispatchRequest;
+use xroute_service_shared::{DispatchRequest, WireIntent};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -29,6 +29,7 @@ pub enum JobStatus {
 pub enum JobPayload {
     Dispatch {
         intent_id: String,
+        wire_intent: WireIntent,
         request: DispatchRequest,
     },
     Settle {

@@ -22,6 +22,10 @@ import {
   assertTransferRoute,
   getChain,
 } from "../xroute-chain-registry/index.mjs";
+import {
+  DEFAULT_DEPLOYMENT_PROFILE,
+  normalizeDeploymentProfile,
+} from "../xroute-precompile-interfaces/index.mjs";
 
 export function createTransferIntent(input) {
   return createIntent({
@@ -54,8 +58,11 @@ export function createExecuteIntent(input) {
 }
 
 export function createIntent(input) {
-  const sourceChain = getChain(input.sourceChain).key;
-  const destinationChain = getChain(input.destinationChain).key;
+  const deploymentProfile = normalizeDeploymentProfile(
+    input.deploymentProfile ?? DEFAULT_DEPLOYMENT_PROFILE,
+  );
+  const sourceChain = getChain(input.sourceChain, deploymentProfile).key;
+  const destinationChain = getChain(input.destinationChain, deploymentProfile).key;
   const refundAddress = assertAddress("refundAddress", input.refundAddress);
   const deadline = assertInteger("deadline", input.deadline);
   const actionType = assertIncluded(
@@ -64,8 +71,15 @@ export function createIntent(input) {
     Object.values(ACTION_TYPES),
   );
 
-  const action = normalizeAction(actionType, sourceChain, destinationChain, input.action.params);
+  const action = normalizeAction(
+    actionType,
+    sourceChain,
+    destinationChain,
+    input.action.params,
+    deploymentProfile,
+  );
   const canonical = {
+    deploymentProfile,
     sourceChain,
     destinationChain,
     refundAddress,
@@ -75,6 +89,7 @@ export function createIntent(input) {
 
   return Object.freeze({
     quoteId: deterministicId(canonical),
+    deploymentProfile,
     sourceChain,
     destinationChain,
     refundAddress,
@@ -90,6 +105,7 @@ export function validateIntent(intent) {
 export function toPlainIntent(intent) {
   return toPlainObject({
     quoteId: intent.quoteId,
+    deploymentProfile: intent.deploymentProfile,
     sourceChain: intent.sourceChain,
     destinationChain: intent.destinationChain,
     refundAddress: intent.refundAddress,
@@ -98,22 +114,22 @@ export function toPlainIntent(intent) {
   });
 }
 
-function normalizeAction(actionType, sourceChain, destinationChain, params) {
+function normalizeAction(actionType, sourceChain, destinationChain, params, deploymentProfile) {
   switch (actionType) {
     case ACTION_TYPES.TRANSFER:
-      return normalizeTransfer(sourceChain, destinationChain, params);
+      return normalizeTransfer(sourceChain, destinationChain, params, deploymentProfile);
     case ACTION_TYPES.SWAP:
-      return normalizeSwap(sourceChain, destinationChain, params);
+      return normalizeSwap(sourceChain, destinationChain, params, deploymentProfile);
     case ACTION_TYPES.EXECUTE:
-      return normalizeExecute(sourceChain, destinationChain, params);
+      return normalizeExecute(sourceChain, destinationChain, params, deploymentProfile);
     default:
       throw new Error(`unsupported action type: ${actionType}`);
   }
 }
 
-function normalizeTransfer(sourceChain, destinationChain, params) {
+function normalizeTransfer(sourceChain, destinationChain, params, deploymentProfile) {
   const asset = assertNonEmptyString("action.params.asset", params.asset).toUpperCase();
-  assertTransferRoute(sourceChain, destinationChain, asset);
+  assertTransferRoute(sourceChain, destinationChain, asset, deploymentProfile);
 
   return Object.freeze({
     type: ACTION_TYPES.TRANSFER,
@@ -125,13 +141,20 @@ function normalizeTransfer(sourceChain, destinationChain, params) {
   });
 }
 
-function normalizeSwap(sourceChain, destinationChain, params) {
+function normalizeSwap(sourceChain, destinationChain, params, deploymentProfile) {
   const assetIn = assertNonEmptyString("action.params.assetIn", params.assetIn).toUpperCase();
   const assetOut = assertNonEmptyString("action.params.assetOut", params.assetOut).toUpperCase();
   const settlementChain = params.settlementChain
-    ? getChain(params.settlementChain).key
+    ? getChain(params.settlementChain, deploymentProfile).key
     : destinationChain;
-  assertSwapRoute(sourceChain, destinationChain, assetIn, assetOut, settlementChain);
+  assertSwapRoute(
+    sourceChain,
+    destinationChain,
+    assetIn,
+    assetOut,
+    settlementChain,
+    deploymentProfile,
+  );
 
   const minAmountOut = assertPositiveBigInt(
     "action.params.minAmountOut",
@@ -151,7 +174,7 @@ function normalizeSwap(sourceChain, destinationChain, params) {
   });
 }
 
-function normalizeExecute(sourceChain, destinationChain, params) {
+function normalizeExecute(sourceChain, destinationChain, params, deploymentProfile) {
   const executionType = assertIncluded(
     "action.params.executionType",
     params.executionType,
@@ -160,23 +183,24 @@ function normalizeExecute(sourceChain, destinationChain, params) {
 
   switch (executionType) {
     case EXECUTION_TYPES.RUNTIME_CALL:
-      return normalizeRuntimeCall(sourceChain, destinationChain, params);
+      return normalizeRuntimeCall(sourceChain, destinationChain, params, deploymentProfile);
     case EXECUTION_TYPES.EVM_CONTRACT_CALL:
-      return normalizeEvmContractCall(sourceChain, destinationChain, params);
+      return normalizeEvmContractCall(sourceChain, destinationChain, params, deploymentProfile);
     case EXECUTION_TYPES.VTOKEN_ORDER:
-      return normalizeVtokenOrder(sourceChain, destinationChain, params);
+      return normalizeVtokenOrder(sourceChain, destinationChain, params, deploymentProfile);
     default:
       throw new Error(`unsupported execution type: ${executionType}`);
   }
 }
 
-function normalizeRuntimeCall(sourceChain, destinationChain, params) {
+function normalizeRuntimeCall(sourceChain, destinationChain, params, deploymentProfile) {
   const asset = assertNonEmptyString("action.params.asset", params.asset).toUpperCase();
   assertExecuteRoute(
     sourceChain,
     destinationChain,
     asset,
     EXECUTION_TYPES.RUNTIME_CALL,
+    deploymentProfile,
   );
 
   const originKind = params.originKind
@@ -212,13 +236,14 @@ function normalizeRuntimeCall(sourceChain, destinationChain, params) {
   });
 }
 
-function normalizeEvmContractCall(sourceChain, destinationChain, params) {
+function normalizeEvmContractCall(sourceChain, destinationChain, params, deploymentProfile) {
   const asset = assertNonEmptyString("action.params.asset", params.asset).toUpperCase();
   assertExecuteRoute(
     sourceChain,
     destinationChain,
     asset,
     EXECUTION_TYPES.EVM_CONTRACT_CALL,
+    deploymentProfile,
   );
 
   return Object.freeze({
@@ -251,7 +276,7 @@ function normalizeEvmContractCall(sourceChain, destinationChain, params) {
   });
 }
 
-function normalizeVtokenOrder(sourceChain, destinationChain, params) {
+function normalizeVtokenOrder(sourceChain, destinationChain, params, deploymentProfile) {
   const asset = assertNonEmptyString("action.params.asset", params.asset).toUpperCase();
   const operation = assertIncluded(
     "action.params.operation",
@@ -264,6 +289,7 @@ function normalizeVtokenOrder(sourceChain, destinationChain, params) {
     destinationChain,
     asset,
     EXECUTION_TYPES.VTOKEN_ORDER,
+    deploymentProfile,
   );
   const recipient = assertNonEmptyString("action.params.recipient", params.recipient);
 

@@ -28,10 +28,10 @@ fn run_quote(args: Vec<String>) -> Result<(), String> {
         .map(String::as_str)
         .map(parse_deployment_profile)
         .transpose()?
-        .unwrap_or(DeploymentProfile::Testnet);
+        .unwrap_or(DeploymentProfile::Mainnet);
     let intent = build_intent(&options)?;
     let quote = RouteEngine::new(
-        RouteRegistry::default(),
+        RouteRegistry::for_profile(deployment_profile),
         EngineSettings {
             platform_fee_bps: 10,
             deployment_profile,
@@ -116,6 +116,7 @@ fn required<'a>(options: &'a HashMap<String, String>, key: &str) -> Result<&'a s
 
 fn parse_chain(value: &str) -> Result<ChainKey, String> {
     match value {
+        "people" => Ok(ChainKey::People),
         "polkadot-hub" | "asset-hub" => Ok(ChainKey::PolkadotHub),
         "hydration" => Ok(ChainKey::Hydration),
         "moonbeam" => Ok(ChainKey::Moonbeam),
@@ -126,6 +127,7 @@ fn parse_chain(value: &str) -> Result<ChainKey, String> {
 
 fn parse_asset(value: &str) -> Result<AssetKey, String> {
     match value {
+        "PAS" => Ok(AssetKey::Pas),
         "DOT" => Ok(AssetKey::Dot),
         "USDT" => Ok(AssetKey::Usdt),
         "HDX" => Ok(AssetKey::Hdx),
@@ -439,6 +441,16 @@ fn plan_step_json(step: &PlanStep) -> String {
 
 fn xcm_instruction_json(instruction: &XcmInstruction) -> String {
     match instruction {
+        XcmInstruction::WithdrawAsset { asset, amount } => format!(
+            "{{\"type\":\"withdraw-asset\",\"asset\":{},\"amount\":{}}}",
+            json_string(asset.symbol()),
+            json_string(&amount.to_string()),
+        ),
+        XcmInstruction::PayFees { asset, amount } => format!(
+            "{{\"type\":\"pay-fees\",\"asset\":{},\"amount\":{}}}",
+            json_string(asset.symbol()),
+            json_string(&amount.to_string()),
+        ),
         XcmInstruction::TransferReserveAsset {
             asset,
             amount,
@@ -496,6 +508,28 @@ fn xcm_instruction_json(instruction: &XcmInstruction) -> String {
             "{{\"type\":\"initiate-teleport\",\"assetCount\":{},\"destination\":{},\"remoteInstructions\":[{}]}}",
             asset_count,
             json_string(destination.as_str()),
+            remote_instructions
+                .iter()
+                .map(xcm_instruction_json)
+                .collect::<Vec<_>>()
+                .join(","),
+        ),
+        XcmInstruction::InitiateTransfer {
+            asset,
+            amount,
+            destination,
+            remote_fee_asset,
+            remote_fee_amount,
+            preserve_origin,
+            remote_instructions,
+        } => format!(
+            "{{\"type\":\"initiate-transfer\",\"asset\":{},\"amount\":{},\"destination\":{},\"remoteFeeAsset\":{},\"remoteFeeAmount\":{},\"preserveOrigin\":{},\"remoteInstructions\":[{}]}}",
+            json_string(asset.symbol()),
+            json_string(&amount.to_string()),
+            json_string(destination.as_str()),
+            json_string(remote_fee_asset.symbol()),
+            json_string(&remote_fee_amount.to_string()),
+            if *preserve_origin { "true" } else { "false" },
             remote_instructions
                 .iter()
                 .map(xcm_instruction_json)

@@ -3,6 +3,7 @@ use std::fmt::{Display, Formatter};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ChainKey {
     PolkadotHub,
+    People,
     Hydration,
     Moonbeam,
     Bifrost,
@@ -12,6 +13,7 @@ impl ChainKey {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::PolkadotHub => "polkadot-hub",
+            Self::People => "people",
             Self::Hydration => "hydration",
             Self::Moonbeam => "moonbeam",
             Self::Bifrost => "bifrost",
@@ -48,6 +50,7 @@ impl Display for DeploymentProfile {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AssetKey {
+    Pas,
     Dot,
     Usdt,
     Hdx,
@@ -57,6 +60,7 @@ pub enum AssetKey {
 impl AssetKey {
     pub const fn symbol(self) -> &'static str {
         match self {
+            Self::Pas => "PAS",
             Self::Dot => "DOT",
             Self::Usdt => "USDT",
             Self::Hdx => "HDX",
@@ -66,6 +70,7 @@ impl AssetKey {
 
     pub const fn decimals(self) -> u8 {
         match self {
+            Self::Pas => 10,
             Self::Dot => 10,
             Self::Usdt => 6,
             Self::Hdx => 12,
@@ -75,6 +80,7 @@ impl AssetKey {
 
     pub const fn reserve_chain(self) -> ChainKey {
         match self {
+            Self::Pas => ChainKey::PolkadotHub,
             Self::Dot => ChainKey::PolkadotHub,
             Self::Usdt => ChainKey::PolkadotHub,
             Self::Hdx => ChainKey::Hydration,
@@ -505,6 +511,14 @@ pub enum FeeType {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum XcmInstruction {
+    WithdrawAsset {
+        asset: AssetKey,
+        amount: u128,
+    },
+    PayFees {
+        asset: AssetKey,
+        amount: u128,
+    },
     TransferReserveAsset {
         asset: AssetKey,
         amount: u128,
@@ -530,6 +544,15 @@ pub enum XcmInstruction {
     InitiateTeleport {
         asset_count: u32,
         destination: ChainKey,
+        remote_instructions: Vec<XcmInstruction>,
+    },
+    InitiateTransfer {
+        asset: AssetKey,
+        amount: u128,
+        destination: ChainKey,
+        remote_fee_asset: AssetKey,
+        remote_fee_amount: u128,
+        preserve_origin: bool,
         remote_instructions: Vec<XcmInstruction>,
     },
     InitiateReserveWithdraw {

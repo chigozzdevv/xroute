@@ -50,3 +50,10 @@ test("assertExecuteRoute accepts multihop execution into destination capabilitie
     "bifrost",
   ]);
 });
+
+test("findTransferPath exposes the paseo proof route", () => {
+  assert.deepEqual(findTransferPath("polkadot-hub", "people", "PAS", "testnet"), [
+    "polkadot-hub",
+    "people",
+  ]);
+});

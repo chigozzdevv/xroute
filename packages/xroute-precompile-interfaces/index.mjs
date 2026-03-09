@@ -7,7 +7,7 @@ export const DEPLOYMENT_PROFILES = Object.freeze({
   MAINNET: "mainnet",
 });
 
-export const DEFAULT_DEPLOYMENT_PROFILE = DEPLOYMENT_PROFILES.TESTNET;
+export const DEFAULT_DEPLOYMENT_PROFILE = DEPLOYMENT_PROFILES.MAINNET;
 
 export const PRECOMPILE_METADATA = Object.freeze({
   xcm: Object.freeze({

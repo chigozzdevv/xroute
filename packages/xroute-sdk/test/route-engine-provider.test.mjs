@@ -39,7 +39,7 @@ test("route engine quote provider bridges the rust planner", async () => {
   const quote = normalizeQuote(await provider.quote(intent));
 
   assert.equal(quote.quoteId, intent.quoteId);
-  assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.TESTNET);
+  assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.MAINNET);
   assert.deepEqual(quote.route, ["polkadot-hub", "hydration"]);
   assert.equal(quote.segments.length, 1);
   assert.equal(quote.submission.action, "transfer");
@@ -168,7 +168,7 @@ test("route engine quote provider builds an execute/evm-contract-call quote", as
   assert.equal(quote.submission.action, "execute");
   assert.equal(quote.submission.amount, 110000000n);
   assert.equal(remoteInstructions[1].type, "transact");
-  assert.match(remoteInstructions[1].callData, /^0x260001/);
+  assert.match(remoteInstructions[1].callData, /^0x6d0001/);
   assert.match(remoteInstructions[1].callData, /1111111111111111111111111111111111111111/);
 });
 
@@ -439,7 +439,7 @@ test("http quote provider forwards normalized intents and returns quotes", async
         ok: true,
         async json() {
           return {
-            deploymentProfile: "testnet",
+            deploymentProfile: "mainnet",
             route: ["polkadot-hub", "hydration"],
             segments: [
               {

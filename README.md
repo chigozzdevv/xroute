@@ -8,13 +8,19 @@ It gives developers one intent surface for three actions:
 - `swap`
 - `execute`
 
-The router lives on `polkadot-hub`, but the route engine composes execution across a real Hub-centered graph:
+The router lives on `polkadot-hub`, but the route graph is profile-aware:
 
-- `polkadot-hub <-> hydration`
-- `polkadot-hub <-> moonbeam`
-- `polkadot-hub <-> bifrost`
+- `testnet`
+  - public Paseo proof route
+  - `polkadot-hub -> people`
+  - asset: `PAS`
+- `mainnet`
+  - product graph
+  - `polkadot-hub <-> hydration`
+  - `polkadot-hub <-> moonbeam`
+  - `polkadot-hub <-> bifrost`
 
-That means XRoute is not a generic router for arbitrary parachains. It is a production-shaped router for the routes, assets, and execution surfaces it explicitly models.
+That means XRoute is not a generic router for arbitrary parachains. It is a production-shaped router for the routes, assets, and execution surfaces it explicitly models per network profile.
 
 ## Why XRoute
 
@@ -64,12 +70,23 @@ XRoute splits that into clean layers:
 
 ### Assets
 
-- `DOT`
-- `USDT`
-- `HDX`
-- `VDOT`
+- `testnet`
+  - `PAS`
+- `mainnet`
+  - `DOT`
+  - `USDT`
+  - `HDX`
+  - `VDOT`
 
 ### Current Capability Map
+
+`testnet`
+
+- `transfer`
+  - `polkadot-hub -> people`
+  - asset: `PAS`
+
+`mainnet`
 
 - `transfer`
   - any supported DOT route across the Hub star
@@ -97,7 +114,12 @@ XRoute splits that into clean layers:
 
 ## Real Multihop Examples
 
-These are real routes the planner now builds:
+`testnet`
+
+- `polkadot-hub -> people`
+  - public Paseo proof route for live XCM transfer validation
+
+`mainnet`
 
 - `moonbeam -> polkadot-hub -> hydration`
   - DOT transfer
@@ -124,6 +146,7 @@ The app creates an intent:
 
 ```ts
 const { intent, quote } = await client.quote({
+  deploymentProfile: "mainnet",
   sourceChain: "moonbeam",
   destinationChain: "hydration",
   refundAddress: "0x1111111111111111111111111111111111111111",
@@ -183,7 +206,8 @@ The Solidity router:
 
 - escrows the source asset
 - verifies the committed dispatch payload hash
-- dispatches through the Hub XCM precompile
+- dispatches through the Hub XCM precompile when the router can be the XCM origin
+- settles externally executed source-chain transfers from escrow when the public testnet proof route uses an operator EOA
 - persists final outcome state onchain
 
 Onchain statuses:
@@ -292,6 +316,7 @@ npm run test:solidity
 npm run test:node
 npm run test:package
 npm run build
+npm run smoke:testnet
 npm run serve:quote
 npm run serve:executor-relayer
 ```
@@ -324,6 +349,14 @@ Profiles:
 - `testnet`
 - `mainnet`
 
+Profile meaning:
+
+- `testnet`
+  - public Paseo validation profile
+  - currently the live proof route is `polkadot-hub -> people` with `PAS`
+- `mainnet`
+  - broader product graph for `hydration`, `moonbeam`, and `bifrost`
+
 Official Hub RPC endpoints:
 
 - `testnet`: [https://services.polkadothub-rpc.com/testnet](https://services.polkadothub-rpc.com/testnet)
@@ -341,7 +374,7 @@ node scripts/deploy-stack.mjs
 
 Current live testnet deployment:
 
-- router: `0xb1ff3980f0193a98b5a4536ac3f34acfc0d3b322`
+- router: `0xdf5e9efd13db6ea5e37d0ee8129aeb31c3b4aa78`
 - deployer / relayer: `0x2A3F3E0d1F847a43ebAF87Bb4741084CbDA0f549`
 - chain id: `420420417`
 - artifact: [contracts/polkadot-hub-router/deployments/testnet/polkadot-hub.json](/Users/chigozzdev/Desktop/xroute/contracts/polkadot-hub-router/deployments/testnet/polkadot-hub.json)
@@ -375,6 +408,21 @@ Artifacts include:
 
 The repo does not ship fake `testnet` or `mainnet` artifacts. Those files should only appear after a real deployment.
 
+Live public-testnet smoke run:
+
+```bash
+npm run smoke:testnet
+```
+
+The public Paseo proof route uses the relayer as the live XCM origin. The relayer executes the `polkadot-hub -> people` PAS transfer from its funded EOA, then the router settles the intent onchain and reimburses the relayer from escrow through `finalizeExternalSuccess(...)`.
+
+Optional variables for the smoke run:
+
+- `XROUTE_PEOPLE_RECIPIENT`
+  - SS58 beneficiary on People Chain
+- `XROUTE_TESTNET_TRANSFER_AMOUNT`
+  - transfer amount in plancks
+
 ## SDK Usage
 
 ### Quote + Submit + Relay
@@ -392,6 +440,9 @@ const statusProvider = new FileBackedStatusIndexer({
 const client = createXRouteClient({
   quoteProvider: createHttpQuoteProvider({
     endpoint: "https://quotes.example.com/quote",
+    headers: {
+      "x-xroute-deployment-profile": "mainnet",
+    },
   }),
   routerAdapter: myWalletRouterAdapter,
   statusProvider,
@@ -410,12 +461,13 @@ const relayer = createHttpExecutorRelayerClient({
 });
 ```
 
-`createHttpExecutorRelayerClient().dispatch(...)` builds the committed dispatch request in JS from the normalized `intent + quote` pair, then submits that request to the Rust relayer API.
+`createHttpExecutorRelayerClient().dispatch(...)` builds the committed dispatch request in JS from the normalized `intent + quote` pair, then submits that request to the Rust relayer API. The relayer either forwards that committed router dispatch directly or, on the public Paseo proof route, executes the source-chain XCM from its operator EOA before settling escrow onchain.
 
 ### Example: Multihop Swap
 
 ```ts
 const { intent, quote } = await client.quote({
+  deploymentProfile: "mainnet",
   sourceChain: "moonbeam",
   destinationChain: "hydration",
   refundAddress: "0x1111111111111111111111111111111111111111",
@@ -446,10 +498,43 @@ await relayer.dispatch({
 });
 ```
 
+### Example: Public Testnet Transfer
+
+```ts
+const { intent, quote } = await client.quote({
+  deploymentProfile: "testnet",
+  sourceChain: "polkadot-hub",
+  destinationChain: "people",
+  refundAddress: "0x1111111111111111111111111111111111111111",
+  deadline: Math.floor(Date.now() / 1000) + 1800,
+  action: {
+    type: "transfer",
+    params: {
+      asset: "PAS",
+      amount: "10000000000",
+      recipient: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+    },
+  },
+});
+
+const submitted = await client.submit({
+  intent,
+  quote,
+  owner: "0x1111111111111111111111111111111111111111",
+});
+
+await relayer.dispatch({
+  intentId: submitted.intentId,
+  intent,
+  quote,
+});
+```
+
 ### Example: Moonbeam EVM Execution
 
 ```ts
 const { intent, quote } = await client.quote({
+  deploymentProfile: "mainnet",
   sourceChain: "hydration",
   destinationChain: "moonbeam",
   refundAddress: "0x1111111111111111111111111111111111111111",
@@ -477,6 +562,7 @@ const { intent, quote } = await client.quote({
 
 ```ts
 const mintIntent = await client.quote({
+  deploymentProfile: "mainnet",
   sourceChain: "polkadot-hub",
   destinationChain: "bifrost",
   refundAddress: "0x1111111111111111111111111111111111111111",
@@ -501,6 +587,7 @@ const mintIntent = await client.quote({
 });
 
 const redeemIntent = await client.quote({
+  deploymentProfile: "mainnet",
   sourceChain: "polkadot-hub",
   destinationChain: "bifrost",
   refundAddress: "0x1111111111111111111111111111111111111111",

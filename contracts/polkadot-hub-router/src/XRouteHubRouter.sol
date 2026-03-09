@@ -223,18 +223,20 @@ contract XRouteHubRouter {
 
         intent.status = IntentStatus.Dispatched;
 
-        if (intent.platformFee != 0) {
-            _transferAsset(intent.asset, treasury, intent.platformFee);
-        }
-
         if (request.mode == DispatchMode.Execute) {
             IXcm.Weight memory weight = xcm.weighMessage(request.message);
             xcm.execute(request.message, weight);
+            if (intent.platformFee != 0) {
+                _transferAsset(intent.asset, treasury, intent.platformFee);
+            }
             emit IntentDispatched(intentId, request.mode, weight.refTime, weight.proofSize);
             return;
         }
 
         xcm.send(request.destination, request.message);
+        if (intent.platformFee != 0) {
+            _transferAsset(intent.asset, treasury, intent.platformFee);
+        }
         emit IntentDispatched(intentId, request.mode, 0, 0);
     }
 
@@ -255,6 +257,34 @@ contract XRouteHubRouter {
         intent.failureReasonHash = bytes32(0);
         intent.resultAmount = resultAmount;
         intent.refundAmount = 0;
+
+        emit IntentSettled(intentId, outcomeReference, resultAssetId, resultAmount);
+    }
+
+    function finalizeExternalSuccess(
+        bytes32 intentId,
+        bytes32 outcomeReference,
+        bytes32 resultAssetId,
+        uint128 resultAmount
+    ) external onlyExecutor nonReentrant {
+        IntentRecord storage intent = intents[intentId];
+        if (intent.owner == address(0)) revert IntentNotFound();
+        if (intent.status != IntentStatus.Submitted) revert InvalidIntentStatus();
+        if (outcomeReference == bytes32(0)) revert InvalidOutcomeReference();
+        if (resultAmount < intent.minOutputAmount) revert InsufficientResultAmount();
+
+        intent.status = IntentStatus.Settled;
+        intent.outcomeReference = outcomeReference;
+        intent.resultAssetId = resultAssetId;
+        intent.failureReasonHash = bytes32(0);
+        intent.resultAmount = resultAmount;
+        intent.refundAmount = 0;
+
+        // Reimburse the operator after it proves the source-chain dispatch.
+        _transferAsset(intent.asset, executor, intent.amount + intent.xcmFee + intent.destinationFee);
+        if (intent.platformFee != 0) {
+            _transferAsset(intent.asset, treasury, intent.platformFee);
+        }
 
         emit IntentSettled(intentId, outcomeReference, resultAssetId, resultAmount);
     }

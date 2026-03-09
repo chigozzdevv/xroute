@@ -132,7 +132,7 @@ async fn route_request(
                 .map_err(HttpError::bad_request)?;
 
             let quote = RouteEngine::new(
-                RouteRegistry::default(),
+                RouteRegistry::for_profile(state.deployment_profile),
                 EngineSettings {
                     platform_fee_bps: 10,
                     deployment_profile: state.deployment_profile,

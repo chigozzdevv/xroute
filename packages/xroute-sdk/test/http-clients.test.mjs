@@ -20,7 +20,7 @@ test("createHttpQuoteProvider returns the nested quote payload", async () => {
             },
             quote: {
               quoteId: "ignored",
-              deploymentProfile: "testnet",
+              deploymentProfile: "mainnet",
               route: ["polkadot-hub", "hydration"],
               segments: [],
               fees: {
@@ -141,7 +141,7 @@ test("createHttpExecutorRelayerClient builds and sends dispatch requests", async
   };
   const quote = {
     quoteId: "0xfeedface",
-    deploymentProfile: "testnet",
+    deploymentProfile: "mainnet",
     route: ["polkadot-hub", "hydration"],
     segments: [
       {

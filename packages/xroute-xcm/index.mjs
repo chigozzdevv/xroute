@@ -284,6 +284,56 @@ function assertQuoteSegmentsMatchExecutionPlan(quote) {
     return;
   }
 
+  if (topInstruction.type === "withdraw-asset") {
+    if (executionSegment.hops.length !== 1) {
+      throw new Error("withdraw-asset currently supports exactly one execution hop");
+    }
+
+    const [hop] = executionSegment.hops;
+    const payFees = sendStep.instructions?.[1];
+    const initiateTransfer = sendStep.instructions?.[2];
+
+    if (!payFees || payFees.type !== "pay-fees") {
+      throw new Error("withdraw-asset must be followed by a pay-fees instruction");
+    }
+    if (!initiateTransfer || initiateTransfer.type !== "initiate-transfer") {
+      throw new Error(
+        "withdraw-asset must be followed by an initiate-transfer instruction",
+      );
+    }
+    if (initiateTransfer.destination !== hop.destination) {
+      throw new Error(
+        "initiate-transfer destination must match the execution segment destination",
+      );
+    }
+    if (payFees.asset !== hop.transportFee.asset) {
+      throw new Error("pay-fees asset must match the execution segment transport fee asset");
+    }
+    if (
+      toBigInt(payFees.amount, "pay-fees.amount") !==
+      toBigInt(hop.transportFee.amount, "segments[0].hops[0].transportFee.amount")
+    ) {
+      throw new Error("pay-fees amount must match the execution segment transport fee");
+    }
+    if (initiateTransfer.remoteFeeAsset !== hop.buyExecutionFee.asset) {
+      throw new Error(
+        "initiate-transfer remote fee asset must match the execution segment fee asset",
+      );
+    }
+    if (
+      toBigInt(initiateTransfer.remoteFeeAmount, "initiate-transfer.remoteFeeAmount") !==
+      toBigInt(
+        hop.buyExecutionFee.amount,
+        "segments[0].hops[0].buyExecutionFee.amount",
+      )
+    ) {
+      throw new Error(
+        "initiate-transfer remote fee amount must match the execution segment fee",
+      );
+    }
+    return;
+  }
+
   if (topInstruction.type === "initiate-teleport") {
     if (executionSegment.hops.length !== 1) {
       throw new Error("initiate-teleport currently supports exactly one execution hop");
@@ -349,19 +399,41 @@ function buildInstruction({
   deploymentProfile,
 }) {
   switch (instruction.type) {
+    case "withdraw-asset":
+      return Enum("WithdrawAsset", [
+        buildAsset({
+          chainKey: currentChain,
+          assetKey: instruction.asset,
+          deploymentProfile,
+          amount: toBigInt(
+            instruction.amount,
+            "executionPlan.instructions.withdraw-asset.amount",
+          ),
+        }),
+      ]);
+    case "pay-fees":
+      return Enum("PayFees", {
+        asset: buildAsset({
+          chainKey: currentChain,
+          assetKey: instruction.asset,
+          deploymentProfile,
+          amount: toBigInt(instruction.amount, "pay-fees.amount"),
+        }),
+      });
     case "transfer-reserve-asset":
       return Enum("TransferReserveAsset", {
         assets: [
           buildAsset({
             chainKey: currentChain,
             assetKey: instruction.asset,
+            deploymentProfile,
             amount: toBigInt(
               instruction.amount,
               "executionPlan.instructions.transfer-reserve-asset.amount",
             ),
           }),
         ],
-        dest: buildParachainLocation(instruction.destination),
+        dest: buildParachainLocation(instruction.destination, deploymentProfile),
         xcm: instruction.remoteInstructions.map((nestedInstruction) =>
           buildInstruction({
             instruction: nestedInstruction,
@@ -375,6 +447,7 @@ function buildInstruction({
         fees: buildAsset({
           chainKey: currentChain,
           assetKey: instruction.asset,
+          deploymentProfile,
           amount: toBigInt(instruction.amount, "buy-execution.amount"),
         }),
         weight_limit: Enum("Unlimited", undefined),
@@ -385,6 +458,7 @@ function buildInstruction({
           buildAsset({
             chainKey: currentChain,
             assetKey: instruction.assetIn,
+            deploymentProfile,
             amount: toBigInt(
               instruction.amountIn,
               "executionPlan.instructions.exchange-asset.amountIn",
@@ -395,6 +469,7 @@ function buildInstruction({
           buildAsset({
             chainKey: currentChain,
             assetKey: instruction.assetOut,
+            deploymentProfile,
             amount: toBigInt(
               instruction.minAmountOut,
               "executionPlan.instructions.exchange-asset.minAmountOut",
@@ -406,7 +481,7 @@ function buildInstruction({
     case "deposit-reserve-asset":
       return Enum("DepositReserveAsset", {
         assets: buildCountedAssetFilter(instruction.assetCount),
-        dest: buildParachainLocation(instruction.destination),
+        dest: buildParachainLocation(instruction.destination, deploymentProfile),
         xcm: instruction.remoteInstructions.map((nestedInstruction) =>
           buildInstruction({
             instruction: nestedInstruction,
@@ -418,8 +493,37 @@ function buildInstruction({
     case "initiate-teleport":
       return Enum("InitiateTeleport", {
         assets: buildCountedAssetFilter(instruction.assetCount),
-        dest: buildParachainLocation(instruction.destination),
+        dest: buildParachainLocation(instruction.destination, deploymentProfile),
         xcm: instruction.remoteInstructions.map((nestedInstruction) =>
+          buildInstruction({
+            instruction: nestedInstruction,
+            currentChain: instruction.destination,
+            deploymentProfile,
+          }),
+        ),
+      });
+    case "initiate-transfer":
+      return Enum("InitiateTransfer", {
+        destination: buildParachainLocation(instruction.destination, deploymentProfile),
+        remote_fees: Enum(
+          "Teleport",
+          Enum("Definite", [
+            buildAsset({
+              chainKey: currentChain,
+              assetKey: instruction.remoteFeeAsset,
+              deploymentProfile,
+              amount: toBigInt(
+                instruction.remoteFeeAmount,
+                "initiate-transfer.remoteFeeAmount",
+              ),
+            }),
+          ]),
+        ),
+        preserve_origin: Boolean(instruction.preserveOrigin),
+        assets: [
+          Enum("Teleport", buildCountedAssetFilter(1)),
+        ],
+        remote_xcm: instruction.remoteInstructions.map((nestedInstruction) =>
           buildInstruction({
             instruction: nestedInstruction,
             currentChain: instruction.destination,
@@ -430,7 +534,7 @@ function buildInstruction({
     case "initiate-reserve-withdraw":
       return Enum("InitiateReserveWithdraw", {
         assets: buildCountedAssetFilter(instruction.assetCount),
-        reserve: buildParachainLocation(instruction.reserve),
+        reserve: buildParachainLocation(instruction.reserve, deploymentProfile),
         xcm: instruction.remoteInstructions.map((nestedInstruction) =>
           buildInstruction({
             instruction: nestedInstruction,
@@ -457,8 +561,8 @@ function buildInstruction({
   }
 }
 
-function buildAsset({ chainKey, assetKey, amount }) {
-  const location = getAssetLocation(assetKey, chainKey);
+function buildAsset({ chainKey, assetKey, amount, deploymentProfile }) {
+  const location = getAssetLocation(assetKey, chainKey, deploymentProfile);
 
   return {
     id: {
@@ -476,10 +580,10 @@ function buildCountedAssetFilter(assetCount) {
   );
 }
 
-function buildParachainLocation(chainKey) {
+function buildParachainLocation(chainKey, deploymentProfile) {
   return {
     parents: 1,
-    interior: Enum("X1", Enum("Parachain", getParachainId(chainKey))),
+    interior: Enum("X1", Enum("Parachain", getParachainId(chainKey, deploymentProfile))),
   };
 }
 

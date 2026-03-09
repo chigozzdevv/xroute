@@ -15,6 +15,10 @@ const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..
 const testnetQuoteProvider = createRouteEngineQuoteProvider({
   cwd: workspaceRoot,
 });
+const paseoQuoteProvider = createRouteEngineQuoteProvider({
+  cwd: workspaceRoot,
+  deploymentProfile: "testnet",
+});
 const aliceAddress = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
 const refundAddress = "0x2222222222222222222222222222222222222222";
 
@@ -42,6 +46,36 @@ test("buildExecutionEnvelope encodes a transfer reserve XCM payload", async () =
   assert.equal(decoded.value[1].type, "TransferReserveAsset");
   assert.equal(decoded.value[1].value.xcm[0].type, "BuyExecution");
   assert.equal(decoded.value[1].value.xcm[1].type, "DepositAsset");
+});
+
+test("buildExecutionEnvelope encodes the Paseo PAS transfer route", async () => {
+  const intent = createTransferIntent({
+    deploymentProfile: "testnet",
+    sourceChain: "polkadot-hub",
+    destinationChain: "people",
+    refundAddress,
+    deadline: 1_773_185_200,
+    params: {
+      asset: "PAS",
+      amount: "10000000000",
+      recipient: aliceAddress,
+    },
+  });
+  const quote = await paseoQuoteProvider.quote(intent);
+
+  const envelope = buildExecutionEnvelope({ intent, quote });
+  const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
+
+  assert.equal(envelope.mode, "execute");
+  assert.equal(envelope.destinationHex, "0x");
+  assert.equal(decoded.type, "V5");
+  assert.equal(decoded.value[1].type, "WithdrawAsset");
+  assert.equal(decoded.value[2].type, "PayFees");
+  assert.equal(decoded.value[3].type, "InitiateTransfer");
+  assert.equal(decoded.value[3].value.destination.interior.type, "X1");
+  assert.equal(decoded.value[3].value.remote_fees.type, "Teleport");
+  assert.equal(decoded.value[3].value.assets[0].type, "Teleport");
+  assert.equal(decoded.value[3].value.remote_xcm[0].type, "DepositAsset");
 });
 
 test("buildExecutionEnvelope encodes the hydration runtime swap path", async () => {
@@ -192,7 +226,7 @@ test("buildExecutionEnvelope encodes a moonbeam evm contract call via Transact",
   const remoteInstructions = decoded.value[1].value.xcm;
 
   assert.equal(remoteInstructions[1].type, "Transact");
-  assert.match(remoteInstructions[1].value.call.asHex(), /^0x260001/);
+  assert.match(remoteInstructions[1].value.call.asHex(), /^0x6d0001/);
   assert.match(remoteInstructions[1].value.call.asHex(), /1111111111111111111111111111111111111111/);
 });
 

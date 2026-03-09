@@ -10,7 +10,7 @@ import {
   createRouteEngineQuoteProvider,
 } from "../../../packages/xroute-sdk/index.mjs";
 import { spawnAnvil } from "../../../testing/spawn-anvil.mjs";
-import { spawnRustService } from "../../../testing/spawn-rust-service.mjs";
+import { spawnRustService } from "../../../scripts/lib/spawn-rust-service.mjs";
 
 const workspaceRoot = process.cwd();
 const refundAddress = "0x1111111111111111111111111111111111111111";
@@ -45,7 +45,7 @@ test("executor relayer authenticates and dispatches a queued job", async () => {
 
     const quoteProvider = createRouteEngineQuoteProvider({
       cwd: workspaceRoot,
-      deploymentProfile: "testnet",
+      deploymentProfile: "mainnet",
     });
     const intent = createTransferIntent({
       sourceChain: "polkadot-hub",
@@ -150,7 +150,7 @@ test("executor relayer enforces moonbeam evm execution policy before dispatch", 
     });
     const quote = await createRouteEngineQuoteProvider({
       cwd: workspaceRoot,
-      deploymentProfile: "testnet",
+      deploymentProfile: "mainnet",
     }).quote(intent);
     const relayer = createHttpExecutorRelayerClient({
       endpoint: service.url,

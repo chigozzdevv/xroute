@@ -105,6 +105,40 @@ contract XRouteHubRouterTest is TestBase {
         assertEq(address(router).balance, lockedAmount - 250_000_000);
     }
 
+    function test_finalize_external_success_reimburses_executor_from_escrow() public {
+        bytes memory message = hex"050c000401000003";
+        bytes32 executionHash = _executionHash(XRouteHubRouter.DispatchMode.Execute, "", message);
+        XRouteHubRouter.IntentRequest memory request = XRouteHubRouter.IntentRequest({
+            actionType: XRouteHubRouter.ActionType.Transfer,
+            asset: address(0),
+            refundAddress: REFUND_RECIPIENT,
+            amount: 25 * 10 ** 10,
+            xcmFee: 100_000_000,
+            destinationFee: 20_000_000,
+            minOutputAmount: 25 * 10 ** 10,
+            deadline: uint64(block.timestamp + 1 days),
+            executionHash: executionHash
+        });
+
+        uint256 lockedAmount = router.previewLockedAmount(request);
+        vm.deal(ALICE, lockedAmount);
+
+        vm.prank(ALICE);
+        bytes32 intentId = router.submitIntent{value: lockedAmount}(request);
+
+        vm.prank(EXECUTOR);
+        router.finalizeExternalSuccess(intentId, keccak256("source-xcm"), keccak256("PAS"), 25 * 10 ** 10);
+
+        XRouteHubRouter.IntentRecord memory intent = router.getIntent(intentId);
+        assertEq(uint256(intent.status), uint256(XRouteHubRouter.IntentStatus.Settled));
+        assertEq(intent.outcomeReference, keccak256("source-xcm"));
+        assertEq(intent.resultAssetId, keccak256("PAS"));
+        assertEq(intent.resultAmount, 25 * 10 ** 10);
+        assertEq(EXECUTOR.balance, 25 * 10 ** 10 + 100_000_000 + 20_000_000);
+        assertEq(TREASURY.balance, 250_000_000);
+        assertEq(address(router).balance, 0);
+    }
+
     function test_submit_and_dispatch_runtime_execute_intent() public {
         bytes memory message = hex"050c000401000003";
         bytes32 executionHash = _executionHash(XRouteHubRouter.DispatchMode.Execute, "", message);

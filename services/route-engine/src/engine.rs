@@ -17,7 +17,7 @@ impl Default for EngineSettings {
     fn default() -> Self {
         Self {
             platform_fee_bps: 10,
-            deployment_profile: DeploymentProfile::Testnet,
+            deployment_profile: DeploymentProfile::Mainnet,
         }
     }
 }
@@ -394,6 +394,22 @@ fn build_transfer_plan(
         recipient: recipient.clone(),
         asset_count: 1,
     }];
+    let send_instructions = if uses_paseo_teleport_transfer(path, principal.asset) {
+        build_paseo_teleport_transfer_instructions(
+            path,
+            principal.amount,
+            fees.xcm_fee.amount,
+            fees.destination_fee.amount,
+            final_remote_instructions,
+        )?
+    } else {
+        vec![build_multihop_transfer_instruction(
+            &path.hops,
+            0,
+            principal.amount,
+            final_remote_instructions,
+        )]
+    };
 
     Ok(crate::model::ExecutionPlan {
         route: path.route.clone(),
@@ -421,12 +437,7 @@ fn build_transfer_plan(
             PlanStep::SendXcm {
                 origin: intent.source_chain,
                 destination: *path.route.get(1).ok_or(RouteError::ArithmeticOverflow)?,
-                instructions: vec![build_multihop_transfer_instruction(
-                    &path.hops,
-                    0,
-                    principal.amount,
-                    final_remote_instructions,
-                )],
+                instructions: send_instructions,
             },
             PlanStep::ExpectSettlement {
                 chain: intent.destination_chain,
@@ -436,6 +447,52 @@ fn build_transfer_plan(
             },
         ],
     })
+}
+
+fn uses_paseo_teleport_transfer(path: &TransferPath, asset: AssetKey) -> bool {
+    matches!(
+        path.hops.as_slice(),
+        [hop]
+            if hop.source == ChainKey::PolkadotHub
+                && hop.destination == ChainKey::People
+                && asset == AssetKey::Pas
+    )
+}
+
+fn build_paseo_teleport_transfer_instructions(
+    path: &TransferPath,
+    amount: u128,
+    xcm_fee_amount: u128,
+    destination_fee_amount: u128,
+    final_remote_instructions: Vec<XcmInstruction>,
+) -> Result<Vec<XcmInstruction>, RouteError> {
+    let [hop] = path.hops.as_slice() else {
+        return Err(RouteError::ArithmeticOverflow);
+    };
+    let withdrawn_amount = amount
+        .checked_add(xcm_fee_amount)
+        .and_then(|value| value.checked_add(destination_fee_amount))
+        .ok_or(RouteError::ArithmeticOverflow)?;
+
+    Ok(vec![
+        XcmInstruction::WithdrawAsset {
+            asset: hop.asset,
+            amount: withdrawn_amount,
+        },
+        XcmInstruction::PayFees {
+            asset: hop.asset,
+            amount: xcm_fee_amount,
+        },
+        XcmInstruction::InitiateTransfer {
+            asset: hop.asset,
+            amount,
+            destination: hop.destination,
+            remote_fee_asset: hop.buy_execution_fee.asset,
+            remote_fee_amount: destination_fee_amount,
+            preserve_origin: false,
+            remote_instructions: final_remote_instructions,
+        },
+    ])
 }
 
 fn build_execute_plan(

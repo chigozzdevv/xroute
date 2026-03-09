@@ -50,6 +50,7 @@ export function createCastRouterAdapter({
   eventClock = () => Math.floor(Date.now() / 1000),
   commandRunner = defaultCommandRunner,
   autoApprove = true,
+  gasLimit = null,
 } = {}) {
   const normalizedRpcUrl = assertNonEmptyString("rpcUrl", rpcUrl);
   const normalizedRouterAddress = assertAddress("routerAddress", routerAddress);
@@ -371,8 +372,12 @@ export function createCastRouterAdapter({
     if (options.value !== undefined && options.value !== null) {
       command.push("--value", toUintString(options.value));
     }
+    if (gasLimit !== undefined && gasLimit !== null) {
+      command.push("--gas-limit", toUintString(gasLimit));
+    }
 
     const output = await runCast(command);
+    assertTransactionDidNotRevert(output);
 
     return extractTransactionHash(output);
   }
@@ -503,6 +508,33 @@ function extractTransactionHash(value) {
   }
 
   return matched[0].toLowerCase();
+}
+
+function assertTransactionDidNotRevert(value) {
+  const normalized = value.trim();
+
+  try {
+    const parsed = JSON.parse(normalized);
+    const status = parsed.status ?? parsed.receipt?.status;
+    if (status === undefined || status === null) {
+      return;
+    }
+
+    const normalizedStatus =
+      typeof status === "string" ? status.trim().toLowerCase() : String(status);
+    if (normalizedStatus === "0x1" || normalizedStatus === "1") {
+      return;
+    }
+
+    const revertReason =
+      parsed.revertReason ?? parsed.receipt?.revertReason ?? "transaction reverted";
+    throw new Error(revertReason);
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return;
+    }
+    throw error;
+  }
 }
 
 async function defaultCommandRunner({ command, args, cwd, env }) {

@@ -9,7 +9,7 @@ use route_engine::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WireIntent {
     #[serde(default)]
@@ -21,7 +21,7 @@ pub struct WireIntent {
     pub action: WireAction,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WireAction {
     #[serde(rename = "type")]
     pub action_type: String,
@@ -642,6 +642,16 @@ fn plan_step_to_json_value(step: &PlanStep) -> Value {
 
 fn xcm_instruction_to_json_value(instruction: &XcmInstruction) -> Value {
     match instruction {
+        XcmInstruction::WithdrawAsset { asset, amount } => json!({
+            "type": "withdraw-asset",
+            "asset": asset.symbol(),
+            "amount": amount.to_string(),
+        }),
+        XcmInstruction::PayFees { asset, amount } => json!({
+            "type": "pay-fees",
+            "asset": asset.symbol(),
+            "amount": amount.to_string(),
+        }),
         XcmInstruction::TransferReserveAsset {
             asset,
             amount,
@@ -693,6 +703,24 @@ fn xcm_instruction_to_json_value(instruction: &XcmInstruction) -> Value {
             "destination": destination.as_str(),
             "remoteInstructions": remote_instructions.iter().map(xcm_instruction_to_json_value).collect::<Vec<_>>(),
         }),
+        XcmInstruction::InitiateTransfer {
+            asset,
+            amount,
+            destination,
+            remote_fee_asset,
+            remote_fee_amount,
+            preserve_origin,
+            remote_instructions,
+        } => json!({
+            "type": "initiate-transfer",
+            "asset": asset.symbol(),
+            "amount": amount.to_string(),
+            "destination": destination.as_str(),
+            "remoteFeeAsset": remote_fee_asset.symbol(),
+            "remoteFeeAmount": remote_fee_amount.to_string(),
+            "preserveOrigin": preserve_origin,
+            "remoteInstructions": remote_instructions.iter().map(xcm_instruction_to_json_value).collect::<Vec<_>>(),
+        }),
         XcmInstruction::InitiateReserveWithdraw {
             asset_count,
             reserve,
@@ -739,6 +767,7 @@ fn asset_amount_to_json_value(amount: &AssetAmount) -> Value {
 fn parse_chain(value: &str) -> Result<ChainKey, String> {
     match value.trim() {
         "polkadot-hub" | "asset-hub" => Ok(ChainKey::PolkadotHub),
+        "people" => Ok(ChainKey::People),
         "hydration" => Ok(ChainKey::Hydration),
         "moonbeam" => Ok(ChainKey::Moonbeam),
         "bifrost" => Ok(ChainKey::Bifrost),
@@ -748,6 +777,7 @@ fn parse_chain(value: &str) -> Result<ChainKey, String> {
 
 fn parse_asset(value: &str) -> Result<AssetKey, String> {
     match value.trim().to_uppercase().as_str() {
+        "PAS" => Ok(AssetKey::Pas),
         "DOT" => Ok(AssetKey::Dot),
         "USDT" => Ok(AssetKey::Usdt),
         "HDX" => Ok(AssetKey::Hdx),
