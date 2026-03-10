@@ -34,6 +34,7 @@ export function deployStack(overrides = {}) {
     overrides.platformFeeBps ?? process.env.XROUTE_PLATFORM_FEE_BPS ?? "10";
   const xcmAddress =
     overrides.xcmAddress ?? process.env.XROUTE_XCM_ADDRESS ?? XCM_PRECOMPILE_ADDRESS;
+  const chainKey = resolveDeploymentChainKey(deploymentProfile);
   const stackOutputPath =
     overrides.stackOutputPath ??
     process.env.XROUTE_STACK_OUTPUT_PATH ??
@@ -72,7 +73,7 @@ export function deployStack(overrides = {}) {
 
   const deploymentArtifact = {
     deploymentProfile,
-    chainKey: "polkadot-hub",
+    chainKey,
     chainId,
     deployer,
     deployedAt: new Date().toISOString(),
@@ -141,6 +142,18 @@ function runCast(args, { rpcUrl }) {
       XROUTE_RPC_URL: rpcUrl,
     },
   }).trim();
+}
+
+function resolveDeploymentChainKey(deploymentProfile) {
+  switch (deploymentProfile) {
+    case DEPLOYMENT_PROFILES.MOONBASE_ALPHA:
+    case DEPLOYMENT_PROFILES.BIFROST_VIA_MOONBASE_ALPHA:
+      return "moonbeam";
+    case DEPLOYMENT_PROFILES.BIFROST_VIA_HYDRATION:
+      return "hydration";
+    default:
+      return "polkadot-hub";
+  }
 }
 
 function assertLiveDeploymentConfirmed(flag, deploymentProfile) {

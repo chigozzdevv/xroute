@@ -1,0 +1,16 @@
+{
+  "deploymentProfile": "moonbase-alpha",
+  "chainKey": "moonbeam",
+  "chainId": 1287,
+  "deployer": "0x2A3F3E0d1F847a43ebAF87Bb4741084CbDA0f549",
+  "deployedAt": "2026-03-10T22:41:38.000Z",
+  "contracts": {
+    "XRouteHubRouter": "0xa7690c47c0a8e3b6f2d67eef1834afe87c937747"
+  },
+  "settings": {
+    "xcmAddress": "0x00000000000000000000000000000000000a0000",
+    "executorAddress": "0x2a3f3e0d1f847a43ebaf87bb4741084cbda0f549",
+    "treasuryAddress": "0x2a3f3e0d1f847a43ebaf87bb4741084cbda0f549",
+    "platformFeeBps": "10"
+  }
+}

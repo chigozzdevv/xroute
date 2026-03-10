@@ -190,7 +190,7 @@ Dedicated full-graph multihop profile:
 - `moonbeam <-> bifrost`
 - `hydration <-> bifrost`
 
-This is the profile used to validate the complete four-chain `transfer + swap + execute` surface in the dedicated lab before mainnet deployment.
+This is the profile used to validate the complete four-chain `transfer + swap + execute` surface in the route engine, XCM encoder, SDK, and service test stack before mainnet deployment.
 
 ### Mainnet
 
@@ -316,10 +316,13 @@ npm run test:package
 npm run build
 npm run serve:quote
 npm run serve:executor-relayer
+npm run deploy:moonbase-router
+npm run deploy:moonbase-target
 npm run deploy:paseo
 npm run deploy:integration
 npm run deploy:mainnet
 npm run smoke:integration
+npm run smoke:moonbase
 npm run smoke:paseo
 ```
 
@@ -360,6 +363,16 @@ Current live Paseo deployment:
 - deployer / relayer: `0x2A3F3E0d1F847a43ebAF87Bb4741084CbDA0f549`
 - chain id: `420420417`
 - artifact: `contracts/polkadot-hub-router/deployments/paseo/polkadot-hub.json`
+
+Current live Moonbase Alpha validation deployment:
+
+- router: `0xa7690c47c0a8e3b6f2d67eef1834afe87c937747`
+- validation target: `0xeb1c1fb9124bc9b9574fcdf7da44624d92693b3a`
+- deployer / relayer: `0x2A3F3E0d1F847a43ebAF87Bb4741084CbDA0f549`
+- chain id: `1287`
+- router artifact: `contracts/polkadot-hub-router/deployments/moonbase-alpha/polkadot-hub.json`
+- target artifact: `contracts/polkadot-hub-router/deployments/moonbase-alpha/moonbeam-validation-target.json`
+- policy artifact: `contracts/polkadot-hub-router/deployments/moonbase-alpha/moonbeam-execution-policy.json`
 
 Required deploy variables:
 
@@ -416,6 +429,20 @@ This smoke path validates the full four-chain graph at the route-planning and en
 - `swap`
 - `execute/evm-contract-call`
 - `execute/vtoken-order`
+
+## Moonbase Validation
+
+Run:
+
+```bash
+npm run smoke:moonbase
+```
+
+This public validation path does three things against live Moonbase Alpha:
+
+- calls the deployed validation target onchain
+- starts the Rust quote service and Rust relayer with the generated Moonbeam execution policy
+- requests a real `execute/evm-contract-call` quote against the deployed allowlisted target
 
 ## SDK Usage
 
@@ -517,8 +544,8 @@ const { intent, quote } = await client.quote({
       executionType: "evm-contract-call",
       asset: "DOT",
       maxPaymentAmount: "200000000",
-      contractAddress: "0x1111111111111111111111111111111111111111",
-      calldata: "0xdeadbeef",
+      contractAddress: "0xeb1c1fb9124bc9b9574fcdf7da44624d92693b3a",
+      calldata: "0x33d425c41111111111111111111111111111111111111111111111111111111111111111",
       value: "0",
       gasLimit: "250000",
       fallbackWeight: {
