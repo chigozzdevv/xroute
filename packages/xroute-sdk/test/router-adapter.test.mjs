@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 
 import { createSwapIntent } from "../../xroute-intents/index.mjs";
 import { buildDispatchRequest, createDispatchEnvelope } from "../../xroute-xcm/index.mjs";
@@ -14,7 +15,7 @@ const signerAddress = "0x1111111111111111111111111111111111111111";
 const recipientAccount = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
 const routerAddress = "0x2222222222222222222222222222222222222222";
 const dotAddress = "0x3333333333333333333333333333333333333333";
-const privateKey = "0x0123456789012345678901234567890123456789012345678901234567890123";
+const privateKey = `0x${randomBytes(32).toString("hex")}`;
 
 test("static asset address resolver returns configured addresses", async () => {
   const resolveAssetAddress = createStaticAssetAddressResolver({
