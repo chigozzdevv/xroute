@@ -206,7 +206,7 @@ fn parse_deployment_profile(value: &str) -> Result<DeploymentProfile, String> {
         "moonbase-alpha" | "moonbeam" | "moonbase" | "moonbeam-testnet" => {
             Ok(DeploymentProfile::MoonbaseAlpha)
         }
-        "integration" | "integration-testnet" | "multihop" => {
+        "integration" | "integration-testnet" | "multihop" | "lab" | "multichain-lab" => {
             Ok(DeploymentProfile::Integration)
         }
         "mainnet" => Ok(DeploymentProfile::Mainnet),

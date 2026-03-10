@@ -43,7 +43,7 @@ XRoute turns that into:
   - routes: `polkadot-hub <-> moonbeam`
   - actions: `transfer`, `execute/runtime-call`, `execute/evm-contract-call`
 - `integration`
-  - dedicated multichain integration testnet
+  - dedicated multichain lab profile
   - full four-chain graph
   - `polkadot-hub <-> hydration`
   - `polkadot-hub <-> moonbeam`
@@ -60,7 +60,7 @@ XRoute turns that into:
 
 `hydration-snakenet` and `moonbase-alpha` are narrow public validation profiles for the real swap and execute capabilities.
 
-`integration` is the full four-chain multihop integration profile.
+`integration` is the full four-chain multihop lab profile.
 
 `mainnet` is the production graph.
 
@@ -156,7 +156,7 @@ Dedicated full-graph multihop profile:
 - `moonbeam <-> bifrost`
 - `hydration <-> bifrost`
 
-This is the profile used to validate the complete four-chain `transfer + swap + execute` surface before mainnet deployment.
+This is the profile used to validate the complete four-chain `transfer + swap + execute` surface in the dedicated lab before mainnet deployment.
 
 ### Mainnet
 
@@ -255,6 +255,8 @@ xroute/
     route-engine/
     shared/
   scripts/
+  testing/
+    lab/
 ```
 
 ## Setup
@@ -282,10 +284,17 @@ npm run test:package
 npm run build
 npm run serve:quote
 npm run serve:executor-relayer
+npm run doctor:lab
+npm run lab:build
+npm run lab:up
+npm run lab:down
+npm run lab:logs
+npm run deploy:lab
 npm run deploy:paseo
 npm run deploy:integration
 npm run deploy:mainnet
 npm run smoke:integration
+npm run smoke:lab
 npm run smoke:paseo
 ```
 
@@ -318,12 +327,12 @@ XROUTE_PRIVATE_KEY=0x... \
 node scripts/deploy-stack.mjs
 ```
 
-Example dedicated integration deploy:
+Example dedicated lab deploy:
 
 ```bash
 XROUTE_ALLOW_LIVE_DEPLOY=true \
 XROUTE_DEPLOYMENT_PROFILE=integration \
-XROUTE_RPC_URL=https://services.polkadothub-rpc.com/testnet \
+XROUTE_RPC_URL=http://127.0.0.1:8545 \
 XROUTE_PRIVATE_KEY=0x... \
 node scripts/deploy-stack.mjs
 ```
@@ -390,6 +399,28 @@ This smoke path validates the full four-chain graph at the route-planning and en
 - `swap`
 - `execute/evm-contract-call`
 - `execute/vtoken-order`
+
+## Dedicated Lab
+
+The real no-mock four-chain local environment lives in:
+
+- `testing/lab`
+
+It uses the actual released binaries for:
+
+- `polkadot-hub` via `asset-hub-polkadot-local`
+- `hydration`
+- `moonbeam`
+- `bifrost`
+
+Start it with:
+
+```bash
+npm run doctor:lab
+npm run lab:up
+```
+
+The dedicated lab exists because there is no single shared public network that exposes all four chains on one test fabric.
 
 ## SDK Usage
 

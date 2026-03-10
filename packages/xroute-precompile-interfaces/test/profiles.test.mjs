@@ -21,6 +21,7 @@ test("deployment profiles cover public validation, integration, and mainnet surf
     normalizeDeploymentProfile("moonbase-alpha"),
     DEPLOYMENT_PROFILES.MOONBASE_ALPHA,
   );
+  assert.equal(normalizeDeploymentProfile("lab"), DEPLOYMENT_PROFILES.INTEGRATION);
   assert.equal(normalizeDeploymentProfile("multihop"), DEPLOYMENT_PROFILES.INTEGRATION);
   assert.equal(normalizeDeploymentProfile("integration"), DEPLOYMENT_PROFILES.INTEGRATION);
   assert.equal(normalizeDeploymentProfile("mainnet"), DEPLOYMENT_PROFILES.MAINNET);

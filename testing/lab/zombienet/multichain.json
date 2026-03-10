@@ -1,0 +1,159 @@
+{
+  "settings": {
+    "provider": "native",
+    "timeout": 2000
+  },
+  "relaychain": {
+    "chain": "polkadot-local",
+    "default_command": "/opt/xroute/bin/polkadot",
+    "default_args": [
+      "--no-hardware-benchmarks",
+      "--database=paritydb"
+    ],
+    "nodes": [
+      {
+        "name": "alice",
+        "validator": true,
+        "rpc_port": 9944
+      },
+      {
+        "name": "bob",
+        "validator": true,
+        "rpc_port": 9945
+      }
+    ]
+  },
+  "hrmp_channels": [
+    {
+      "sender": 1000,
+      "recipient": 2034,
+      "max_capacity": 8,
+      "max_message_size": 1048576
+    },
+    {
+      "sender": 2034,
+      "recipient": 1000,
+      "max_capacity": 8,
+      "max_message_size": 1048576
+    },
+    {
+      "sender": 1000,
+      "recipient": 2004,
+      "max_capacity": 8,
+      "max_message_size": 1048576
+    },
+    {
+      "sender": 2004,
+      "recipient": 1000,
+      "max_capacity": 8,
+      "max_message_size": 1048576
+    },
+    {
+      "sender": 2004,
+      "recipient": 2030,
+      "max_capacity": 8,
+      "max_message_size": 1048576
+    },
+    {
+      "sender": 2030,
+      "recipient": 2004,
+      "max_capacity": 8,
+      "max_message_size": 1048576
+    },
+    {
+      "sender": 2034,
+      "recipient": 2030,
+      "max_capacity": 8,
+      "max_message_size": 1048576
+    },
+    {
+      "sender": 2030,
+      "recipient": 2034,
+      "max_capacity": 8,
+      "max_message_size": 1048576
+    }
+  ],
+  "parachains": [
+    {
+      "id": 1000,
+      "chain": "asset-hub-polkadot-local",
+      "cumulus_based": true,
+      "collators": [
+        {
+          "name": "hub-1",
+          "command": "/opt/xroute/bin/polkadot-parachain",
+          "rpc_port": 9910,
+          "args": [
+            "--no-hardware-benchmarks",
+            "--force-authoring",
+            "--database=paritydb",
+            "--pruning=archive",
+            "--unsafe-rpc-external"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 2034,
+      "chain": "local",
+      "cumulus_based": true,
+      "collators": [
+        {
+          "name": "hydration-1",
+          "command": "/opt/xroute/bin/hydradx",
+          "rpc_port": 9999,
+          "args": [
+            "--no-hardware-benchmarks",
+            "--force-authoring",
+            "--database=paritydb",
+            "--pruning=archive",
+            "--unsafe-rpc-external"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 2004,
+      "chain": "moonbeam-local",
+      "cumulus_based": true,
+      "collators": [
+        {
+          "name": "moonbeam-1",
+          "command": "/opt/xroute/bin/moonbeam",
+          "rpc_port": 8800,
+          "args": [
+            "--no-hardware-benchmarks",
+            "--force-authoring",
+            "--database=paritydb",
+            "--pool-type=fork-aware",
+            "--unsafe-rpc-external"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 2030,
+      "chain": "bifrost-polkadot-local",
+      "cumulus_based": true,
+      "collators": [
+        {
+          "name": "bifrost-1",
+          "command": "/opt/xroute/bin/bifrost",
+          "rpc_port": 9244,
+          "args": [
+            "--execution=wasm",
+            "--force-authoring",
+            "--unsafe-rpc-external"
+          ]
+        }
+      ]
+    }
+  ],
+  "types": {
+    "Header": {
+      "number": "u64",
+      "parent_hash": "Hash",
+      "post_state": "Hash"
+    }
+  }
+}

@@ -1,0 +1,34 @@
+services:
+  xroute-lab:
+    image: ${XROUTE_LAB_IMAGE:-xroute-multichain-lab:latest}
+    pull_policy: never
+    build:
+      context: ../..
+      dockerfile: testing/lab/Dockerfile
+    platform: linux/amd64
+    container_name: ${XROUTE_LAB_CONTAINER:-xroute-multichain-lab}
+    volumes:
+      - ./state:/opt/xroute-lab/state
+    ports:
+      - "9944:9944"
+      - "9910:9910"
+      - "8800:8800"
+      - "9999:9999"
+      - "9244:9244"
+  hub-eth-rpc:
+    image: ${XROUTE_LAB_ETH_RPC_IMAGE:-paritypr/eth-rpc:master-1ea05e17}
+    platform: linux/amd64
+    depends_on:
+      - xroute-lab
+    command:
+      - --node-rpc-url
+      - ws://xroute-lab:9910
+      - --unsafe-rpc-external
+      - --rpc-methods
+      - unsafe
+      - --rpc-port
+      - "8545"
+    environment:
+      DATABASE_URL: "sqlite::memory:"
+    ports:
+      - "8545:8545"
