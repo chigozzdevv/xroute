@@ -9,7 +9,7 @@ It uses the published chain binaries for:
 - `moonbeam`
 - `bifrost`
 
-and runs them on one shared `polkadot-local` relay family with Zombienet. The Hub EVM RPC is exposed through the official `paritypr/eth-rpc` adapter image.
+and runs them on one shared relay family with Zombienet. The lab uses the published chain binaries directly, applies a small launch wrapper so Zombienet's loopback websocket p2p addresses become container-reachable plain TCP binds inside the single lab container, and exposes the Hub EVM RPC through the official `paritypr/eth-rpc` adapter image.
 
 ## Why this exists
 
@@ -35,10 +35,11 @@ This matches the current `integration` profile in the route engine and SDK.
 
 ## Files
 
-- `Dockerfile`
 - `compose.yml`
-- `zombienet/multichain.json`
+- `Dockerfile`
 - `build-image.sh`
+- `bin/node-wrapper.sh`
+- `zombienet/multichain.json`
 - `up.sh`
 - `down.sh`
 - `logs.sh`
@@ -48,6 +49,7 @@ This matches the current `integration` profile in the route engine and SDK.
 
 ```bash
 bash testing/lab/doctor.sh
+bash testing/lab/build-image.sh
 bash testing/lab/up.sh
 bash testing/lab/logs.sh
 bash testing/lab/down.sh

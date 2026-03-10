@@ -4,9 +4,12 @@
     "timeout": 2000
   },
   "relaychain": {
-    "chain": "polkadot-local",
+    "chain": "westend-local",
     "default_command": "/opt/xroute/bin/polkadot",
     "default_args": [
+      "--network-backend",
+      "libp2p",
+      "--rpc-external",
       "--no-hardware-benchmarks",
       "--database=paritydb"
     ],
@@ -15,11 +18,6 @@
         "name": "alice",
         "validator": true,
         "rpc_port": 9944
-      },
-      {
-        "name": "bob",
-        "validator": true,
-        "rpc_port": 9945
       }
     ]
   },
@@ -76,7 +74,7 @@
   "parachains": [
     {
       "id": 1000,
-      "chain": "asset-hub-polkadot-local",
+      "chain": "asset-hub-westend-local",
       "cumulus_based": true,
       "collators": [
         {
@@ -84,11 +82,16 @@
           "command": "/opt/xroute/bin/polkadot-parachain",
           "rpc_port": 9910,
           "args": [
+            "--network-backend",
+            "libp2p",
             "--no-hardware-benchmarks",
             "--force-authoring",
             "--database=paritydb",
             "--pruning=archive",
-            "--unsafe-rpc-external"
+            "--unsafe-rpc-external",
+            "--",
+            "--network-backend",
+            "libp2p"
           ]
         }
       ]
@@ -103,11 +106,16 @@
           "command": "/opt/xroute/bin/hydradx",
           "rpc_port": 9999,
           "args": [
+            "--network-backend",
+            "libp2p",
             "--no-hardware-benchmarks",
             "--force-authoring",
             "--database=paritydb",
             "--pruning=archive",
-            "--unsafe-rpc-external"
+            "--unsafe-rpc-external",
+            "--",
+            "--network-backend",
+            "libp2p"
           ]
         }
       ]
@@ -122,18 +130,23 @@
           "command": "/opt/xroute/bin/moonbeam",
           "rpc_port": 8800,
           "args": [
+            "--network-backend",
+            "libp2p",
             "--no-hardware-benchmarks",
             "--force-authoring",
             "--database=paritydb",
             "--pool-type=fork-aware",
-            "--unsafe-rpc-external"
+            "--unsafe-rpc-external",
+            "--",
+            "--network-backend",
+            "libp2p"
           ]
         }
       ]
     },
     {
       "id": 2030,
-      "chain": "bifrost-polkadot-local",
+      "chain": "bifrost-local",
       "cumulus_based": true,
       "collators": [
         {
@@ -141,9 +154,14 @@
           "command": "/opt/xroute/bin/bifrost",
           "rpc_port": 9244,
           "args": [
+            "--network-backend",
+            "libp2p",
             "--execution=wasm",
             "--force-authoring",
-            "--unsafe-rpc-external"
+            "--unsafe-rpc-external",
+            "--",
+            "--network-backend",
+            "libp2p"
           ]
         }
       ]
