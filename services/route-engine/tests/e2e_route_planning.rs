@@ -38,6 +38,14 @@ fn moonbase_alpha_engine() -> RouteEngine {
     engine_for_profile(DeploymentProfile::MoonbaseAlpha)
 }
 
+fn bifrost_via_hydration_engine() -> RouteEngine {
+    engine_for_profile(DeploymentProfile::BifrostViaHydration)
+}
+
+fn bifrost_via_moonbase_alpha_engine() -> RouteEngine {
+    engine_for_profile(DeploymentProfile::BifrostViaMoonbaseAlpha)
+}
+
 #[test]
 fn quotes_hydration_swap_over_a_multihop_path() {
     let engine = mainnet_engine();
@@ -1002,6 +1010,77 @@ fn quotes_execute_evm_contract_call_on_moonbase_alpha_profile() {
 
     assert_eq!(quote.deployment_profile, DeploymentProfile::MoonbaseAlpha);
     assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Moonbeam]);
+}
+
+#[test]
+fn quotes_vtoken_order_on_bifrost_via_hydration_profile() {
+    let engine = bifrost_via_hydration_engine();
+    let intent = Intent {
+        source_chain: ChainKey::Hydration,
+        destination_chain: ChainKey::Bifrost,
+        action: IntentAction::Execute(ExecuteIntent::VtokenOrder(VtokenOrderExecuteIntent {
+            asset: AssetKey::Dot,
+            max_payment_amount: 105_000_000,
+            operation: VtokenOrderOperation::Mint,
+            amount: AssetKey::Dot.units(2),
+            recipient: "5FbifrostHydrationRecipient".to_owned(),
+            recipient_account_id_hex:
+                "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+                    .to_owned(),
+            channel_id: 0,
+            remark: String::new(),
+            fallback_weight: XcmWeight {
+                ref_time: 600_000_000,
+                proof_size: 10_240,
+            },
+        })),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let quote = engine
+        .quote(intent)
+        .expect("bifrost via hydration quote should build");
+
+    assert_eq!(quote.deployment_profile, DeploymentProfile::BifrostViaHydration);
+    assert_eq!(quote.route, vec![ChainKey::Hydration, ChainKey::Bifrost]);
+}
+
+#[test]
+fn quotes_vtoken_order_on_bifrost_via_moonbase_alpha_profile() {
+    let engine = bifrost_via_moonbase_alpha_engine();
+    let intent = Intent {
+        source_chain: ChainKey::Moonbeam,
+        destination_chain: ChainKey::Bifrost,
+        action: IntentAction::Execute(ExecuteIntent::VtokenOrder(VtokenOrderExecuteIntent {
+            asset: AssetKey::Dot,
+            max_payment_amount: 80_000_000,
+            operation: VtokenOrderOperation::Mint,
+            amount: AssetKey::Dot.units(2),
+            recipient: "5FbifrostMoonbeamRecipient".to_owned(),
+            recipient_account_id_hex:
+                "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+                    .to_owned(),
+            channel_id: 0,
+            remark: String::new(),
+            fallback_weight: XcmWeight {
+                ref_time: 600_000_000,
+                proof_size: 10_240,
+            },
+        })),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let quote = engine
+        .quote(intent)
+        .expect("bifrost via moonbase alpha quote should build");
+
+    assert_eq!(
+        quote.deployment_profile,
+        DeploymentProfile::BifrostViaMoonbaseAlpha
+    );
+    assert_eq!(quote.route, vec![ChainKey::Moonbeam, ChainKey::Bifrost]);
 }
 
 #[test]

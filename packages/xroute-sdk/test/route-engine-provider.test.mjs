@@ -152,6 +152,70 @@ test("route engine quote provider supports execute validation on moonbase-alpha"
   assert.deepEqual(quote.route, ["polkadot-hub", "moonbeam"]);
 });
 
+test("route engine quote provider supports Bifrost validation through Hydration", async () => {
+  const provider = createRouteEngineQuoteProvider({
+    cwd: workspaceRoot,
+    deploymentProfile: "bifrost-via-hydration",
+  });
+  const intent = createExecuteIntent({
+    sourceChain: "hydration",
+    destinationChain: "bifrost",
+    refundAddress: walletAddress,
+    deadline: 1_773_185_200,
+    params: {
+      executionType: "vtoken-order",
+      asset: "DOT",
+      maxPaymentAmount: "105000000",
+      operation: "mint",
+      vtoken: "VDOT",
+      amount: "20000000000",
+      recipient: recipientAddress,
+      recipientAccountIdHex: "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+      fallbackWeight: {
+        refTime: 600000000,
+        proofSize: 10240,
+      },
+    },
+  });
+
+  const quote = normalizeQuote(await provider.quote(intent));
+
+  assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.BIFROST_VIA_HYDRATION);
+  assert.deepEqual(quote.route, ["hydration", "bifrost"]);
+});
+
+test("route engine quote provider supports Bifrost validation through Moonbeam", async () => {
+  const provider = createRouteEngineQuoteProvider({
+    cwd: workspaceRoot,
+    deploymentProfile: "bifrost-via-moonbase-alpha",
+  });
+  const intent = createExecuteIntent({
+    sourceChain: "moonbeam",
+    destinationChain: "bifrost",
+    refundAddress: walletAddress,
+    deadline: 1_773_185_200,
+    params: {
+      executionType: "vtoken-order",
+      asset: "DOT",
+      maxPaymentAmount: "80000000",
+      operation: "mint",
+      vtoken: "VDOT",
+      amount: "20000000000",
+      recipient: recipientAddress,
+      recipientAccountIdHex: "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+      fallbackWeight: {
+        refTime: 600000000,
+        proofSize: 10240,
+      },
+    },
+  });
+
+  const quote = normalizeQuote(await provider.quote(intent));
+
+  assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.BIFROST_VIA_MOONBASE_ALPHA);
+  assert.deepEqual(quote.route, ["moonbeam", "bifrost"]);
+});
+
 test("route engine quote provider builds an execute/runtime-call quote", async () => {
   const provider = createRouteEngineQuoteProvider({
     cwd: workspaceRoot,

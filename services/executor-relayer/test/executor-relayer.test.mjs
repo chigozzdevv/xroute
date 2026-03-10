@@ -3,19 +3,22 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:net";
+import { spawn } from "node:child_process";
 
 import { createTransferIntent, createExecuteIntent } from "../../../packages/xroute-intents/index.mjs";
 import {
   createHttpExecutorRelayerClient,
   createRouteEngineQuoteProvider,
 } from "../../../packages/xroute-sdk/index.mjs";
-import { spawnAnvil } from "../../../testing/spawn-anvil.mjs";
 import { spawnRustService } from "../../../scripts/lib/spawn-rust-service.mjs";
 
 const workspaceRoot = process.cwd();
 const refundAddress = "0x1111111111111111111111111111111111111111";
 const ss58Recipient = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
 const routerAddress = "0x2222222222222222222222222222222222222222";
+const defaultAnvilPrivateKey =
+  "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
 test("executor relayer authenticates and dispatches a queued job", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "xroute-relayer-"));
@@ -231,4 +234,100 @@ async function waitForJob({ relayer, jobId, timeoutMs = 10000 } = {}) {
   }
 
   throw new Error(`timed out waiting for job ${jobId}`);
+}
+
+async function spawnAnvil({ host = "127.0.0.1" } = {}) {
+  const port = await reservePort(host);
+  const child = spawn("anvil", ["--host", host, "--port", String(port)], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  let stderr = "";
+  await new Promise((resolvePromise, rejectPromise) => {
+    const timeout = setTimeout(() => {
+      rejectPromise(new Error(`timed out waiting for anvil\n${stderr.trim()}`));
+    }, 15_000);
+
+    function cleanup() {
+      clearTimeout(timeout);
+      child.stdout.off("data", onStdout);
+      child.stderr.off("data", onStderr);
+      child.off("exit", onExit);
+      child.off("error", onError);
+    }
+
+    function onStdout(chunk) {
+      if (String(chunk).includes("Listening on")) {
+        cleanup();
+        resolvePromise();
+      }
+    }
+
+    function onStderr(chunk) {
+      stderr += String(chunk);
+    }
+
+    function onExit(code, signal) {
+      cleanup();
+      rejectPromise(
+        new Error(`anvil exited before startup (code=${code}, signal=${signal})\n${stderr.trim()}`),
+      );
+    }
+
+    function onError(error) {
+      cleanup();
+      rejectPromise(error);
+    }
+
+    child.stdout.on("data", onStdout);
+    child.stderr.on("data", onStderr);
+    child.on("exit", onExit);
+    child.on("error", onError);
+  });
+
+  return {
+    child,
+    rpcUrl: `http://${host}:${port}`,
+    privateKey: defaultAnvilPrivateKey,
+    async close() {
+      if (child.exitCode !== null || child.signalCode !== null) {
+        return;
+      }
+
+      child.kill("SIGTERM");
+      await new Promise((resolvePromise) => {
+        const timeout = setTimeout(() => {
+          child.kill("SIGKILL");
+        }, 5_000);
+        child.once("exit", () => {
+          clearTimeout(timeout);
+          resolvePromise();
+        });
+      });
+    },
+  };
+}
+
+function reservePort(host) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const server = createServer();
+    server.unref();
+    server.on("error", rejectPromise);
+    server.listen(0, host, () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        rejectPromise(new Error("failed to reserve an ephemeral port"));
+        return;
+      }
+
+      server.close((error) => {
+        if (error) {
+          rejectPromise(error);
+          return;
+        }
+
+        resolvePromise(address.port);
+      });
+    });
+  });
 }

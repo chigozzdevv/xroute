@@ -91,6 +91,46 @@ test("moonbase-alpha exposes Moonbeam execute capabilities without Bifrost edges
   );
 });
 
+test("bifrost-via-hydration exposes only the docs-backed Hydration to Bifrost capability path", () => {
+  assert.deepEqual(findTransferPath("hydration", "bifrost", "DOT", "bifrost-via-hydration"), [
+    "hydration",
+    "bifrost",
+  ]);
+  const route = assertExecuteRoute(
+    "hydration",
+    "bifrost",
+    "DOT",
+    "vtoken-order",
+    "bifrost-via-hydration",
+  );
+
+  assert.deepEqual(route.path, ["hydration", "bifrost"]);
+  assert.throws(
+    () => findTransferPath("polkadot-hub", "bifrost", "DOT", "bifrost-via-hydration"),
+    /unsupported chain/,
+  );
+});
+
+test("bifrost-via-moonbase-alpha exposes only the docs-backed Moonbeam to Bifrost capability path", () => {
+  assert.deepEqual(findTransferPath("moonbeam", "bifrost", "DOT", "bifrost-via-moonbase-alpha"), [
+    "moonbeam",
+    "bifrost",
+  ]);
+  const route = assertExecuteRoute(
+    "moonbeam",
+    "bifrost",
+    "DOT",
+    "vtoken-order",
+    "bifrost-via-moonbase-alpha",
+  );
+
+  assert.deepEqual(route.path, ["moonbeam", "bifrost"]);
+  assert.throws(
+    () => findTransferPath("polkadot-hub", "bifrost", "DOT", "bifrost-via-moonbase-alpha"),
+    /unsupported chain/,
+  );
+});
+
 test("integration exposes the full four-chain multihop graph", () => {
   assert.deepEqual(findTransferPath("polkadot-hub", "bifrost", "DOT", "integration"), [
     "polkadot-hub",

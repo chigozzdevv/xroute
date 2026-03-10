@@ -28,12 +28,13 @@ XRoute turns that into:
 
 ## What Works
 
-### Profiles
+### Public Proof Matrix
 
 - `paseo`
-  - public proof profile
+  - public Polkadot proof profile
   - live route: `polkadot-hub -> people`
   - asset: `PAS`
+  - proves the Hub router lifecycle and real public XCM transfer
 - `hydration-snakenet`
   - public Hydration validation profile
   - routes: `polkadot-hub <-> hydration`
@@ -42,27 +43,28 @@ XRoute turns that into:
   - public Moonbeam validation profile
   - routes: `polkadot-hub <-> moonbeam`
   - actions: `transfer`, `execute/runtime-call`, `execute/evm-contract-call`
+- `bifrost-via-hydration`
+  - public Bifrost capability profile through Hydration
+  - routes: `hydration <-> bifrost`
+  - actions: `transfer`, `execute/runtime-call`, `execute/vtoken-order`
+- `bifrost-via-moonbase-alpha`
+  - public Bifrost capability profile through Moonbeam
+  - routes: `moonbeam <-> bifrost`
+  - actions: `transfer`, `execute/runtime-call`, `execute/vtoken-order`
+
+These profiles are the real public-network validation targets. They are intentionally split because the ecosystem does not expose one shared four-chain public testnet fabric.
+
+### Internal and Production Profiles
+
 - `integration`
-  - dedicated multichain lab profile
+  - dedicated multichain lab profile for full-system regression
   - full four-chain graph
-  - `polkadot-hub <-> hydration`
-  - `polkadot-hub <-> moonbeam`
-  - `moonbeam <-> bifrost`
-  - `hydration <-> bifrost`
 - `mainnet`
-  - product graph
+  - production graph
   - `polkadot-hub <-> hydration`
   - `polkadot-hub <-> moonbeam`
   - `moonbeam <-> bifrost`
   - `hydration <-> bifrost`
-
-`paseo` is for public end-to-end proof.
-
-`hydration-snakenet` and `moonbase-alpha` are narrow public validation profiles for the real swap and execute capabilities.
-
-`integration` is the full four-chain multihop lab profile.
-
-`mainnet` is the production graph.
 
 ### Actions
 
@@ -94,6 +96,12 @@ XRoute turns that into:
   - `HDX`
 - `moonbase-alpha`
   - `DOT`
+- `bifrost-via-hydration`
+  - `DOT`
+  - `VDOT`
+- `bifrost-via-moonbase-alpha`
+  - `DOT`
+  - `VDOT`
 - `integration`
   - `DOT`
   - `USDT`
@@ -146,6 +154,32 @@ Supported capabilities:
 - `transfer`
 - `execute/runtime-call`
 - `execute/evm-contract-call`
+
+### Bifrost Via Hydration
+
+Public validation target:
+
+- `hydration -> bifrost`
+- `bifrost -> hydration`
+
+Supported capabilities:
+
+- `transfer`
+- `execute/runtime-call`
+- `execute/vtoken-order`
+
+### Bifrost Via Moonbase Alpha
+
+Public validation target:
+
+- `moonbeam -> bifrost`
+- `bifrost -> moonbeam`
+
+Supported capabilities:
+
+- `transfer`
+- `execute/runtime-call`
+- `execute/vtoken-order`
 
 ### Integration
 
@@ -255,8 +289,6 @@ xroute/
     route-engine/
     shared/
   scripts/
-  testing/
-    lab/
 ```
 
 ## Setup
@@ -284,17 +316,10 @@ npm run test:package
 npm run build
 npm run serve:quote
 npm run serve:executor-relayer
-npm run doctor:lab
-npm run lab:build
-npm run lab:up
-npm run lab:down
-npm run lab:logs
-npm run deploy:lab
 npm run deploy:paseo
 npm run deploy:integration
 npm run deploy:mainnet
 npm run smoke:integration
-npm run smoke:lab
 npm run smoke:paseo
 ```
 
@@ -309,6 +334,8 @@ Profiles:
 - `paseo`
 - `hydration-snakenet`
 - `moonbase-alpha`
+- `bifrost-via-hydration`
+- `bifrost-via-moonbase-alpha`
 - `integration`
 - `mainnet`
 
@@ -323,16 +350,6 @@ Example Paseo deploy:
 XROUTE_ALLOW_LIVE_DEPLOY=true \
 XROUTE_DEPLOYMENT_PROFILE=paseo \
 XROUTE_RPC_URL=https://services.polkadothub-rpc.com/testnet \
-XROUTE_PRIVATE_KEY=0x... \
-node scripts/deploy-stack.mjs
-```
-
-Example dedicated lab deploy:
-
-```bash
-XROUTE_ALLOW_LIVE_DEPLOY=true \
-XROUTE_DEPLOYMENT_PROFILE=integration \
-XROUTE_RPC_URL=http://127.0.0.1:8545 \
 XROUTE_PRIVATE_KEY=0x... \
 node scripts/deploy-stack.mjs
 ```
@@ -400,28 +417,6 @@ This smoke path validates the full four-chain graph at the route-planning and en
 - `execute/evm-contract-call`
 - `execute/vtoken-order`
 
-## Dedicated Lab
-
-The real no-mock four-chain local environment lives in:
-
-- `testing/lab`
-
-It uses the actual released binaries for:
-
-- `polkadot-hub` via `asset-hub-polkadot-local`
-- `hydration`
-- `moonbeam`
-- `bifrost`
-
-Start it with:
-
-```bash
-npm run doctor:lab
-npm run lab:up
-```
-
-The dedicated lab exists because there is no single shared public network that exposes all four chains on one test fabric.
-
 ## SDK Usage
 
 ### Client Setup
@@ -442,7 +437,7 @@ const client = createXRouteClient({
   quoteProvider: createHttpQuoteProvider({
     endpoint: "https://quotes.example.com/quote",
     headers: {
-      "x-xroute-deployment-profile": "integration",
+      "x-xroute-deployment-profile": "hydration-snakenet",
     },
   }),
   routerAdapter: myWalletRouterAdapter,
@@ -462,7 +457,7 @@ const relayer = createHttpExecutorRelayerClient({
 });
 ```
 
-Use `integration` for the dedicated four-chain multihop test environment and switch to `mainnet` when you are ready to route on the live product graph.
+Use the public validation profiles for real-network proof work, and switch to `mainnet` when you are ready to route on the live product graph.
 
 ### Paseo Transfer
 
@@ -488,8 +483,8 @@ const { intent, quote } = await client.quote({
 
 ```ts
 const { intent, quote } = await client.quote({
-  deploymentProfile: "integration",
-  sourceChain: "moonbeam",
+  deploymentProfile: "hydration-snakenet",
+  sourceChain: "polkadot-hub",
   destinationChain: "hydration",
   refundAddress: "0x1111111111111111111111111111111111111111",
   deadline: Math.floor(Date.now() / 1000) + 1800,
@@ -511,8 +506,8 @@ const { intent, quote } = await client.quote({
 
 ```ts
 const { intent, quote } = await client.quote({
-  deploymentProfile: "integration",
-  sourceChain: "hydration",
+  deploymentProfile: "moonbase-alpha",
+  sourceChain: "polkadot-hub",
   destinationChain: "moonbeam",
   refundAddress: "0x1111111111111111111111111111111111111111",
   deadline: Math.floor(Date.now() / 1000) + 1800,
@@ -539,8 +534,8 @@ const { intent, quote } = await client.quote({
 
 ```ts
 const mintIntent = await client.quote({
-  deploymentProfile: "integration",
-  sourceChain: "polkadot-hub",
+  deploymentProfile: "bifrost-via-moonbase-alpha",
+  sourceChain: "moonbeam",
   destinationChain: "bifrost",
   refundAddress: "0x1111111111111111111111111111111111111111",
   deadline: Math.floor(Date.now() / 1000) + 1800,
@@ -564,7 +559,7 @@ const mintIntent = await client.quote({
 });
 
 const redeemIntent = await client.quote({
-  deploymentProfile: "integration",
+  deploymentProfile: "bifrost-via-moonbase-alpha",
   sourceChain: "moonbeam",
   destinationChain: "bifrost",
   refundAddress: "0x1111111111111111111111111111111111111111",

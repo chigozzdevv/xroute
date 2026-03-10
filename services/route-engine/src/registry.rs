@@ -48,6 +48,8 @@ impl RouteRegistry {
             DeploymentProfile::Paseo => Self::paseo(),
             DeploymentProfile::HydrationSnakenet => Self::hydration_snakenet(),
             DeploymentProfile::MoonbaseAlpha => Self::moonbase_alpha(),
+            DeploymentProfile::BifrostViaHydration => Self::bifrost_via_hydration(),
+            DeploymentProfile::BifrostViaMoonbaseAlpha => Self::bifrost_via_moonbase_alpha(),
             DeploymentProfile::Integration => Self::integration(),
             DeploymentProfile::Mainnet => Self::mainnet(),
         }
@@ -161,6 +163,112 @@ impl RouteRegistry {
                     destination: ChainKey::Moonbeam,
                     asset: AssetKey::Dot,
                     execution_type: ExecutionType::EvmContractCall,
+                },
+            ],
+        }
+    }
+
+    fn bifrost_via_hydration() -> Self {
+        Self {
+            transfer_edges: vec![
+                TransferEdge {
+                    source: ChainKey::Hydration,
+                    destination: ChainKey::Bifrost,
+                    asset: AssetKey::Dot,
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 175_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 105_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Hydration,
+                    destination: ChainKey::Bifrost,
+                    asset: AssetKey::Vdot,
+                    transport_fee: AssetAmount::new(AssetKey::Vdot, 175_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Vdot, 105_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Bifrost,
+                    destination: ChainKey::Hydration,
+                    asset: AssetKey::Dot,
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 175_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 105_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Bifrost,
+                    destination: ChainKey::Hydration,
+                    asset: AssetKey::Vdot,
+                    transport_fee: AssetAmount::new(AssetKey::Vdot, 175_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Vdot, 105_000_000),
+                },
+            ],
+            swap_routes: vec![],
+            execute_capabilities: vec![
+                ExecuteCapability {
+                    destination: ChainKey::Bifrost,
+                    asset: AssetKey::Dot,
+                    execution_type: ExecutionType::RuntimeCall,
+                },
+                ExecuteCapability {
+                    destination: ChainKey::Bifrost,
+                    asset: AssetKey::Dot,
+                    execution_type: ExecutionType::VtokenOrder,
+                },
+                ExecuteCapability {
+                    destination: ChainKey::Bifrost,
+                    asset: AssetKey::Vdot,
+                    execution_type: ExecutionType::VtokenOrder,
+                },
+            ],
+        }
+    }
+
+    fn bifrost_via_moonbase_alpha() -> Self {
+        Self {
+            transfer_edges: vec![
+                TransferEdge {
+                    source: ChainKey::Moonbeam,
+                    destination: ChainKey::Bifrost,
+                    asset: AssetKey::Dot,
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 130_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 80_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Moonbeam,
+                    destination: ChainKey::Bifrost,
+                    asset: AssetKey::Vdot,
+                    transport_fee: AssetAmount::new(AssetKey::Vdot, 130_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Vdot, 80_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Bifrost,
+                    destination: ChainKey::Moonbeam,
+                    asset: AssetKey::Dot,
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 130_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 80_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Bifrost,
+                    destination: ChainKey::Moonbeam,
+                    asset: AssetKey::Vdot,
+                    transport_fee: AssetAmount::new(AssetKey::Vdot, 130_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Vdot, 80_000_000),
+                },
+            ],
+            swap_routes: vec![],
+            execute_capabilities: vec![
+                ExecuteCapability {
+                    destination: ChainKey::Bifrost,
+                    asset: AssetKey::Dot,
+                    execution_type: ExecutionType::RuntimeCall,
+                },
+                ExecuteCapability {
+                    destination: ChainKey::Bifrost,
+                    asset: AssetKey::Dot,
+                    execution_type: ExecutionType::VtokenOrder,
+                },
+                ExecuteCapability {
+                    destination: ChainKey::Bifrost,
+                    asset: AssetKey::Vdot,
+                    execution_type: ExecutionType::VtokenOrder,
                 },
             ],
         }

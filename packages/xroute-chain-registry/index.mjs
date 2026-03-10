@@ -381,6 +381,24 @@ const MOONBASE_ALPHA_PROFILE = subsetProfile({
   ],
 });
 
+const BIFROST_VIA_HYDRATION_PROFILE = subsetProfile({
+  chains: ["hydration", "bifrost"],
+  assets: ["DOT", "VDOT"],
+  routes: [
+    { sourceChain: "hydration", destinationChain: "bifrost" },
+    { sourceChain: "bifrost", destinationChain: "hydration" },
+  ],
+});
+
+const BIFROST_VIA_MOONBASE_ALPHA_PROFILE = subsetProfile({
+  chains: ["moonbeam", "bifrost"],
+  assets: ["DOT", "VDOT"],
+  routes: [
+    { sourceChain: "moonbeam", destinationChain: "bifrost" },
+    { sourceChain: "bifrost", destinationChain: "moonbeam" },
+  ],
+});
+
 const INTEGRATION_PROFILE = FULL_GRAPH_PROFILE;
 const MAINNET_PROFILE = FULL_GRAPH_PROFILE;
 
@@ -388,6 +406,8 @@ const ROUTE_PROFILES = Object.freeze({
   [DEPLOYMENT_PROFILES.PASEO]: PASEO_PROFILE,
   [DEPLOYMENT_PROFILES.HYDRATION_SNAKENET]: HYDRATION_SNAKENET_PROFILE,
   [DEPLOYMENT_PROFILES.MOONBASE_ALPHA]: MOONBASE_ALPHA_PROFILE,
+  [DEPLOYMENT_PROFILES.BIFROST_VIA_HYDRATION]: BIFROST_VIA_HYDRATION_PROFILE,
+  [DEPLOYMENT_PROFILES.BIFROST_VIA_MOONBASE_ALPHA]: BIFROST_VIA_MOONBASE_ALPHA_PROFILE,
   [DEPLOYMENT_PROFILES.INTEGRATION]: INTEGRATION_PROFILE,
   [DEPLOYMENT_PROFILES.MAINNET]: MAINNET_PROFILE,
 });

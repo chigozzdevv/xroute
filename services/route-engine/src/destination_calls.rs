@@ -94,6 +94,8 @@ fn moonbeam_ethereum_xcm_pallet_index(profile: DeploymentProfile) -> u8 {
         DeploymentProfile::Paseo
         | DeploymentProfile::HydrationSnakenet
         | DeploymentProfile::MoonbaseAlpha
+        | DeploymentProfile::BifrostViaHydration
+        | DeploymentProfile::BifrostViaMoonbaseAlpha
         | DeploymentProfile::Integration => MOONBEAM_ETHEREUM_XCM_PALLET_TESTNET,
         DeploymentProfile::Mainnet => MOONBEAM_ETHEREUM_XCM_PALLET_MAINNET,
     }
