@@ -676,25 +676,25 @@ fn should_use_external_source_dispatch(
     deployment_profile: DeploymentProfile,
     wire_intent: &WireIntent,
 ) -> bool {
-    if deployment_profile != DeploymentProfile::Paseo {
+    if wire_intent.source_chain != "polkadot-hub" {
         return false;
     }
 
-    if wire_intent.source_chain != "polkadot-hub" || wire_intent.destination_chain != "people" {
-        return false;
-    }
+    match deployment_profile {
+        DeploymentProfile::Paseo => {
+            if wire_intent.destination_chain != "people" || wire_intent.action.action_type != "transfer" {
+                return false;
+            }
 
-    if wire_intent.action.action_type != "transfer" {
-        return false;
+            intent_payment_asset(wire_intent)
+                .map(|asset| asset == "PAS")
+                .unwrap_or(false)
+        }
+        DeploymentProfile::HydrationSnakenet => intent_payment_asset(wire_intent)
+            .map(|asset| asset == "PAS")
+            .unwrap_or(false),
+        _ => false,
     }
-
-    wire_intent
-        .action
-        .params
-        .get("asset")
-        .and_then(Value::as_str)
-        .map(|asset| asset == "PAS")
-        .unwrap_or(false)
 }
 
 fn should_use_external_settlement(
@@ -734,14 +734,20 @@ fn should_use_external_settlement(
     }
 
     let asset = fields[1].to_ascii_lowercase();
-    let action_type = fields[9]
-        .parse::<u8>()
-        .map_err(|error| format!("invalid action type in getIntent tuple: {error}"))?;
     let status = fields[10]
         .parse::<u8>()
         .map_err(|error| format!("invalid status in getIntent tuple: {error}"))?;
 
-    Ok(status == 1 && action_type == 0 && asset == "0x0000000000000000000000000000000000000000")
+    Ok(status == 1 && asset == "0x0000000000000000000000000000000000000000")
+}
+
+fn intent_payment_asset(wire_intent: &WireIntent) -> Option<&str> {
+    match wire_intent.action.action_type.as_str() {
+        "transfer" => wire_intent.action.params.get("asset").and_then(Value::as_str),
+        "swap" => wire_intent.action.params.get("assetIn").and_then(Value::as_str),
+        "execute" => wire_intent.action.params.get("asset").and_then(Value::as_str),
+        _ => None,
+    }
 }
 
 fn format_dispatch_request_tuple(request: &DispatchRequest) -> String {

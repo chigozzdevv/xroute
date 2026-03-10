@@ -75,23 +75,16 @@ impl RouteRegistry {
                 TransferEdge {
                     source: ChainKey::PolkadotHub,
                     destination: ChainKey::Hydration,
-                    asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 150_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 90_000_000),
+                    asset: AssetKey::Pas,
+                    transport_fee: AssetAmount::new(AssetKey::Pas, 150_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Pas, 90_000_000),
                 },
                 TransferEdge {
                     source: ChainKey::Hydration,
                     destination: ChainKey::PolkadotHub,
-                    asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 150_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 90_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Hydration,
-                    destination: ChainKey::PolkadotHub,
-                    asset: AssetKey::Usdt,
-                    transport_fee: AssetAmount::new(AssetKey::Usdt, 25_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Usdt, 10_000),
+                    asset: AssetKey::Pas,
+                    transport_fee: AssetAmount::new(AssetKey::Pas, 150_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Pas, 90_000_000),
                 },
                 TransferEdge {
                     source: ChainKey::Hydration,
@@ -111,15 +104,7 @@ impl RouteRegistry {
             swap_routes: vec![
                 SwapRoute {
                     destination: ChainKey::Hydration,
-                    asset_in: AssetKey::Dot,
-                    asset_out: AssetKey::Usdt,
-                    price_numerator: 495,
-                    price_denominator: 100,
-                    dex_fee_bps: 30,
-                },
-                SwapRoute {
-                    destination: ChainKey::Hydration,
-                    asset_in: AssetKey::Dot,
+                    asset_in: AssetKey::Pas,
                     asset_out: AssetKey::Hdx,
                     price_numerator: 150,
                     price_denominator: 1,
@@ -128,7 +113,7 @@ impl RouteRegistry {
             ],
             execute_capabilities: vec![ExecuteCapability {
                 destination: ChainKey::Hydration,
-                asset: AssetKey::Dot,
+                asset: AssetKey::Pas,
                 execution_type: ExecutionType::RuntimeCall,
             }],
         }

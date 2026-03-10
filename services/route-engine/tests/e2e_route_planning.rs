@@ -955,11 +955,11 @@ fn quotes_swap_on_hydration_snakenet_profile() {
         source_chain: ChainKey::PolkadotHub,
         destination_chain: ChainKey::Hydration,
         action: IntentAction::Swap(SwapIntent {
-            asset_in: AssetKey::Dot,
-            asset_out: AssetKey::Usdt,
-            amount_in: AssetKey::Dot.units(5),
-            min_amount_out: AssetKey::Usdt.units(24),
-            settlement_chain: ChainKey::PolkadotHub,
+            asset_in: AssetKey::Pas,
+            asset_out: AssetKey::Hdx,
+            amount_in: AssetKey::Pas.units(10),
+            min_amount_out: AssetKey::Hdx.units(1_000),
+            settlement_chain: ChainKey::Hydration,
             recipient: "5FsnakenetRecipient".to_owned(),
         }),
         refund_address: REFUND_ADDRESS.to_owned(),
@@ -971,13 +971,12 @@ fn quotes_swap_on_hydration_snakenet_profile() {
         .expect("hydration-snakenet swap quote should build");
 
     assert_eq!(quote.deployment_profile, DeploymentProfile::HydrationSnakenet);
-    assert_eq!(
-        quote.route,
-        vec![ChainKey::PolkadotHub, ChainKey::Hydration, ChainKey::PolkadotHub]
-    );
-    assert_eq!(quote.segments.len(), 2);
+    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Hydration]);
+    assert_eq!(quote.segments.len(), 1);
     assert_eq!(quote.segments[0].route, vec![ChainKey::PolkadotHub, ChainKey::Hydration]);
-    assert_eq!(quote.segments[1].route, vec![ChainKey::Hydration, ChainKey::PolkadotHub]);
+    assert_eq!(quote.submission.asset, AssetKey::Pas);
+    assert_eq!(quote.expected_output.asset, AssetKey::Hdx);
+    assert_eq!(quote.min_output.expect("min output").amount, AssetKey::Hdx.units(1_000));
 }
 
 #[test]

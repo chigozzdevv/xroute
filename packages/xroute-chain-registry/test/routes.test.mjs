@@ -60,15 +60,15 @@ test("findTransferPath exposes the paseo proof route", () => {
 
 test("hydration-snakenet stays focused on Hub and Hydration swap flows", () => {
   assert.deepEqual(
-    findTransferPath("polkadot-hub", "hydration", "DOT", "hydration-snakenet"),
+    findTransferPath("polkadot-hub", "hydration", "PAS", "hydration-snakenet"),
     ["polkadot-hub", "hydration"],
   );
   const route = assertSwapRoute(
     "polkadot-hub",
     "hydration",
-    "DOT",
-    "USDT",
-    "polkadot-hub",
+    "PAS",
+    "HDX",
+    "hydration",
     "hydration-snakenet",
   );
 

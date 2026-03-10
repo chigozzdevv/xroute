@@ -91,8 +91,7 @@ These profiles are the real public-network validation targets. They are intentio
 - `paseo`
   - `PAS`
 - `hydration-snakenet`
-  - `DOT`
-  - `USDT`
+  - `PAS`
   - `HDX`
 - `moonbase-alpha`
   - `DOT`
@@ -139,7 +138,10 @@ Public validation target:
 Supported capabilities:
 
 - `transfer`
+  - `PAS`
 - `swap`
+  - `PAS -> HDX`
+  - settlement on `hydration`
 - `execute/runtime-call`
 
 ### Moonbase Alpha
@@ -316,12 +318,14 @@ npm run test:package
 npm run build
 npm run serve:quote
 npm run serve:executor-relayer
+npm run deploy:hydration-snakenet
 npm run deploy:moonbase-router
 npm run deploy:moonbase-target
 npm run deploy:paseo
 npm run deploy:integration
 npm run deploy:mainnet
 npm run smoke:integration
+npm run smoke:hydration-snakenet
 npm run smoke:moonbase
 npm run smoke:paseo
 ```
@@ -373,6 +377,13 @@ Current live Moonbase Alpha validation deployment:
 - router artifact: `contracts/polkadot-hub-router/deployments/moonbase-alpha/polkadot-hub.json`
 - target artifact: `contracts/polkadot-hub-router/deployments/moonbase-alpha/moonbeam-validation-target.json`
 - policy artifact: `contracts/polkadot-hub-router/deployments/moonbase-alpha/moonbeam-execution-policy.json`
+
+Current live Hydration Snakenet validation deployment:
+
+- router: `0x9976f315b74eb3f498439c487dac185334960cd2`
+- deployer / relayer: `0x2A3F3E0d1F847a43ebAF87Bb4741084CbDA0f549`
+- source chain id: `420420417`
+- router artifact: `contracts/polkadot-hub-router/deployments/hydration-snakenet/polkadot-hub.json`
 
 Required deploy variables:
 
@@ -444,6 +455,28 @@ This public validation path does three things against live Moonbase Alpha:
 - starts the Rust quote service and Rust relayer with the generated Moonbeam execution policy
 - requests a real `execute/evm-contract-call` quote against the deployed allowlisted target
 
+## Hydration Snakenet Validation
+
+Run:
+
+```bash
+npm run smoke:hydration-snakenet
+```
+
+This public validation path runs a real Hub-origin swap flow:
+
+- source chain: `polkadot-hub` on `Paseo`
+- destination chain: `hydration`
+- asset in: `PAS`
+- asset out: `HDX`
+- dispatch strategy: `external-source-execute`
+- final router status: `settled`
+
+The live smoke currently settles this route through the deployed Hydration Snakenet router:
+
+- router: `0x9976f315b74eb3f498439c487dac185334960cd2`
+- successful live intent: `0xc833ce48439687f9344e1e7b17c5c05dc1bdf16b46801f72740d4ad7ca8f3fc5`
+
 ## SDK Usage
 
 ### Client Setup
@@ -470,7 +503,7 @@ const client = createXRouteClient({
   routerAdapter: myWalletRouterAdapter,
   statusProvider,
   assetAddressResolver: async ({ chainKey, assetKey }) => {
-    if (chainKey === "polkadot-hub" && assetKey === "DOT") {
+    if (chainKey === "polkadot-hub" && assetKey === "PAS") {
       return "0x0000000000000000000000000000000000000000";
     }
 
@@ -518,11 +551,11 @@ const { intent, quote } = await client.quote({
   action: {
     type: "swap",
     params: {
-      assetIn: "DOT",
-      assetOut: "USDT",
-      amountIn: "1000000000000",
-      minAmountOut: "493000000",
-      settlementChain: "polkadot-hub",
+      assetIn: "PAS",
+      assetOut: "HDX",
+      amountIn: "10000000000",
+      minAmountOut: "1000000000000",
+      settlementChain: "hydration",
       recipient: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
     },
   },

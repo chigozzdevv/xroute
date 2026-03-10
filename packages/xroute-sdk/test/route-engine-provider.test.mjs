@@ -101,16 +101,17 @@ test("route engine quote provider supports swap validation on hydration-snakenet
     deploymentProfile: "hydration-snakenet",
   });
   const intent = createSwapIntent({
+    deploymentProfile: "hydration-snakenet",
     sourceChain: "polkadot-hub",
     destinationChain: "hydration",
     refundAddress: walletAddress,
     deadline: 1_773_185_200,
     params: {
-      assetIn: "DOT",
-      assetOut: "USDT",
-      amountIn: "1000000000000",
-      minAmountOut: "493000000",
-      settlementChain: "polkadot-hub",
+      assetIn: "PAS",
+      assetOut: "HDX",
+      amountIn: "10000000000",
+      minAmountOut: "1000000000000",
+      settlementChain: "hydration",
       recipient: recipientAddress,
     },
   });
@@ -118,7 +119,9 @@ test("route engine quote provider supports swap validation on hydration-snakenet
   const quote = normalizeQuote(await provider.quote(intent));
 
   assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.HYDRATION_SNAKENET);
-  assert.deepEqual(quote.route, ["polkadot-hub", "hydration", "polkadot-hub"]);
+  assert.deepEqual(quote.route, ["polkadot-hub", "hydration"]);
+  assert.equal(quote.submission.asset, "PAS");
+  assert.equal(quote.expectedOutput.asset, "HDX");
 });
 
 test("route engine quote provider supports execute validation on moonbase-alpha", async () => {

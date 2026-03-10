@@ -137,6 +137,21 @@ const FULL_GRAPH_CHAINS = Object.freeze({
   });
 
 const FULL_GRAPH_ASSETS = Object.freeze({
+    PAS: Object.freeze({
+      symbol: "PAS",
+      decimals: 10,
+      supportedChains: Object.freeze(["polkadot-hub", "hydration"]),
+      xcmLocations: Object.freeze({
+        "polkadot-hub": Object.freeze({
+          parents: 1,
+          interior: Object.freeze({ type: "here" }),
+        }),
+        hydration: Object.freeze({
+          parents: 1,
+          interior: Object.freeze({ type: "here" }),
+        }),
+      }),
+    }),
     DOT: Object.freeze({
       symbol: "DOT",
       decimals: 10,
@@ -363,13 +378,39 @@ function subsetProfile({ chains, assets, routes }) {
   });
 }
 
-const HYDRATION_SNAKENET_PROFILE = subsetProfile({
-  chains: ["polkadot-hub", "hydration"],
-  assets: ["DOT", "USDT", "HDX"],
-  routes: [
-    { sourceChain: "polkadot-hub", destinationChain: "hydration" },
-    { sourceChain: "hydration", destinationChain: "polkadot-hub" },
-  ],
+const HYDRATION_SNAKENET_PROFILE = Object.freeze({
+  chains: Object.freeze({
+    "polkadot-hub": FULL_GRAPH_CHAINS["polkadot-hub"],
+    hydration: FULL_GRAPH_CHAINS.hydration,
+  }),
+  assets: Object.freeze({
+    PAS: FULL_GRAPH_ASSETS.PAS,
+    HDX: FULL_GRAPH_ASSETS.HDX,
+  }),
+  routes: Object.freeze([
+    route({
+      sourceChain: "polkadot-hub",
+      destinationChain: "hydration",
+      actions: [ACTION_TYPES.TRANSFER, ACTION_TYPES.SWAP, ACTION_TYPES.EXECUTE],
+      transferableAssets: ["PAS"],
+      swapPairs: [
+        {
+          assetIn: "PAS",
+          assetOut: "HDX",
+          settlementChains: ["hydration"],
+        },
+      ],
+      executeCapabilities: [
+        capability(EXECUTION_TYPES.RUNTIME_CALL, ["PAS"]),
+      ],
+    }),
+    route({
+      sourceChain: "hydration",
+      destinationChain: "polkadot-hub",
+      actions: [ACTION_TYPES.TRANSFER],
+      transferableAssets: ["PAS", "HDX"],
+    }),
+  ]),
 });
 
 const MOONBASE_ALPHA_PROFILE = subsetProfile({
