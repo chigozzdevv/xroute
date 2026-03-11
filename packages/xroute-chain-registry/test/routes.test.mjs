@@ -91,6 +91,33 @@ test("moonbase-alpha exposes Moonbeam execute capabilities without Bifrost edges
   );
 });
 
+test("core-multihop exposes the serious three-chain multihop graph", () => {
+  assert.deepEqual(findTransferPath("moonbeam", "hydration", "DOT", "core-multihop"), [
+    "moonbeam",
+    "polkadot-hub",
+    "hydration",
+  ]);
+
+  const swapRoute = assertSwapRoute(
+    "moonbeam",
+    "hydration",
+    "DOT",
+    "USDT",
+    "polkadot-hub",
+    "core-multihop",
+  );
+  assert.deepEqual(swapRoute.executionPath, ["moonbeam", "polkadot-hub", "hydration"]);
+
+  const executeRoute = assertExecuteRoute(
+    "hydration",
+    "moonbeam",
+    "DOT",
+    "evm-contract-call",
+    "core-multihop",
+  );
+  assert.deepEqual(executeRoute.path, ["hydration", "polkadot-hub", "moonbeam"]);
+});
+
 test("bifrost-via-hydration exposes only the docs-backed Hydration to Bifrost capability path", () => {
   assert.deepEqual(findTransferPath("hydration", "bifrost", "DOT", "bifrost-via-hydration"), [
     "hydration",

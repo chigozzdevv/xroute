@@ -48,6 +48,11 @@ These profiles are the real public-network validation targets. They are intentio
 
 ### Capability and Production Profiles
 
+- `core-multihop`
+  - focused three-chain multihop profile
+  - `polkadot-hub <-> hydration`
+  - `polkadot-hub <-> moonbeam`
+  - proves the serious composed routes in the SDK, route engine, and XCM encoder
 - `integration`
   - dedicated multichain graph profile for full-system regression
   - full four-chain graph
@@ -230,6 +235,19 @@ That is why the Bifrost story is now docs-backed:
 - `moonbeam -> bifrost`
 - `hydration -> bifrost`
 
+## Core Multihop
+
+Focused serious multihop routes:
+
+- `moonbeam -> polkadot-hub -> hydration`
+  - transfer `DOT`
+- `moonbeam -> polkadot-hub -> hydration -> polkadot-hub`
+  - swap on Hydration and settle back on Hub
+- `hydration -> polkadot-hub -> moonbeam`
+  - execute an EVM contract call on Moonbeam
+
+This is the main `XRoute` multihop surface across the three chains that already matter most to the product.
+
 ## Real Multihop Examples
 
 - `moonbeam -> polkadot-hub -> hydration`
@@ -328,6 +346,7 @@ npm run test:package
 npm run build
 npm run serve:quote
 npm run serve:executor-relayer
+npm run smoke:core-multihop
 npm run deploy:hydration-snakenet
 npm run deploy:moonbase-router
 npm run deploy:moonbase-target
@@ -351,6 +370,7 @@ Profiles:
 - `paseo`
 - `hydration-snakenet`
 - `moonbase-alpha`
+- `core-multihop`
 - `bifrost-via-hydration`
 - `bifrost-via-moonbeam`
 - `integration`
@@ -450,6 +470,20 @@ This smoke path validates the full four-chain graph at the route-planning and en
 - `swap`
 - `execute/evm-contract-call`
 - `execute/vtoken-order`
+
+## Core Multihop Smoke Flow
+
+Run:
+
+```bash
+npm run smoke:core-multihop
+```
+
+This smoke path validates the focused three-chain multihop surface:
+
+- `moonbeam -> polkadot-hub -> hydration`
+- `moonbeam -> polkadot-hub -> hydration -> polkadot-hub`
+- `hydration -> polkadot-hub -> moonbeam`
 
 ## Moonbase Validation
 

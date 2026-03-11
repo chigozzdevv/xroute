@@ -13,6 +13,7 @@
     "deploy:integration": "forge build --root contracts/polkadot-hub-router && XROUTE_DEPLOYMENT_PROFILE=integration node scripts/deploy-stack.mjs",
     "deploy:mainnet": "forge build --root contracts/polkadot-hub-router && XROUTE_DEPLOYMENT_PROFILE=mainnet node scripts/deploy-stack.mjs",
     "serve:quote": "cargo run -q -p quote-service --",
+    "smoke:core-multihop": "node scripts/run-core-multihop-e2e.mjs",
     "smoke:hydration-snakenet": "node scripts/run-hydration-snakenet-validation.mjs",
     "smoke:integration": "node scripts/run-integration-e2e.mjs",
     "smoke:moonbase": "node scripts/run-moonbase-validation.mjs",

@@ -22,6 +22,14 @@ test("deployment profiles cover public validation, integration, and mainnet surf
     DEPLOYMENT_PROFILES.MOONBASE_ALPHA,
   );
   assert.equal(
+    normalizeDeploymentProfile("core-multihop"),
+    DEPLOYMENT_PROFILES.CORE_MULTIHOP,
+  );
+  assert.equal(
+    normalizeDeploymentProfile("multihop"),
+    DEPLOYMENT_PROFILES.CORE_MULTIHOP,
+  );
+  assert.equal(
     normalizeDeploymentProfile("bifrost-via-hydration"),
     DEPLOYMENT_PROFILES.BIFROST_VIA_HYDRATION,
   );
@@ -34,7 +42,6 @@ test("deployment profiles cover public validation, integration, and mainnet surf
     DEPLOYMENT_PROFILES.BIFROST_VIA_MOONBEAM,
   );
   assert.equal(normalizeDeploymentProfile("lab"), DEPLOYMENT_PROFILES.INTEGRATION);
-  assert.equal(normalizeDeploymentProfile("multihop"), DEPLOYMENT_PROFILES.INTEGRATION);
   assert.equal(normalizeDeploymentProfile("integration"), DEPLOYMENT_PROFILES.INTEGRATION);
   assert.equal(normalizeDeploymentProfile("mainnet"), DEPLOYMENT_PROFILES.MAINNET);
   assert.throws(() => normalizeDeploymentProfile("staging"));

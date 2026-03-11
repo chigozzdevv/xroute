@@ -206,6 +206,9 @@ fn parse_deployment_profile(value: &str) -> Result<DeploymentProfile, String> {
         "moonbase-alpha" | "moonbeam" | "moonbase" | "moonbeam-testnet" => {
             Ok(DeploymentProfile::MoonbaseAlpha)
         }
+        "core-multihop" | "multihop" | "hub-hydration-moonbeam" => {
+            Ok(DeploymentProfile::CoreMultihop)
+        }
         "bifrost-via-hydration"
         | "bifrost-via-hydration-snakenet"
         | "bifrost-via-hydration-testnet" => Ok(DeploymentProfile::BifrostViaHydration),
@@ -213,7 +216,7 @@ fn parse_deployment_profile(value: &str) -> Result<DeploymentProfile, String> {
         | "bifrost-via-moonbeam"
         | "bifrost-via-moonbase"
         | "bifrost-via-moonbeam-testnet" => Ok(DeploymentProfile::BifrostViaMoonbeam),
-        "integration" | "integration-testnet" | "multihop" | "lab" | "multichain-lab" => {
+        "integration" | "integration-testnet" | "lab" | "multichain-lab" => {
             Ok(DeploymentProfile::Integration)
         }
         "mainnet" => Ok(DeploymentProfile::Mainnet),

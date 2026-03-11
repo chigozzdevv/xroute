@@ -6,6 +6,7 @@ export const DEPLOYMENT_PROFILES = Object.freeze({
   PASEO: "paseo",
   HYDRATION_SNAKENET: "hydration-snakenet",
   MOONBASE_ALPHA: "moonbase-alpha",
+  CORE_MULTIHOP: "core-multihop",
   BIFROST_VIA_HYDRATION: "bifrost-via-hydration",
   BIFROST_VIA_MOONBEAM: "bifrost-via-moonbeam",
   INTEGRATION: "integration",
@@ -19,6 +20,8 @@ const DEPLOYMENT_PROFILE_ALIASES = Object.freeze({
   moonbeam: DEPLOYMENT_PROFILES.MOONBASE_ALPHA,
   moonbase: DEPLOYMENT_PROFILES.MOONBASE_ALPHA,
   "moonbeam-testnet": DEPLOYMENT_PROFILES.MOONBASE_ALPHA,
+  "core-multihop": DEPLOYMENT_PROFILES.CORE_MULTIHOP,
+  "hub-hydration-moonbeam": DEPLOYMENT_PROFILES.CORE_MULTIHOP,
   "bifrost-via-hydration-snakenet": DEPLOYMENT_PROFILES.BIFROST_VIA_HYDRATION,
   "bifrost-via-hydration-testnet": DEPLOYMENT_PROFILES.BIFROST_VIA_HYDRATION,
   "bifrost-via-moonbase-alpha": DEPLOYMENT_PROFILES.BIFROST_VIA_MOONBEAM,
@@ -27,7 +30,7 @@ const DEPLOYMENT_PROFILE_ALIASES = Object.freeze({
   "bifrost-via-moonbeam-testnet": DEPLOYMENT_PROFILES.BIFROST_VIA_MOONBEAM,
   lab: DEPLOYMENT_PROFILES.INTEGRATION,
   "multichain-lab": DEPLOYMENT_PROFILES.INTEGRATION,
-  multihop: DEPLOYMENT_PROFILES.INTEGRATION,
+  multihop: DEPLOYMENT_PROFILES.CORE_MULTIHOP,
   "integration-testnet": DEPLOYMENT_PROFILES.INTEGRATION,
 });
 

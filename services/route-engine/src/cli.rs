@@ -143,6 +143,9 @@ fn parse_deployment_profile(value: &str) -> Result<DeploymentProfile, String> {
         "moonbase-alpha" | "moonbeam" | "moonbase" | "moonbeam-testnet" => {
             Ok(DeploymentProfile::MoonbaseAlpha)
         }
+        "core-multihop" | "multihop" | "hub-hydration-moonbeam" => {
+            Ok(DeploymentProfile::CoreMultihop)
+        }
         "bifrost-via-hydration"
         | "bifrost-via-hydration-snakenet"
         | "bifrost-via-hydration-testnet" => Ok(DeploymentProfile::BifrostViaHydration),
@@ -150,7 +153,7 @@ fn parse_deployment_profile(value: &str) -> Result<DeploymentProfile, String> {
         | "bifrost-via-moonbeam"
         | "bifrost-via-moonbase"
         | "bifrost-via-moonbeam-testnet" => Ok(DeploymentProfile::BifrostViaMoonbeam),
-        "integration" | "integration-testnet" | "multihop" | "lab" | "multichain-lab" => {
+        "integration" | "integration-testnet" | "lab" | "multichain-lab" => {
             Ok(DeploymentProfile::Integration)
         }
         "mainnet" => Ok(DeploymentProfile::Mainnet),
@@ -657,7 +660,7 @@ fn route_segment_kind_label(kind: RouteSegmentKind) -> &'static str {
 fn usage() -> String {
     [
         "usage:",
-        "  route-engine quote --source-chain <chain> --destination-chain <chain> --refund-address <address> --deadline <unix-seconds> --action <transfer|swap|execute> [action flags] [--deployment-profile <paseo|hydration-snakenet|moonbase-alpha|integration|mainnet>]",
+        "  route-engine quote --source-chain <chain> --destination-chain <chain> --refund-address <address> --deadline <unix-seconds> --action <transfer|swap|execute> [action flags] [--deployment-profile <paseo|hydration-snakenet|moonbase-alpha|core-multihop|integration|mainnet>]",
         "",
         "action flags:",
         "  transfer: --asset <symbol> --amount <units> --recipient <address>",

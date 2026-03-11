@@ -48,6 +48,7 @@ impl RouteRegistry {
             DeploymentProfile::Paseo => Self::paseo(),
             DeploymentProfile::HydrationSnakenet => Self::hydration_snakenet(),
             DeploymentProfile::MoonbaseAlpha => Self::moonbase_alpha(),
+            DeploymentProfile::CoreMultihop => Self::core_multihop(),
             DeploymentProfile::BifrostViaHydration => Self::bifrost_via_hydration(),
             DeploymentProfile::BifrostViaMoonbeam => Self::bifrost_via_moonbeam(),
             DeploymentProfile::Integration => Self::integration(),
@@ -139,6 +140,90 @@ impl RouteRegistry {
             ],
             swap_routes: vec![],
             execute_capabilities: vec![
+                ExecuteCapability {
+                    destination: ChainKey::Moonbeam,
+                    asset: AssetKey::Dot,
+                    execution_type: ExecutionType::RuntimeCall,
+                },
+                ExecuteCapability {
+                    destination: ChainKey::Moonbeam,
+                    asset: AssetKey::Dot,
+                    execution_type: ExecutionType::EvmContractCall,
+                },
+            ],
+        }
+    }
+
+    fn core_multihop() -> Self {
+        Self {
+            transfer_edges: vec![
+                TransferEdge {
+                    source: ChainKey::PolkadotHub,
+                    destination: ChainKey::Moonbeam,
+                    asset: AssetKey::Dot,
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 110_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 90_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Moonbeam,
+                    destination: ChainKey::PolkadotHub,
+                    asset: AssetKey::Dot,
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 110_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 90_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::PolkadotHub,
+                    destination: ChainKey::Hydration,
+                    asset: AssetKey::Dot,
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 150_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 90_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Hydration,
+                    destination: ChainKey::PolkadotHub,
+                    asset: AssetKey::Dot,
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 150_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 90_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Hydration,
+                    destination: ChainKey::PolkadotHub,
+                    asset: AssetKey::Usdt,
+                    transport_fee: AssetAmount::new(AssetKey::Usdt, 25_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Usdt, 10_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Hydration,
+                    destination: ChainKey::PolkadotHub,
+                    asset: AssetKey::Hdx,
+                    transport_fee: AssetAmount::new(AssetKey::Hdx, 50_000_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Hdx, 20_000_000_000),
+                },
+            ],
+            swap_routes: vec![
+                SwapRoute {
+                    destination: ChainKey::Hydration,
+                    asset_in: AssetKey::Dot,
+                    asset_out: AssetKey::Usdt,
+                    price_numerator: 495,
+                    price_denominator: 100,
+                    dex_fee_bps: 30,
+                },
+                SwapRoute {
+                    destination: ChainKey::Hydration,
+                    asset_in: AssetKey::Dot,
+                    asset_out: AssetKey::Hdx,
+                    price_numerator: 150,
+                    price_denominator: 1,
+                    dex_fee_bps: 25,
+                },
+            ],
+            execute_capabilities: vec![
+                ExecuteCapability {
+                    destination: ChainKey::Hydration,
+                    asset: AssetKey::Dot,
+                    execution_type: ExecutionType::RuntimeCall,
+                },
                 ExecuteCapability {
                     destination: ChainKey::Moonbeam,
                     asset: AssetKey::Dot,

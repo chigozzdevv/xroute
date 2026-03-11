@@ -155,6 +155,69 @@ test("route engine quote provider supports execute validation on moonbase-alpha"
   assert.deepEqual(quote.route, ["polkadot-hub", "moonbeam"]);
 });
 
+test("route engine quote provider exposes the focused core multihop profile", async () => {
+  const provider = createRouteEngineQuoteProvider({
+    cwd: workspaceRoot,
+    deploymentProfile: "core-multihop",
+  });
+  const transferIntent = createTransferIntent({
+    deploymentProfile: "core-multihop",
+    sourceChain: "moonbeam",
+    destinationChain: "hydration",
+    refundAddress: walletAddress,
+    deadline: 1_773_185_200,
+    params: {
+      asset: "DOT",
+      amount: "250000000000",
+      recipient: recipientAddress,
+    },
+  });
+  const swapIntent = createSwapIntent({
+    deploymentProfile: "core-multihop",
+    sourceChain: "moonbeam",
+    destinationChain: "hydration",
+    refundAddress: walletAddress,
+    deadline: 1_773_185_200,
+    params: {
+      assetIn: "DOT",
+      assetOut: "USDT",
+      amountIn: "1000000000000",
+      minAmountOut: "490000000",
+      settlementChain: "polkadot-hub",
+      recipient: recipientAddress,
+    },
+  });
+  const executeIntent = createExecuteIntent({
+    deploymentProfile: "core-multihop",
+    sourceChain: "hydration",
+    destinationChain: "moonbeam",
+    refundAddress: walletAddress,
+    deadline: 1_773_185_200,
+    params: {
+      executionType: "evm-contract-call",
+      asset: "DOT",
+      maxPaymentAmount: "200000000",
+      contractAddress: "0x1111111111111111111111111111111111111111",
+      calldata: "0xdeadbeef",
+      value: "0",
+      gasLimit: "250000",
+      fallbackWeight: {
+        refTime: 650000000,
+        proofSize: 12288,
+      },
+    },
+  });
+
+  const transferQuote = normalizeQuote(await provider.quote(transferIntent));
+  const swapQuote = normalizeQuote(await provider.quote(swapIntent));
+  const executeQuote = normalizeQuote(await provider.quote(executeIntent));
+
+  assert.equal(transferQuote.deploymentProfile, DEPLOYMENT_PROFILES.CORE_MULTIHOP);
+  assert.deepEqual(transferQuote.route, ["moonbeam", "polkadot-hub", "hydration"]);
+  assert.deepEqual(swapQuote.route, ["moonbeam", "polkadot-hub", "hydration", "polkadot-hub"]);
+  assert.deepEqual(executeQuote.route, ["hydration", "polkadot-hub", "moonbeam"]);
+});
+
 test("route engine quote provider supports Bifrost validation through Hydration", async () => {
   const provider = createRouteEngineQuoteProvider({
     cwd: workspaceRoot,

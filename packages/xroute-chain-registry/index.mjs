@@ -422,6 +422,17 @@ const MOONBASE_ALPHA_PROFILE = subsetProfile({
   ],
 });
 
+const CORE_MULTIHOP_PROFILE = subsetProfile({
+  chains: ["polkadot-hub", "hydration", "moonbeam"],
+  assets: ["DOT", "USDT", "HDX"],
+  routes: [
+    { sourceChain: "polkadot-hub", destinationChain: "hydration" },
+    { sourceChain: "hydration", destinationChain: "polkadot-hub" },
+    { sourceChain: "polkadot-hub", destinationChain: "moonbeam" },
+    { sourceChain: "moonbeam", destinationChain: "polkadot-hub" },
+  ],
+});
+
 const BIFROST_VIA_HYDRATION_PROFILE = subsetProfile({
   chains: ["hydration", "bifrost"],
   assets: ["DOT", "VDOT"],
@@ -447,6 +458,7 @@ const ROUTE_PROFILES = Object.freeze({
   [DEPLOYMENT_PROFILES.PASEO]: PASEO_PROFILE,
   [DEPLOYMENT_PROFILES.HYDRATION_SNAKENET]: HYDRATION_SNAKENET_PROFILE,
   [DEPLOYMENT_PROFILES.MOONBASE_ALPHA]: MOONBASE_ALPHA_PROFILE,
+  [DEPLOYMENT_PROFILES.CORE_MULTIHOP]: CORE_MULTIHOP_PROFILE,
   [DEPLOYMENT_PROFILES.BIFROST_VIA_HYDRATION]: BIFROST_VIA_HYDRATION_PROFILE,
   [DEPLOYMENT_PROFILES.BIFROST_VIA_MOONBEAM]: BIFROST_VIA_MOONBEAM_PROFILE,
   [DEPLOYMENT_PROFILES.INTEGRATION]: INTEGRATION_PROFILE,

@@ -38,6 +38,10 @@ fn moonbase_alpha_engine() -> RouteEngine {
     engine_for_profile(DeploymentProfile::MoonbaseAlpha)
 }
 
+fn core_multihop_engine() -> RouteEngine {
+    engine_for_profile(DeploymentProfile::CoreMultihop)
+}
+
 fn bifrost_via_hydration_engine() -> RouteEngine {
     engine_for_profile(DeploymentProfile::BifrostViaHydration)
 }
@@ -393,6 +397,30 @@ fn quotes_multihop_transfer_from_moonbeam_to_hydration() {
 }
 
 #[test]
+fn quotes_core_multihop_transfer_from_moonbeam_to_hydration() {
+    let engine = core_multihop_engine();
+    let intent = Intent {
+        source_chain: ChainKey::Moonbeam,
+        destination_chain: ChainKey::Hydration,
+        action: IntentAction::Transfer(TransferIntent {
+            asset: AssetKey::Dot,
+            amount: AssetKey::Dot.units(25),
+            recipient: "5FcoreMultihopRecipient".to_owned(),
+        }),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let quote = engine.quote(intent).expect("core multihop transfer should build");
+
+    assert_eq!(quote.deployment_profile, DeploymentProfile::CoreMultihop);
+    assert_eq!(
+        quote.route,
+        vec![ChainKey::Moonbeam, ChainKey::PolkadotHub, ChainKey::Hydration]
+    );
+}
+
+#[test]
 fn quotes_multihop_swap_from_moonbeam_to_hydration_with_hub_settlement() {
     let engine = mainnet_engine();
     let intent = Intent {
@@ -449,6 +477,38 @@ fn quotes_multihop_swap_from_moonbeam_to_hydration_with_hub_settlement() {
         nested_transfer.remote_instructions()[2],
         XcmInstruction::InitiateReserveWithdraw { .. }
     ));
+}
+
+#[test]
+fn quotes_core_multihop_swap_from_moonbeam_to_hydration_with_hub_settlement() {
+    let engine = core_multihop_engine();
+    let intent = Intent {
+        source_chain: ChainKey::Moonbeam,
+        destination_chain: ChainKey::Hydration,
+        action: IntentAction::Swap(SwapIntent {
+            asset_in: AssetKey::Dot,
+            asset_out: AssetKey::Usdt,
+            amount_in: AssetKey::Dot.units(10),
+            min_amount_out: AssetKey::Usdt.units(49),
+            settlement_chain: ChainKey::PolkadotHub,
+            recipient: "5FcoreMultihopSwapRecipient".to_owned(),
+        }),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let quote = engine.quote(intent).expect("core multihop swap should build");
+
+    assert_eq!(quote.deployment_profile, DeploymentProfile::CoreMultihop);
+    assert_eq!(
+        quote.route,
+        vec![
+            ChainKey::Moonbeam,
+            ChainKey::PolkadotHub,
+            ChainKey::Hydration,
+            ChainKey::PolkadotHub,
+        ]
+    );
 }
 
 #[test]
@@ -785,6 +845,41 @@ fn quotes_multihop_execute_evm_contract_call_on_moonbeam() {
         }
         other => panic!("expected transact instruction, got {other:?}"),
     }
+}
+
+#[test]
+fn quotes_core_multihop_execute_evm_contract_call_on_moonbeam() {
+    let engine = core_multihop_engine();
+    let intent = Intent {
+        source_chain: ChainKey::Hydration,
+        destination_chain: ChainKey::Moonbeam,
+        action: IntentAction::Execute(ExecuteIntent::EvmContractCall(
+            EvmContractCallExecuteIntent {
+                asset: AssetKey::Dot,
+                max_payment_amount: 200_000_000,
+                contract_address: "0x1111111111111111111111111111111111111111".to_owned(),
+                calldata: "0xdeadbeef".to_owned(),
+                value: 0,
+                gas_limit: 250_000,
+                fallback_weight: XcmWeight {
+                    ref_time: 650_000_000,
+                    proof_size: 12_288,
+                },
+            },
+        )),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let quote = engine
+        .quote(intent)
+        .expect("core multihop evm execute should build");
+
+    assert_eq!(quote.deployment_profile, DeploymentProfile::CoreMultihop);
+    assert_eq!(
+        quote.route,
+        vec![ChainKey::Hydration, ChainKey::PolkadotHub, ChainKey::Moonbeam]
+    );
 }
 
 #[test]
