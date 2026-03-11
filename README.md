@@ -43,22 +43,22 @@ XRoute turns that into:
   - public Moonbeam validation profile
   - routes: `polkadot-hub <-> moonbeam`
   - actions: `transfer`, `execute/runtime-call`, `execute/evm-contract-call`
-- `bifrost-via-hydration`
-  - public Bifrost capability profile through Hydration
-  - routes: `hydration <-> bifrost`
-  - actions: `transfer`, `execute/runtime-call`, `execute/vtoken-order`
-- `bifrost-via-moonbase-alpha`
-  - public Bifrost capability profile through Moonbeam
-  - routes: `moonbeam <-> bifrost`
-  - actions: `transfer`, `execute/runtime-call`, `execute/vtoken-order`
 
 These profiles are the real public-network validation targets. They are intentionally split because the ecosystem does not expose one shared four-chain public testnet fabric.
 
-### Internal and Production Profiles
+### Capability and Production Profiles
 
 - `integration`
-  - dedicated multichain lab profile for full-system regression
+  - dedicated multichain graph profile for full-system regression
   - full four-chain graph
+- `bifrost-via-hydration`
+  - docs-backed Bifrost capability profile through Hydration
+  - routes: `hydration <-> bifrost`
+  - actions: `transfer`, `execute/runtime-call`, `execute/vtoken-order`
+- `bifrost-via-moonbeam`
+  - docs-backed Bifrost capability profile through Moonbeam
+  - routes: `moonbeam <-> bifrost`
+  - actions: `transfer`, `execute/runtime-call`, `execute/vtoken-order`
 - `mainnet`
   - production graph
   - `polkadot-hub <-> hydration`
@@ -98,7 +98,7 @@ These profiles are the real public-network validation targets. They are intentio
 - `bifrost-via-hydration`
   - `DOT`
   - `VDOT`
-- `bifrost-via-moonbase-alpha`
+- `bifrost-via-moonbeam`
   - `DOT`
   - `VDOT`
 - `integration`
@@ -159,7 +159,7 @@ Supported capabilities:
 
 ### Bifrost Via Hydration
 
-Public validation target:
+Docs-backed capability target:
 
 - `hydration -> bifrost`
 - `bifrost -> hydration`
@@ -170,9 +170,14 @@ Supported capabilities:
 - `execute/runtime-call`
 - `execute/vtoken-order`
 
-### Bifrost Via Moonbase Alpha
+Live validation note:
 
-Public validation target:
+- this profile is not currently published as a public proof route
+- it still needs a funded supported source environment before an honest live broadcast can run
+
+### Bifrost Via Moonbeam
+
+Docs-backed capability target:
 
 - `moonbeam -> bifrost`
 - `bifrost -> moonbeam`
@@ -182,6 +187,11 @@ Supported capabilities:
 - `transfer`
 - `execute/runtime-call`
 - `execute/vtoken-order`
+
+Live validation note:
+
+- this profile is not currently published as a public proof route
+- it still needs funded `GLMR` and source asset funding on real `Moonbeam`
 
 ### Integration
 
@@ -342,7 +352,7 @@ Profiles:
 - `hydration-snakenet`
 - `moonbase-alpha`
 - `bifrost-via-hydration`
-- `bifrost-via-moonbase-alpha`
+- `bifrost-via-moonbeam`
 - `integration`
 - `mainnet`
 
@@ -517,7 +527,7 @@ const relayer = createHttpExecutorRelayerClient({
 });
 ```
 
-Use the public validation profiles for real-network proof work, and switch to `mainnet` when you are ready to route on the live product graph.
+Use the public validation profiles for real-network proof work. Use the Bifrost capability profiles only when the supported source chain is funded and ready for a real live route.
 
 ### Paseo Transfer
 
@@ -594,7 +604,7 @@ const { intent, quote } = await client.quote({
 
 ```ts
 const mintIntent = await client.quote({
-  deploymentProfile: "bifrost-via-moonbase-alpha",
+  deploymentProfile: "bifrost-via-moonbeam",
   sourceChain: "moonbeam",
   destinationChain: "bifrost",
   refundAddress: "0x1111111111111111111111111111111111111111",
@@ -619,7 +629,7 @@ const mintIntent = await client.quote({
 });
 
 const redeemIntent = await client.quote({
-  deploymentProfile: "bifrost-via-moonbase-alpha",
+  deploymentProfile: "bifrost-via-moonbeam",
   sourceChain: "moonbeam",
   destinationChain: "bifrost",
   refundAddress: "0x1111111111111111111111111111111111111111",

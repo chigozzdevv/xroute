@@ -43,7 +43,7 @@ fn bifrost_via_hydration_engine() -> RouteEngine {
 }
 
 fn bifrost_via_moonbase_alpha_engine() -> RouteEngine {
-    engine_for_profile(DeploymentProfile::BifrostViaMoonbaseAlpha)
+    engine_for_profile(DeploymentProfile::BifrostViaMoonbeam)
 }
 
 #[test]
@@ -1077,7 +1077,7 @@ fn quotes_vtoken_order_on_bifrost_via_moonbase_alpha_profile() {
 
     assert_eq!(
         quote.deployment_profile,
-        DeploymentProfile::BifrostViaMoonbaseAlpha
+        DeploymentProfile::BifrostViaMoonbeam
     );
     assert_eq!(quote.route, vec![ChainKey::Moonbeam, ChainKey::Bifrost]);
 }

@@ -111,8 +111,8 @@ test("bifrost-via-hydration exposes only the docs-backed Hydration to Bifrost ca
   );
 });
 
-test("bifrost-via-moonbase-alpha exposes only the docs-backed Moonbeam to Bifrost capability path", () => {
-  assert.deepEqual(findTransferPath("moonbeam", "bifrost", "DOT", "bifrost-via-moonbase-alpha"), [
+test("bifrost-via-moonbeam exposes only the docs-backed Moonbeam to Bifrost capability path", () => {
+  assert.deepEqual(findTransferPath("moonbeam", "bifrost", "DOT", "bifrost-via-moonbeam"), [
     "moonbeam",
     "bifrost",
   ]);
@@ -121,12 +121,12 @@ test("bifrost-via-moonbase-alpha exposes only the docs-backed Moonbeam to Bifros
     "bifrost",
     "DOT",
     "vtoken-order",
-    "bifrost-via-moonbase-alpha",
+    "bifrost-via-moonbeam",
   );
 
   assert.deepEqual(route.path, ["moonbeam", "bifrost"]);
   assert.throws(
-    () => findTransferPath("polkadot-hub", "bifrost", "DOT", "bifrost-via-moonbase-alpha"),
+    () => findTransferPath("polkadot-hub", "bifrost", "DOT", "bifrost-via-moonbeam"),
     /unsupported chain/,
   );
 });

@@ -212,7 +212,7 @@ fn parse_deployment_profile(value: &str) -> Result<DeploymentProfile, String> {
         "bifrost-via-moonbase-alpha"
         | "bifrost-via-moonbeam"
         | "bifrost-via-moonbase"
-        | "bifrost-via-moonbeam-testnet" => Ok(DeploymentProfile::BifrostViaMoonbaseAlpha),
+        | "bifrost-via-moonbeam-testnet" => Ok(DeploymentProfile::BifrostViaMoonbeam),
         "integration" | "integration-testnet" | "multihop" | "lab" | "multichain-lab" => {
             Ok(DeploymentProfile::Integration)
         }

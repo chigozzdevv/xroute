@@ -27,7 +27,11 @@ test("deployment profiles cover public validation, integration, and mainnet surf
   );
   assert.equal(
     normalizeDeploymentProfile("bifrost-via-moonbeam"),
-    DEPLOYMENT_PROFILES.BIFROST_VIA_MOONBASE_ALPHA,
+    DEPLOYMENT_PROFILES.BIFROST_VIA_MOONBEAM,
+  );
+  assert.equal(
+    normalizeDeploymentProfile("bifrost-via-moonbase-alpha"),
+    DEPLOYMENT_PROFILES.BIFROST_VIA_MOONBEAM,
   );
   assert.equal(normalizeDeploymentProfile("lab"), DEPLOYMENT_PROFILES.INTEGRATION);
   assert.equal(normalizeDeploymentProfile("multihop"), DEPLOYMENT_PROFILES.INTEGRATION);

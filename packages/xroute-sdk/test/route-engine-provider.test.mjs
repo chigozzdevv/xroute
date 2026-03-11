@@ -190,7 +190,7 @@ test("route engine quote provider supports Bifrost validation through Hydration"
 test("route engine quote provider supports Bifrost validation through Moonbeam", async () => {
   const provider = createRouteEngineQuoteProvider({
     cwd: workspaceRoot,
-    deploymentProfile: "bifrost-via-moonbase-alpha",
+    deploymentProfile: "bifrost-via-moonbeam",
   });
   const intent = createExecuteIntent({
     sourceChain: "moonbeam",
@@ -215,7 +215,7 @@ test("route engine quote provider supports Bifrost validation through Moonbeam",
 
   const quote = normalizeQuote(await provider.quote(intent));
 
-  assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.BIFROST_VIA_MOONBASE_ALPHA);
+  assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.BIFROST_VIA_MOONBEAM);
   assert.deepEqual(quote.route, ["moonbeam", "bifrost"]);
 });
 

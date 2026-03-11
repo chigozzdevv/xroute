@@ -49,7 +49,7 @@ impl RouteRegistry {
             DeploymentProfile::HydrationSnakenet => Self::hydration_snakenet(),
             DeploymentProfile::MoonbaseAlpha => Self::moonbase_alpha(),
             DeploymentProfile::BifrostViaHydration => Self::bifrost_via_hydration(),
-            DeploymentProfile::BifrostViaMoonbaseAlpha => Self::bifrost_via_moonbase_alpha(),
+            DeploymentProfile::BifrostViaMoonbeam => Self::bifrost_via_moonbeam(),
             DeploymentProfile::Integration => Self::integration(),
             DeploymentProfile::Mainnet => Self::mainnet(),
         }
@@ -206,7 +206,7 @@ impl RouteRegistry {
         }
     }
 
-    fn bifrost_via_moonbase_alpha() -> Self {
+    fn bifrost_via_moonbeam() -> Self {
         Self {
             transfer_edges: vec![
                 TransferEdge {

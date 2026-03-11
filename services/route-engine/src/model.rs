@@ -33,7 +33,7 @@ pub enum DeploymentProfile {
     HydrationSnakenet,
     MoonbaseAlpha,
     BifrostViaHydration,
-    BifrostViaMoonbaseAlpha,
+    BifrostViaMoonbeam,
     Integration,
     Mainnet,
 }
@@ -45,7 +45,7 @@ impl DeploymentProfile {
             Self::HydrationSnakenet => "hydration-snakenet",
             Self::MoonbaseAlpha => "moonbase-alpha",
             Self::BifrostViaHydration => "bifrost-via-hydration",
-            Self::BifrostViaMoonbaseAlpha => "bifrost-via-moonbase-alpha",
+            Self::BifrostViaMoonbeam => "bifrost-via-moonbeam",
             Self::Integration => "integration",
             Self::Mainnet => "mainnet",
         }
