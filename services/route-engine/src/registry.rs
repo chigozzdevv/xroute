@@ -11,6 +11,18 @@ pub struct TransferEdge {
     pub buy_execution_fee: AssetAmount,
 }
 
+impl TransferEdge {
+    pub fn to_route_hop(self) -> RouteHop {
+        RouteHop {
+            source: self.source,
+            destination: self.destination,
+            asset: self.asset,
+            transport_fee: self.transport_fee,
+            buy_execution_fee: self.buy_execution_fee,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransferPath {
     pub route: Vec<ChainKey>,
@@ -43,464 +55,106 @@ impl Default for RouteRegistry {
 }
 
 impl RouteRegistry {
-    pub fn for_profile(profile: DeploymentProfile) -> Self {
-        match profile {
-            DeploymentProfile::Paseo => Self::paseo(),
-            DeploymentProfile::HydrationSnakenet => Self::hydration_snakenet(),
-            DeploymentProfile::MoonbaseAlpha => Self::moonbase_alpha(),
-            DeploymentProfile::CoreMultihop => Self::core_multihop(),
-            DeploymentProfile::BifrostViaHydration => Self::bifrost_via_hydration(),
-            DeploymentProfile::BifrostViaMoonbeam => Self::bifrost_via_moonbeam(),
-            DeploymentProfile::Integration => Self::integration(),
-            DeploymentProfile::Mainnet => Self::mainnet(),
-        }
-    }
-
-    fn paseo() -> Self {
-        Self {
-            transfer_edges: vec![TransferEdge {
-                source: ChainKey::PolkadotHub,
-                destination: ChainKey::People,
-                asset: AssetKey::Pas,
-                transport_fee: AssetAmount::new(AssetKey::Pas, 100_000_000),
-                buy_execution_fee: AssetAmount::new(AssetKey::Pas, 100_000_000),
-            }],
-            swap_routes: vec![],
-            execute_capabilities: vec![],
-        }
-    }
-
-    fn hydration_snakenet() -> Self {
-        Self {
-            transfer_edges: vec![
-                TransferEdge {
-                    source: ChainKey::PolkadotHub,
-                    destination: ChainKey::Hydration,
-                    asset: AssetKey::Pas,
-                    transport_fee: AssetAmount::new(AssetKey::Pas, 150_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Pas, 90_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Hydration,
-                    destination: ChainKey::PolkadotHub,
-                    asset: AssetKey::Pas,
-                    transport_fee: AssetAmount::new(AssetKey::Pas, 150_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Pas, 90_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Hydration,
-                    destination: ChainKey::PolkadotHub,
-                    asset: AssetKey::Hdx,
-                    transport_fee: AssetAmount::new(AssetKey::Hdx, 50_000_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Hdx, 20_000_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Hydration,
-                    destination: ChainKey::PolkadotHub,
-                    asset: AssetKey::Hdx,
-                    transport_fee: AssetAmount::new(AssetKey::Hdx, 50_000_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Hdx, 20_000_000_000),
-                },
-            ],
-            swap_routes: vec![
-                SwapRoute {
-                    destination: ChainKey::Hydration,
-                    asset_in: AssetKey::Pas,
-                    asset_out: AssetKey::Hdx,
-                    price_numerator: 150,
-                    price_denominator: 1,
-                    dex_fee_bps: 25,
-                },
-            ],
-            execute_capabilities: vec![ExecuteCapability {
-                destination: ChainKey::Hydration,
-                asset: AssetKey::Pas,
-                execution_type: ExecutionType::RuntimeCall,
-            }],
-        }
-    }
-
-    fn moonbase_alpha() -> Self {
-        Self {
-            transfer_edges: vec![
-                TransferEdge {
-                    source: ChainKey::PolkadotHub,
-                    destination: ChainKey::Moonbeam,
-                    asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 180_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 110_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Moonbeam,
-                    destination: ChainKey::PolkadotHub,
-                    asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 180_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 110_000_000),
-                },
-            ],
-            swap_routes: vec![],
-            execute_capabilities: vec![
-                ExecuteCapability {
-                    destination: ChainKey::Moonbeam,
-                    asset: AssetKey::Dot,
-                    execution_type: ExecutionType::RuntimeCall,
-                },
-                ExecuteCapability {
-                    destination: ChainKey::Moonbeam,
-                    asset: AssetKey::Dot,
-                    execution_type: ExecutionType::EvmContractCall,
-                },
-            ],
-        }
-    }
-
-    fn core_multihop() -> Self {
-        Self {
-            transfer_edges: vec![
-                TransferEdge {
-                    source: ChainKey::PolkadotHub,
-                    destination: ChainKey::Moonbeam,
-                    asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 110_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 90_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Moonbeam,
-                    destination: ChainKey::PolkadotHub,
-                    asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 110_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 90_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::PolkadotHub,
-                    destination: ChainKey::Hydration,
-                    asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 150_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 90_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Hydration,
-                    destination: ChainKey::PolkadotHub,
-                    asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 150_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 90_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Hydration,
-                    destination: ChainKey::PolkadotHub,
-                    asset: AssetKey::Usdt,
-                    transport_fee: AssetAmount::new(AssetKey::Usdt, 25_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Usdt, 10_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Hydration,
-                    destination: ChainKey::PolkadotHub,
-                    asset: AssetKey::Hdx,
-                    transport_fee: AssetAmount::new(AssetKey::Hdx, 50_000_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Hdx, 20_000_000_000),
-                },
-            ],
-            swap_routes: vec![
-                SwapRoute {
-                    destination: ChainKey::Hydration,
-                    asset_in: AssetKey::Dot,
-                    asset_out: AssetKey::Usdt,
-                    price_numerator: 495,
-                    price_denominator: 100,
-                    dex_fee_bps: 30,
-                },
-                SwapRoute {
-                    destination: ChainKey::Hydration,
-                    asset_in: AssetKey::Dot,
-                    asset_out: AssetKey::Hdx,
-                    price_numerator: 150,
-                    price_denominator: 1,
-                    dex_fee_bps: 25,
-                },
-            ],
-            execute_capabilities: vec![
-                ExecuteCapability {
-                    destination: ChainKey::Hydration,
-                    asset: AssetKey::Dot,
-                    execution_type: ExecutionType::RuntimeCall,
-                },
-                ExecuteCapability {
-                    destination: ChainKey::Moonbeam,
-                    asset: AssetKey::Dot,
-                    execution_type: ExecutionType::RuntimeCall,
-                },
-                ExecuteCapability {
-                    destination: ChainKey::Moonbeam,
-                    asset: AssetKey::Dot,
-                    execution_type: ExecutionType::EvmContractCall,
-                },
-            ],
-        }
-    }
-
-    fn bifrost_via_hydration() -> Self {
-        Self {
-            transfer_edges: vec![
-                TransferEdge {
-                    source: ChainKey::Hydration,
-                    destination: ChainKey::Bifrost,
-                    asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 175_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 105_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Hydration,
-                    destination: ChainKey::Bifrost,
-                    asset: AssetKey::Vdot,
-                    transport_fee: AssetAmount::new(AssetKey::Vdot, 175_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Vdot, 105_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Bifrost,
-                    destination: ChainKey::Hydration,
-                    asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 175_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 105_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Bifrost,
-                    destination: ChainKey::Hydration,
-                    asset: AssetKey::Vdot,
-                    transport_fee: AssetAmount::new(AssetKey::Vdot, 175_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Vdot, 105_000_000),
-                },
-            ],
-            swap_routes: vec![],
-            execute_capabilities: vec![
-                ExecuteCapability {
-                    destination: ChainKey::Bifrost,
-                    asset: AssetKey::Dot,
-                    execution_type: ExecutionType::RuntimeCall,
-                },
-                ExecuteCapability {
-                    destination: ChainKey::Bifrost,
-                    asset: AssetKey::Dot,
-                    execution_type: ExecutionType::VtokenOrder,
-                },
-                ExecuteCapability {
-                    destination: ChainKey::Bifrost,
-                    asset: AssetKey::Vdot,
-                    execution_type: ExecutionType::VtokenOrder,
-                },
-            ],
-        }
-    }
-
-    fn bifrost_via_moonbeam() -> Self {
-        Self {
-            transfer_edges: vec![
-                TransferEdge {
-                    source: ChainKey::Moonbeam,
-                    destination: ChainKey::Bifrost,
-                    asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 130_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 80_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Moonbeam,
-                    destination: ChainKey::Bifrost,
-                    asset: AssetKey::Vdot,
-                    transport_fee: AssetAmount::new(AssetKey::Vdot, 130_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Vdot, 80_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Bifrost,
-                    destination: ChainKey::Moonbeam,
-                    asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 130_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 80_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Bifrost,
-                    destination: ChainKey::Moonbeam,
-                    asset: AssetKey::Vdot,
-                    transport_fee: AssetAmount::new(AssetKey::Vdot, 130_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Vdot, 80_000_000),
-                },
-            ],
-            swap_routes: vec![],
-            execute_capabilities: vec![
-                ExecuteCapability {
-                    destination: ChainKey::Bifrost,
-                    asset: AssetKey::Dot,
-                    execution_type: ExecutionType::RuntimeCall,
-                },
-                ExecuteCapability {
-                    destination: ChainKey::Bifrost,
-                    asset: AssetKey::Dot,
-                    execution_type: ExecutionType::VtokenOrder,
-                },
-                ExecuteCapability {
-                    destination: ChainKey::Bifrost,
-                    asset: AssetKey::Vdot,
-                    execution_type: ExecutionType::VtokenOrder,
-                },
-            ],
-        }
-    }
-
-    fn integration() -> Self {
-        Self {
-            transfer_edges: vec![
-                TransferEdge {
-                    source: ChainKey::PolkadotHub,
-                    destination: ChainKey::Hydration,
-                    asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 150_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 90_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Hydration,
-                    destination: ChainKey::PolkadotHub,
-                    asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 150_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 90_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Hydration,
-                    destination: ChainKey::PolkadotHub,
-                    asset: AssetKey::Usdt,
-                    transport_fee: AssetAmount::new(AssetKey::Usdt, 25_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Usdt, 10_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Hydration,
-                    destination: ChainKey::PolkadotHub,
-                    asset: AssetKey::Hdx,
-                    transport_fee: AssetAmount::new(AssetKey::Hdx, 50_000_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Hdx, 20_000_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::PolkadotHub,
-                    destination: ChainKey::Moonbeam,
-                    asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 180_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 110_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Moonbeam,
-                    destination: ChainKey::PolkadotHub,
-                    asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 180_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 110_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Moonbeam,
-                    destination: ChainKey::Bifrost,
-                    asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 130_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 80_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Moonbeam,
-                    destination: ChainKey::Bifrost,
-                    asset: AssetKey::Vdot,
-                    transport_fee: AssetAmount::new(AssetKey::Vdot, 130_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Vdot, 80_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Bifrost,
-                    destination: ChainKey::Moonbeam,
-                    asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 130_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 80_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Bifrost,
-                    destination: ChainKey::Moonbeam,
-                    asset: AssetKey::Vdot,
-                    transport_fee: AssetAmount::new(AssetKey::Vdot, 130_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Vdot, 80_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Hydration,
-                    destination: ChainKey::Bifrost,
-                    asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 175_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 105_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Hydration,
-                    destination: ChainKey::Bifrost,
-                    asset: AssetKey::Vdot,
-                    transport_fee: AssetAmount::new(AssetKey::Vdot, 175_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Vdot, 105_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Bifrost,
-                    destination: ChainKey::Hydration,
-                    asset: AssetKey::Dot,
-                    transport_fee: AssetAmount::new(AssetKey::Dot, 175_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 105_000_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Bifrost,
-                    destination: ChainKey::Hydration,
-                    asset: AssetKey::Vdot,
-                    transport_fee: AssetAmount::new(AssetKey::Vdot, 175_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Vdot, 105_000_000),
-                },
-            ],
-            swap_routes: vec![
-                SwapRoute {
-                    destination: ChainKey::Hydration,
-                    asset_in: AssetKey::Dot,
-                    asset_out: AssetKey::Usdt,
-                    price_numerator: 495,
-                    price_denominator: 100,
-                    dex_fee_bps: 30,
-                },
-                SwapRoute {
-                    destination: ChainKey::Hydration,
-                    asset_in: AssetKey::Dot,
-                    asset_out: AssetKey::Hdx,
-                    price_numerator: 150,
-                    price_denominator: 1,
-                    dex_fee_bps: 25,
-                },
-            ],
-            execute_capabilities: vec![
-                ExecuteCapability {
-                    destination: ChainKey::Hydration,
-                    asset: AssetKey::Dot,
-                    execution_type: ExecutionType::RuntimeCall,
-                },
-                ExecuteCapability {
-                    destination: ChainKey::Moonbeam,
-                    asset: AssetKey::Dot,
-                    execution_type: ExecutionType::RuntimeCall,
-                },
-                ExecuteCapability {
-                    destination: ChainKey::Moonbeam,
-                    asset: AssetKey::Dot,
-                    execution_type: ExecutionType::EvmContractCall,
-                },
-                ExecuteCapability {
-                    destination: ChainKey::Bifrost,
-                    asset: AssetKey::Dot,
-                    execution_type: ExecutionType::RuntimeCall,
-                },
-                ExecuteCapability {
-                    destination: ChainKey::Bifrost,
-                    asset: AssetKey::Dot,
-                    execution_type: ExecutionType::VtokenOrder,
-                },
-                ExecuteCapability {
-                    destination: ChainKey::Bifrost,
-                    asset: AssetKey::Vdot,
-                    execution_type: ExecutionType::VtokenOrder,
-                },
-            ],
-        }
+    pub fn for_profile(_profile: DeploymentProfile) -> Self {
+        Self::mainnet()
     }
 
     fn mainnet() -> Self {
-        Self::integration()
+        Self {
+            transfer_edges: vec![
+                TransferEdge {
+                    source: ChainKey::PolkadotHub,
+                    destination: ChainKey::Hydration,
+                    asset: AssetKey::Dot,
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 150_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 90_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Hydration,
+                    destination: ChainKey::PolkadotHub,
+                    asset: AssetKey::Dot,
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 150_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 90_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Hydration,
+                    destination: ChainKey::PolkadotHub,
+                    asset: AssetKey::Usdt,
+                    transport_fee: AssetAmount::new(AssetKey::Usdt, 25_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Usdt, 10_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Hydration,
+                    destination: ChainKey::PolkadotHub,
+                    asset: AssetKey::Hdx,
+                    transport_fee: AssetAmount::new(AssetKey::Hdx, 50_000_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Hdx, 20_000_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::PolkadotHub,
+                    destination: ChainKey::Moonbeam,
+                    asset: AssetKey::Dot,
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 180_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 110_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Moonbeam,
+                    destination: ChainKey::PolkadotHub,
+                    asset: AssetKey::Dot,
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 180_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 110_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::PolkadotHub,
+                    destination: ChainKey::Bifrost,
+                    asset: AssetKey::Dot,
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 170_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 100_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Bifrost,
+                    destination: ChainKey::PolkadotHub,
+                    asset: AssetKey::Dot,
+                    transport_fee: AssetAmount::new(AssetKey::Dot, 170_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Dot, 100_000_000),
+                },
+            ],
+            swap_routes: vec![
+                SwapRoute {
+                    destination: ChainKey::Hydration,
+                    asset_in: AssetKey::Dot,
+                    asset_out: AssetKey::Usdt,
+                    price_numerator: 495,
+                    price_denominator: 100,
+                    dex_fee_bps: 30,
+                },
+                SwapRoute {
+                    destination: ChainKey::Hydration,
+                    asset_in: AssetKey::Dot,
+                    asset_out: AssetKey::Hdx,
+                    price_numerator: 150,
+                    price_denominator: 1,
+                    dex_fee_bps: 25,
+                },
+            ],
+            execute_capabilities: vec![
+                ExecuteCapability {
+                    destination: ChainKey::Hydration,
+                    asset: AssetKey::Dot,
+                    execution_type: ExecutionType::RuntimeCall,
+                },
+                ExecuteCapability {
+                    destination: ChainKey::Moonbeam,
+                    asset: AssetKey::Dot,
+                    execution_type: ExecutionType::RuntimeCall,
+                },
+                ExecuteCapability {
+                    destination: ChainKey::Moonbeam,
+                    asset: AssetKey::Dot,
+                    execution_type: ExecutionType::EvmContractCall,
+                },
+            ],
+        }
     }
 
     pub fn best_transfer_path(
@@ -514,11 +168,7 @@ impl RouteRegistry {
 
         while let Some(candidate) = frontier.pop() {
             if candidate.chain == destination {
-                return Some(transfer_path_from_hops(
-                    asset,
-                    &candidate.route,
-                    &candidate.hops,
-                ));
+                return Some(transfer_path_from_hops(asset, &candidate.route, &candidate.hops));
             }
 
             if candidate.chain != source
@@ -546,7 +196,6 @@ impl RouteRegistry {
                 next_route.push(edge.destination);
                 let mut next_hops = candidate.hops.clone();
                 next_hops.push(edge);
-
                 frontier.push(PathCandidate {
                     chain: edge.destination,
                     route: next_route,
@@ -565,11 +214,14 @@ impl RouteRegistry {
         asset_in: AssetKey,
         asset_out: AssetKey,
     ) -> Option<SwapRoute> {
-        self.swap_routes.iter().copied().find(|route| {
-            route.destination == destination
-                && route.asset_in == asset_in
-                && route.asset_out == asset_out
-        })
+        self.swap_routes
+            .iter()
+            .copied()
+            .find(|route| {
+                route.destination == destination
+                    && route.asset_in == asset_in
+                    && route.asset_out == asset_out
+            })
     }
 
     pub fn supports_execute(
@@ -584,27 +236,70 @@ impl RouteRegistry {
                 && capability.execution_type == execution_type
         })
     }
-}
 
-impl TransferPath {
-    pub fn total_cost(&self) -> u128 {
-        self.xcm_fee
-            .amount
-            .saturating_add(self.destination_fee.amount)
+    pub fn override_transfer_edge(
+        &mut self,
+        source: ChainKey,
+        destination: ChainKey,
+        asset: AssetKey,
+        transport_fee: u128,
+        buy_execution_fee: u128,
+    ) -> Result<(), String> {
+        let existing = self
+            .transfer_edges
+            .iter_mut()
+            .find(|edge| edge.source == source && edge.destination == destination && edge.asset == asset)
+            .ok_or_else(|| {
+                format!(
+                    "missing transfer edge {source} -> {destination} for {}",
+                    asset.symbol()
+                )
+            })?;
+        existing.transport_fee = AssetAmount::new(asset, transport_fee);
+        existing.buy_execution_fee = AssetAmount::new(asset, buy_execution_fee);
+        Ok(())
+    }
+
+    pub fn override_swap_route(
+        &mut self,
+        destination: ChainKey,
+        asset_in: AssetKey,
+        asset_out: AssetKey,
+        price_numerator: u128,
+        price_denominator: u128,
+        dex_fee_bps: u16,
+    ) -> Result<(), String> {
+        let existing = self
+            .swap_routes
+            .iter_mut()
+            .find(|route| {
+                route.destination == destination
+                    && route.asset_in == asset_in
+                    && route.asset_out == asset_out
+            })
+            .ok_or_else(|| {
+                format!(
+                    "missing swap route on {destination} for {}->{}",
+                    asset_in.symbol(),
+                    asset_out.symbol()
+                )
+            })?;
+        existing.price_numerator = price_numerator;
+        existing.price_denominator = price_denominator;
+        existing.dex_fee_bps = dex_fee_bps;
+        Ok(())
     }
 }
 
-fn transfer_path_from_hops(
-    asset: AssetKey,
-    route: &[ChainKey],
-    hops: &[TransferEdge],
-) -> TransferPath {
-    let xcm_fee = hops.iter().fold(0u128, |total, hop| {
-        total.saturating_add(hop.transport_fee.amount)
-    });
-    let destination_fee = hops.iter().fold(0u128, |total, hop| {
-        total.saturating_add(hop.buy_execution_fee.amount)
-    });
+fn transfer_path_from_hops(asset: AssetKey, route: &[ChainKey], hops: &[TransferEdge]) -> TransferPath {
+    let xcm_fee = hops
+        .iter()
+        .map(|hop| hop.transport_fee.amount)
+        .sum::<u128>();
+    let destination_fee = hops
+        .last()
+        .map(|hop| hop.buy_execution_fee.amount)
+        .unwrap_or_default();
 
     TransferPath {
         route: route.to_vec(),
@@ -614,15 +309,18 @@ fn transfer_path_from_hops(
     }
 }
 
-impl TransferEdge {
-    pub const fn to_route_hop(self) -> RouteHop {
-        RouteHop {
-            source: self.source,
-            destination: self.destination,
-            asset: self.asset,
-            transport_fee: self.transport_fee,
-            buy_execution_fee: self.buy_execution_fee,
-        }
+impl TransferPath {
+    pub fn route_hops(&self) -> Vec<RouteHop> {
+        self.hops
+            .iter()
+            .map(|hop| RouteHop {
+                source: hop.source,
+                destination: hop.destination,
+                asset: hop.asset,
+                transport_fee: hop.transport_fee,
+                buy_execution_fee: hop.buy_execution_fee,
+            })
+            .collect()
     }
 }
 
@@ -676,6 +374,6 @@ fn route_key(route: &[ChainKey]) -> String {
         .join(">")
 }
 
-fn allows_transit(chain: ChainKey) -> bool {
-    !matches!(chain, ChainKey::People | ChainKey::Bifrost)
+fn allows_transit(_chain: ChainKey) -> bool {
+    true
 }

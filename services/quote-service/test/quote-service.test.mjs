@@ -10,14 +10,11 @@ const workspaceRoot = process.cwd();
 const refundAddress = "0x1111111111111111111111111111111111111111";
 
 test("quote service serves health and quote responses", async () => {
+  const fixture = createLiveInputsFixture();
   const service = await spawnRustService({
     packageName: "quote-service",
     cwd: workspaceRoot,
-    env: {
-      XROUTE_QUOTE_PORT: "0",
-      XROUTE_DEPLOYMENT_PROFILE: "integration",
-      XROUTE_WORKSPACE_ROOT: workspaceRoot,
-    },
+    env: fixture.env(),
   });
 
   try {
@@ -25,7 +22,8 @@ test("quote service serves health and quote responses", async () => {
     assert.equal(healthResponse.status, 200);
     const health = await healthResponse.json();
     assert.equal(health.ok, true);
-    assert.equal(health.deploymentProfile, "integration");
+    assert.equal(health.deploymentProfile, "mainnet");
+    assert.equal(health.quoteInputs.mode, "file");
 
     const quoteResponse = await fetch(`${service.url}/quote`, {
       method: "POST",
@@ -56,14 +54,16 @@ test("quote service serves health and quote responses", async () => {
     assert.equal(payload.intent.action.type, "transfer");
     assert.equal(payload.quote.submission.action, "transfer");
     assert.equal(payload.quote.quoteId, "0xfeedface");
+    assert.equal(payload.deploymentProfile, "mainnet");
   } finally {
     await service.close();
+    fixture.cleanup();
   }
 });
 
 test("quote service enforces moonbeam evm execution policy", async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), "xroute-quote-policy-"));
-  const policyPath = join(tempDir, "policy.json");
+  const fixture = createLiveInputsFixture();
+  const policyPath = join(fixture.tempDir, "policy.json");
   writeFileSync(
     policyPath,
     JSON.stringify({
@@ -86,12 +86,9 @@ test("quote service enforces moonbeam evm execution policy", async () => {
   const service = await spawnRustService({
     packageName: "quote-service",
     cwd: workspaceRoot,
-    env: {
-      XROUTE_QUOTE_PORT: "0",
-      XROUTE_DEPLOYMENT_PROFILE: "moonbase-alpha",
-      XROUTE_WORKSPACE_ROOT: workspaceRoot,
+    env: fixture.env({
       XROUTE_EVM_POLICY_PATH: policyPath,
-    },
+    }),
   });
 
   try {
@@ -131,19 +128,18 @@ test("quote service enforces moonbeam evm execution policy", async () => {
     assert.match(disallowedBody.error, /not allowlisted|maxGasLimit|maxPaymentAmount/);
   } finally {
     await service.close();
-    rmSync(tempDir, { recursive: true, force: true });
+    fixture.cleanup();
   }
 });
 
 test("quote service rejects oversized request bodies", async () => {
+  const fixture = createLiveInputsFixture();
   const service = await spawnRustService({
     packageName: "quote-service",
     cwd: workspaceRoot,
-    env: {
-      XROUTE_QUOTE_PORT: "0",
+    env: fixture.env({
       XROUTE_QUOTE_MAX_BODY_BYTES: "64",
-      XROUTE_WORKSPACE_ROOT: workspaceRoot,
-    },
+    }),
   });
 
   try {
@@ -175,5 +171,195 @@ test("quote service rejects oversized request bodies", async () => {
     assert.match(payload.error, /exceeds/);
   } finally {
     await service.close();
+    fixture.cleanup();
   }
 });
+
+test("quote service applies live quote inputs from file overrides", async () => {
+  const fixture = createLiveInputsFixture({
+    generatedAt: "2026-03-11T12:00:00Z",
+    transferEdges: [
+      {
+        sourceChain: "polkadot-hub",
+        destinationChain: "hydration",
+        asset: "DOT",
+        transportFee: "777",
+        buyExecutionFee: "333",
+      },
+    ],
+    swapRoutes: [
+      {
+        destinationChain: "hydration",
+        assetIn: "DOT",
+        assetOut: "USDT",
+        priceNumerator: "50",
+        priceDenominator: "1",
+        dexFeeBps: 0,
+      },
+    ],
+  });
+
+  const service = await spawnRustService({
+    packageName: "quote-service",
+    cwd: workspaceRoot,
+    env: fixture.env(),
+  });
+
+  try {
+    const transferResponse = await fetch(`${service.url}/quote`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        intent: {
+          sourceChain: "polkadot-hub",
+          destinationChain: "hydration",
+          refundAddress,
+          deadline: 1_773_185_200,
+          action: {
+            type: "transfer",
+            params: {
+              asset: "DOT",
+              amount: "10",
+              recipient: "5Frecipient",
+            },
+          },
+        },
+      }),
+    });
+
+    assert.equal(transferResponse.status, 200);
+    const transferPayload = await transferResponse.json();
+    assert.equal(transferPayload.quote.fees.xcmFee.amount, "777");
+    assert.equal(transferPayload.quote.fees.destinationFee.amount, "333");
+    assert.equal(transferPayload.quoteInputs.mode, "file");
+    assert.equal(transferPayload.quoteInputs.status, "live");
+    assert.equal(transferPayload.quoteInputs.generatedAt, "2026-03-11T12:00:00Z");
+
+    const swapResponse = await fetch(`${service.url}/quote`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        intent: {
+          sourceChain: "polkadot-hub",
+          destinationChain: "hydration",
+          refundAddress,
+          deadline: 1_773_185_200,
+          action: {
+            type: "swap",
+            params: {
+              assetIn: "DOT",
+              assetOut: "USDT",
+              amountIn: "10000000000",
+              minAmountOut: "1",
+              settlementChain: "hydration",
+              recipient: "5Frecipient",
+            },
+          },
+        },
+      }),
+    });
+
+    assert.equal(swapResponse.status, 200);
+    const swapPayload = await swapResponse.json();
+    assert.equal(swapPayload.quote.expectedOutput.amount, "50000000");
+
+    const healthResponse = await fetch(`${service.url}/healthz`);
+    assert.equal(healthResponse.status, 200);
+    const healthPayload = await healthResponse.json();
+    assert.equal(healthPayload.quoteInputs.mode, "file");
+    assert.equal(healthPayload.quoteInputs.appliedTransferEdges, 1);
+    assert.equal(healthPayload.quoteInputs.appliedSwapRoutes, 1);
+  } finally {
+    await service.close();
+    fixture.cleanup();
+  }
+});
+
+test("quote service refuses to start on mainnet without live quote inputs", async () => {
+  await assert.rejects(
+    () =>
+      spawnRustService({
+        packageName: "quote-service",
+        cwd: workspaceRoot,
+        env: {
+          XROUTE_QUOTE_PORT: "0",
+          XROUTE_WORKSPACE_ROOT: workspaceRoot,
+        },
+      }),
+    /mainnet requires live quote inputs/i,
+  );
+});
+
+test("quote service refuses fail-open live inputs on mainnet", async () => {
+  const fixture = createLiveInputsFixture({
+    transferEdges: [],
+    swapRoutes: [],
+  });
+
+  try {
+    await assert.rejects(
+      () =>
+        spawnRustService({
+          packageName: "quote-service",
+          cwd: workspaceRoot,
+          env: fixture.env({
+            XROUTE_LIVE_QUOTE_INPUTS_FAIL_OPEN: "true",
+          }),
+        }),
+      /mainnet quote service must fail closed/i,
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+function createLiveInputsFixture(document = defaultLiveInputsDocument()) {
+  const tempDir = mkdtempSync(join(tmpdir(), "xroute-live-quote-inputs-"));
+  const liveInputsPath = join(tempDir, "live-inputs.json");
+  writeFileSync(liveInputsPath, JSON.stringify(document));
+
+  return {
+    tempDir,
+    liveInputsPath,
+    env(overrides = {}) {
+      return {
+        XROUTE_QUOTE_PORT: "0",
+        XROUTE_WORKSPACE_ROOT: workspaceRoot,
+        XROUTE_LIVE_QUOTE_INPUTS_PATH: liveInputsPath,
+        ...overrides,
+      };
+    },
+    cleanup() {
+      rmSync(tempDir, { recursive: true, force: true });
+    },
+  };
+}
+
+function defaultLiveInputsDocument() {
+  return {
+    generatedAt: "2026-03-11T12:00:00Z",
+    transferEdges: [
+      {
+        sourceChain: "polkadot-hub",
+        destinationChain: "hydration",
+        asset: "DOT",
+        transportFee: "150000000",
+        buyExecutionFee: "90000000",
+      },
+    ],
+    swapRoutes: [
+      {
+        destinationChain: "hydration",
+        assetIn: "DOT",
+        assetOut: "USDT",
+        priceNumerator: "495",
+        priceDenominator: "100",
+        dexFeeBps: 30,
+      },
+    ],
+  };
+}

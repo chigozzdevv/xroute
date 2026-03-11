@@ -9,42 +9,12 @@ import {
   normalizeDeploymentProfile,
 } from "../index.mjs";
 
-test("deployment profiles cover public validation, integration, and mainnet surfaces", () => {
+test("deployment profile support accepts the configured production profile", () => {
   assert.equal(DEFAULT_DEPLOYMENT_PROFILE, DEPLOYMENT_PROFILES.MAINNET);
-  assert.equal(normalizeDeploymentProfile("testnet"), DEPLOYMENT_PROFILES.PASEO);
-  assert.equal(normalizeDeploymentProfile("paseo"), DEPLOYMENT_PROFILES.PASEO);
-  assert.equal(
-    normalizeDeploymentProfile("hydration-snakenet"),
-    DEPLOYMENT_PROFILES.HYDRATION_SNAKENET,
-  );
-  assert.equal(
-    normalizeDeploymentProfile("moonbase-alpha"),
-    DEPLOYMENT_PROFILES.MOONBASE_ALPHA,
-  );
-  assert.equal(
-    normalizeDeploymentProfile("core-multihop"),
-    DEPLOYMENT_PROFILES.CORE_MULTIHOP,
-  );
-  assert.equal(
-    normalizeDeploymentProfile("multihop"),
-    DEPLOYMENT_PROFILES.CORE_MULTIHOP,
-  );
-  assert.equal(
-    normalizeDeploymentProfile("bifrost-via-hydration"),
-    DEPLOYMENT_PROFILES.BIFROST_VIA_HYDRATION,
-  );
-  assert.equal(
-    normalizeDeploymentProfile("bifrost-via-moonbeam"),
-    DEPLOYMENT_PROFILES.BIFROST_VIA_MOONBEAM,
-  );
-  assert.equal(
-    normalizeDeploymentProfile("bifrost-via-moonbase-alpha"),
-    DEPLOYMENT_PROFILES.BIFROST_VIA_MOONBEAM,
-  );
-  assert.equal(normalizeDeploymentProfile("lab"), DEPLOYMENT_PROFILES.INTEGRATION);
-  assert.equal(normalizeDeploymentProfile("integration"), DEPLOYMENT_PROFILES.INTEGRATION);
   assert.equal(normalizeDeploymentProfile("mainnet"), DEPLOYMENT_PROFILES.MAINNET);
   assert.throws(() => normalizeDeploymentProfile("staging"));
+  assert.throws(() => normalizeDeploymentProfile("testnet"));
+  assert.throws(() => normalizeDeploymentProfile("sandbox"));
 });
 
 test("contract enums stay stable for the live action surface", () => {

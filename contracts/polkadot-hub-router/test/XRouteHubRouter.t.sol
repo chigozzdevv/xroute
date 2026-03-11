@@ -127,12 +127,12 @@ contract XRouteHubRouterTest is TestBase {
         bytes32 intentId = router.submitIntent{value: lockedAmount}(request);
 
         vm.prank(EXECUTOR);
-        router.finalizeExternalSuccess(intentId, keccak256("source-xcm"), keccak256("PAS"), 25 * 10 ** 10);
+        router.finalizeExternalSuccess(intentId, keccak256("source-xcm"), keccak256("DOT"), 25 * 10 ** 10);
 
         XRouteHubRouter.IntentRecord memory intent = router.getIntent(intentId);
         assertEq(uint256(intent.status), uint256(XRouteHubRouter.IntentStatus.Settled));
         assertEq(intent.outcomeReference, keccak256("source-xcm"));
-        assertEq(intent.resultAssetId, keccak256("PAS"));
+        assertEq(intent.resultAssetId, keccak256("DOT"));
         assertEq(intent.resultAmount, 25 * 10 ** 10);
         assertEq(EXECUTOR.balance, 25 * 10 ** 10 + 100_000_000 + 20_000_000);
         assertEq(TREASURY.balance, 250_000_000);
@@ -323,6 +323,18 @@ contract XRouteHubRouterTest is TestBase {
         vm.prank(EXECUTOR);
         vm.expectRevert(XRouteHubRouter.InvalidRefundAmount.selector);
         router.refundFailedIntent(intentId, 1_000_250_000_001);
+    }
+
+    function test_refund_reverts_for_partial_refund_amount() public {
+        bytes memory message = hex"050c000401000003008c864713010000";
+        bytes32 intentId = _submitAndDispatchSwap(message);
+
+        vm.prank(EXECUTOR);
+        router.finalizeFailure(intentId, keccak256("hydration-failure-3"), keccak256("remote-execution-failed"));
+
+        vm.prank(EXECUTOR);
+        vm.expectRevert(XRouteHubRouter.InvalidRefundAmount.selector);
+        router.refundFailedIntent(intentId, 1_000_249_999_999);
     }
 
     function _submitAndDispatchSwap(bytes memory message) internal returns (bytes32 intentId) {

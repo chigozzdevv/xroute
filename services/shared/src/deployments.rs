@@ -59,25 +59,36 @@ pub fn get_hub_deployment_artifact_path(
     workspace_root: &Path,
     deployment_profile: DeploymentProfile,
 ) -> PathBuf {
+    get_chain_deployment_artifact_path(workspace_root, deployment_profile, "polkadot-hub")
+}
+
+pub fn get_chain_deployment_artifact_path(
+    workspace_root: &Path,
+    deployment_profile: DeploymentProfile,
+    chain_key: &str,
+) -> PathBuf {
     workspace_root
         .join("contracts")
         .join("polkadot-hub-router")
         .join("deployments")
         .join(deployment_profile.as_str())
-        .join("polkadot-hub.json")
+        .join(format!("{chain_key}.json"))
 }
 
 pub fn load_hub_deployment_artifact(
     workspace_root: &Path,
     deployment_profile: DeploymentProfile,
 ) -> Result<HubDeploymentArtifact, String> {
-    let artifact_path = get_hub_deployment_artifact_path(workspace_root, deployment_profile);
-    let raw = read_to_string(&artifact_path).map_err(|error| {
-        format!(
-            "failed to read deployment artifact {}: {error}",
-            artifact_path.display()
-        )
-    })?;
+    load_chain_deployment_artifact(workspace_root, deployment_profile, "polkadot-hub")
+}
+
+pub fn load_chain_deployment_artifact(
+    workspace_root: &Path,
+    deployment_profile: DeploymentProfile,
+    chain_key: &str,
+) -> Result<HubDeploymentArtifact, String> {
+    let (artifact_path, raw) =
+        read_chain_deployment_artifact(workspace_root, deployment_profile, chain_key)?;
     let file: DeploymentArtifactFile = serde_json::from_str(&raw)
         .map_err(|error| format!("invalid deployment artifact: {error}"))?;
     let profile = file
@@ -110,26 +121,47 @@ pub fn load_hub_deployment_artifact(
     })
 }
 
+fn read_chain_deployment_artifact(
+    workspace_root: &Path,
+    deployment_profile: DeploymentProfile,
+    chain_key: &str,
+) -> Result<(PathBuf, String), String> {
+    let mut attempted_paths = Vec::new();
+
+    for artifact_path in deployment_artifact_candidate_paths(workspace_root, deployment_profile, chain_key) {
+        attempted_paths.push(artifact_path.display().to_string());
+        match read_to_string(&artifact_path) {
+            Ok(raw) => return Ok((artifact_path, raw)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!(
+                    "failed to read deployment artifact {}: {error}",
+                    artifact_path.display()
+                ))
+            }
+        }
+    }
+
+    Err(format!(
+        "failed to read deployment artifact for {chain_key}; checked {}",
+        attempted_paths.join(", ")
+    ))
+}
+
+fn deployment_artifact_candidate_paths(
+    workspace_root: &Path,
+    deployment_profile: DeploymentProfile,
+    chain_key: &str,
+) -> Vec<PathBuf> {
+    vec![get_chain_deployment_artifact_path(
+        workspace_root,
+        deployment_profile,
+        chain_key,
+    )]
+}
+
 fn parse_deployment_profile(value: &str) -> Result<DeploymentProfile, String> {
     match value {
-        "paseo" | "testnet" => Ok(DeploymentProfile::Paseo),
-        "hydration-snakenet" | "hydration-testnet" => Ok(DeploymentProfile::HydrationSnakenet),
-        "moonbase-alpha" | "moonbeam" | "moonbase" | "moonbeam-testnet" => {
-            Ok(DeploymentProfile::MoonbaseAlpha)
-        }
-        "core-multihop" | "multihop" | "hub-hydration-moonbeam" => {
-            Ok(DeploymentProfile::CoreMultihop)
-        }
-        "bifrost-via-hydration"
-        | "bifrost-via-hydration-snakenet"
-        | "bifrost-via-hydration-testnet" => Ok(DeploymentProfile::BifrostViaHydration),
-        "bifrost-via-moonbase-alpha"
-        | "bifrost-via-moonbeam"
-        | "bifrost-via-moonbase"
-        | "bifrost-via-moonbeam-testnet" => Ok(DeploymentProfile::BifrostViaMoonbeam),
-        "integration" | "integration-testnet" | "lab" | "multichain-lab" => {
-            Ok(DeploymentProfile::Integration)
-        }
         "mainnet" => Ok(DeploymentProfile::Mainnet),
         other => Err(format!("unsupported deployment profile: {other}")),
     }
@@ -144,12 +176,13 @@ mod tests {
     fn loads_hub_deployment_artifact() {
         let temp_root =
             std::env::temp_dir().join(format!("xroute-deployments-{}", std::process::id()));
-        let artifact_path = get_hub_deployment_artifact_path(&temp_root, DeploymentProfile::Paseo);
+        let artifact_path =
+            get_hub_deployment_artifact_path(&temp_root, DeploymentProfile::Mainnet);
         create_dir_all(artifact_path.parent().unwrap()).unwrap();
         write(
             &artifact_path,
             r#"{
-  "deploymentProfile": "paseo",
+  "deploymentProfile": "mainnet",
   "chainKey": "polkadot-hub",
   "chainId": 420420,
   "deployer": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -163,12 +196,47 @@ mod tests {
         )
         .unwrap();
 
-        let artifact = load_hub_deployment_artifact(&temp_root, DeploymentProfile::Paseo).unwrap();
-        assert_eq!(artifact.deployment_profile, DeploymentProfile::Paseo);
+        let artifact =
+            load_hub_deployment_artifact(&temp_root, DeploymentProfile::Mainnet).unwrap();
+        assert_eq!(artifact.deployment_profile, DeploymentProfile::Mainnet);
         assert_eq!(artifact.chain_id, Some(420420));
         assert_eq!(
             artifact.router_address,
             "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        );
+
+        remove_dir_all(temp_root).unwrap();
+    }
+
+    #[test]
+    fn loads_chain_deployment_artifact_from_canonical_path() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "xroute-deployments-chain-{}",
+            std::process::id()
+        ));
+        let artifact_path =
+            get_chain_deployment_artifact_path(&temp_root, DeploymentProfile::Mainnet, "moonbeam");
+        create_dir_all(artifact_path.parent().unwrap()).unwrap();
+        write(
+            &artifact_path,
+            r#"{
+  "deploymentProfile": "mainnet",
+  "chainKey": "moonbeam",
+  "contracts": {
+    "XRouteHubRouter": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}"#,
+        )
+        .unwrap();
+
+        let artifact =
+            load_chain_deployment_artifact(&temp_root, DeploymentProfile::Mainnet, "moonbeam")
+                .unwrap();
+        assert_eq!(artifact.deployment_profile, DeploymentProfile::Mainnet);
+        assert_eq!(artifact.chain_key, "moonbeam");
+        assert_eq!(
+            artifact.router_address,
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         );
 
         remove_dir_all(temp_root).unwrap();

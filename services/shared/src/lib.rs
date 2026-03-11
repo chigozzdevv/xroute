@@ -7,10 +7,12 @@ pub use api::{
     dispatch_job_request_from_slice, fail_job_request_from_slice, health_json,
     intent_to_json_value, quote_request_from_slice, quote_to_json_value,
     refund_job_request_from_slice, settle_job_request_from_slice, summary_json, DispatchJobRequest,
-    DispatchRequest, FailJobRequest, QuoteRequest, RefundJobRequest, SettleJobRequest, WireIntent,
+    DispatchRequest, FailJobRequest, QuoteRequest, RefundJobRequest, SettleJobRequest,
+    SourceDispatchMetadata, SourceIntentMetadata, WireIntent,
 };
 pub use deployments::{
-    get_hub_deployment_artifact_path, load_hub_deployment_artifact, resolve_workspace_root,
+    get_chain_deployment_artifact_path, get_hub_deployment_artifact_path,
+    load_chain_deployment_artifact, load_hub_deployment_artifact, resolve_workspace_root,
     HubDeploymentArtifact,
 };
 pub use execution_policy::{

@@ -9,12 +9,6 @@ export const ACTION_TYPES = Object.freeze({
 export const EXECUTION_TYPES = Object.freeze({
   RUNTIME_CALL: "runtime-call",
   EVM_CONTRACT_CALL: "evm-contract-call",
-  VTOKEN_ORDER: "vtoken-order",
-});
-
-export const VTOKEN_ORDER_OPERATIONS = Object.freeze({
-  MINT: "mint",
-  REDEEM: "redeem",
 });
 
 export const RUNTIME_CALL_ORIGIN_KINDS = Object.freeze({

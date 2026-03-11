@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-page: #f4efe4;
+  --color-surface: rgba(255, 252, 247, 0.76);
+  --color-surface-strong: rgba(255, 252, 247, 0.92);
+  --color-ink: #12211a;
+  --color-muted: #607065;
+  --color-line: rgba(18, 33, 26, 0.12);
+  --color-teal: #0d7a73;
+  --color-orange: #d46b3a;
+  --color-success: #3c7f58;
+  --color-danger: #9b4f37;
+  --font-display: var(--font-space-grotesk);
+  --font-sans: var(--font-manrope);
+  --shadow-panel: 0 32px 80px rgba(18, 33, 26, 0.14);
+  --shadow-float: 0 18px 40px rgba(18, 33, 26, 0.08);
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(13, 122, 115, 0.18), transparent 28%),
+    radial-gradient(circle at top right, rgba(212, 107, 58, 0.18), transparent 24%),
+    linear-gradient(180deg, #f8f5ee 0%, #f4efe4 100%);
+  text-rendering: optimizeLegibility;
+}
+
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  z-index: 0;
+  pointer-events: none;
+  filter: blur(24px);
+}
+
+body::before {
+  left: -120px;
+  top: 18vh;
+  width: 320px;
+  height: 320px;
+  background: rgba(13, 122, 115, 0.08);
+}
+
+body::after {
+  right: -80px;
+  bottom: 8vh;
+  width: 260px;
+  height: 260px;
+  background: rgba(212, 107, 58, 0.08);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(13, 122, 115, 0.18);
+}

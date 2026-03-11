@@ -1,9 +1,9 @@
 use std::fmt::{Display, Formatter};
+use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ChainKey {
     PolkadotHub,
-    People,
     Hydration,
     Moonbeam,
     Bifrost,
@@ -13,7 +13,6 @@ impl ChainKey {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::PolkadotHub => "polkadot-hub",
-            Self::People => "people",
             Self::Hydration => "hydration",
             Self::Moonbeam => "moonbeam",
             Self::Bifrost => "bifrost",
@@ -27,28 +26,28 @@ impl Display for ChainKey {
     }
 }
 
+impl FromStr for ChainKey {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim() {
+            "polkadot-hub" | "asset-hub" => Ok(Self::PolkadotHub),
+            "hydration" => Ok(Self::Hydration),
+            "moonbeam" => Ok(Self::Moonbeam),
+            "bifrost" => Ok(Self::Bifrost),
+            other => Err(format!("unsupported chain: {other}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DeploymentProfile {
-    Paseo,
-    HydrationSnakenet,
-    MoonbaseAlpha,
-    CoreMultihop,
-    BifrostViaHydration,
-    BifrostViaMoonbeam,
-    Integration,
     Mainnet,
 }
 
 impl DeploymentProfile {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Paseo => "paseo",
-            Self::HydrationSnakenet => "hydration-snakenet",
-            Self::MoonbaseAlpha => "moonbase-alpha",
-            Self::CoreMultihop => "core-multihop",
-            Self::BifrostViaHydration => "bifrost-via-hydration",
-            Self::BifrostViaMoonbeam => "bifrost-via-moonbeam",
-            Self::Integration => "integration",
             Self::Mainnet => "mainnet",
         }
     }
@@ -62,41 +61,33 @@ impl Display for DeploymentProfile {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AssetKey {
-    Pas,
     Dot,
     Usdt,
     Hdx,
-    Vdot,
 }
 
 impl AssetKey {
     pub const fn symbol(self) -> &'static str {
         match self {
-            Self::Pas => "PAS",
             Self::Dot => "DOT",
             Self::Usdt => "USDT",
             Self::Hdx => "HDX",
-            Self::Vdot => "VDOT",
         }
     }
 
     pub const fn decimals(self) -> u8 {
         match self {
-            Self::Pas => 10,
             Self::Dot => 10,
             Self::Usdt => 6,
             Self::Hdx => 12,
-            Self::Vdot => 10,
         }
     }
 
     pub const fn reserve_chain(self) -> ChainKey {
         match self {
-            Self::Pas => ChainKey::PolkadotHub,
             Self::Dot => ChainKey::PolkadotHub,
             Self::Usdt => ChainKey::PolkadotHub,
             Self::Hdx => ChainKey::Hydration,
-            Self::Vdot => ChainKey::Bifrost,
         }
     }
 
@@ -106,6 +97,19 @@ impl AssetKey {
 
     pub fn units(self, whole: u128) -> u128 {
         whole.saturating_mul(self.one())
+    }
+}
+
+impl FromStr for AssetKey {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_uppercase().as_str() {
+            "DOT" => Ok(Self::Dot),
+            "USDT" => Ok(Self::Usdt),
+            "HDX" => Ok(Self::Hdx),
+            other => Err(format!("unsupported asset: {other}")),
+        }
     }
 }
 
@@ -207,7 +211,6 @@ pub struct SwapIntent {
 pub enum ExecuteIntent {
     RuntimeCall(RuntimeCallExecuteIntent),
     EvmContractCall(EvmContractCallExecuteIntent),
-    VtokenOrder(VtokenOrderExecuteIntent),
 }
 
 impl ExecuteIntent {
@@ -215,7 +218,6 @@ impl ExecuteIntent {
         match self {
             Self::RuntimeCall(_) => ExecutionType::RuntimeCall,
             Self::EvmContractCall(_) => ExecutionType::EvmContractCall,
-            Self::VtokenOrder(_) => ExecutionType::VtokenOrder,
         }
     }
 
@@ -223,7 +225,6 @@ impl ExecuteIntent {
         match self {
             Self::RuntimeCall(intent) => intent.asset,
             Self::EvmContractCall(intent) => intent.asset,
-            Self::VtokenOrder(intent) => intent.asset,
         }
     }
 
@@ -231,14 +232,13 @@ impl ExecuteIntent {
         match self {
             Self::RuntimeCall(intent) => intent.max_payment_amount,
             Self::EvmContractCall(intent) => intent.max_payment_amount,
-            Self::VtokenOrder(intent) => intent.max_payment_amount,
         }
     }
 
     pub fn origin_kind(&self) -> RuntimeCallOriginKind {
         match self {
             Self::RuntimeCall(intent) => intent.origin_kind,
-            Self::EvmContractCall(_) | Self::VtokenOrder(_) => {
+            Self::EvmContractCall(_) => {
                 RuntimeCallOriginKind::SovereignAccount
             }
         }
@@ -248,7 +248,6 @@ impl ExecuteIntent {
         match self {
             Self::RuntimeCall(intent) => intent.fallback_weight,
             Self::EvmContractCall(intent) => intent.fallback_weight,
-            Self::VtokenOrder(intent) => intent.fallback_weight,
         }
     }
 
@@ -256,28 +255,24 @@ impl ExecuteIntent {
         match self {
             Self::RuntimeCall(intent) => AssetAmount::new(intent.asset, 0),
             Self::EvmContractCall(intent) => AssetAmount::new(intent.asset, 0),
-            Self::VtokenOrder(intent) => AssetAmount::new(intent.asset, intent.amount),
         }
     }
 
     pub fn submission_amount(&self, execution_budget: u128) -> u128 {
         match self {
             Self::RuntimeCall(_) | Self::EvmContractCall(_) => execution_budget,
-            Self::VtokenOrder(intent) => intent.amount,
         }
     }
 
-    pub fn destination_fee_amount(&self, execution_budget: u128) -> u128 {
+    pub fn destination_fee_amount(&self, _execution_budget: u128) -> u128 {
         match self {
             Self::RuntimeCall(_) | Self::EvmContractCall(_) => 0,
-            Self::VtokenOrder(_) => execution_budget,
         }
     }
 
     pub fn transfer_amount(&self, execution_budget: u128) -> u128 {
         match self {
             Self::RuntimeCall(_) | Self::EvmContractCall(_) => execution_budget,
-            Self::VtokenOrder(intent) => intent.amount.saturating_add(execution_budget),
         }
     }
 
@@ -285,10 +280,6 @@ impl ExecuteIntent {
         match self {
             Self::RuntimeCall(intent) => AssetAmount::new(intent.asset, 0),
             Self::EvmContractCall(intent) => AssetAmount::new(intent.asset, 0),
-            Self::VtokenOrder(intent) => match intent.operation {
-                VtokenOrderOperation::Mint => AssetAmount::new(AssetKey::Vdot, intent.amount),
-                VtokenOrderOperation::Redeem => AssetAmount::new(AssetKey::Dot, intent.amount),
-            },
         }
     }
 
@@ -311,18 +302,6 @@ impl ExecuteIntent {
                 intent.calldata,
                 intent.value,
                 intent.gas_limit,
-                intent.fallback_weight.ref_time,
-                intent.fallback_weight.proof_size
-            ),
-            Self::VtokenOrder(intent) => format!(
-                "{}|{}|{}|{}|{}|{}|{}|{}|{}",
-                intent.asset.symbol(),
-                intent.amount,
-                intent.max_payment_amount,
-                intent.operation.as_str(),
-                intent.recipient_account_id_hex,
-                intent.channel_id,
-                intent.remark,
                 intent.fallback_weight.ref_time,
                 intent.fallback_weight.proof_size
             ),
@@ -350,39 +329,10 @@ pub struct EvmContractCallExecuteIntent {
     pub fallback_weight: XcmWeight,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VtokenOrderExecuteIntent {
-    pub asset: AssetKey,
-    pub amount: u128,
-    pub max_payment_amount: u128,
-    pub operation: VtokenOrderOperation,
-    pub recipient: String,
-    pub recipient_account_id_hex: String,
-    pub channel_id: u32,
-    pub remark: String,
-    pub fallback_weight: XcmWeight,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VtokenOrderOperation {
-    Mint,
-    Redeem,
-}
-
-impl VtokenOrderOperation {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Mint => "mint",
-            Self::Redeem => "redeem",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionType {
     RuntimeCall,
     EvmContractCall,
-    VtokenOrder,
 }
 
 impl ExecutionType {
@@ -390,7 +340,6 @@ impl ExecutionType {
         match self {
             Self::RuntimeCall => "runtime-call",
             Self::EvmContractCall => "evm-contract-call",
-            Self::VtokenOrder => "vtoken-order",
         }
     }
 }

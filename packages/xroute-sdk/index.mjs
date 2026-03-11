@@ -24,6 +24,7 @@ export { NATIVE_ASSET_ADDRESS } from "./router-adapters.mjs";
 
 const execFileAsync = promisify(execFile);
 let serializedCommandQueue = Promise.resolve();
+const SUBSTRATE_SOURCE_CHAINS = new Set(["hydration", "bifrost"]);
 
 export function createXRouteClient({
   quoteProvider,
@@ -330,7 +331,7 @@ export function createHttpExecutorRelayerClient({
       });
     },
 
-    async dispatch({ intentId, intent, quote, envelope, request } = {}) {
+    async dispatch({ intentId, intent, quote, envelope, request, dispatchResult } = {}) {
       if (!intent) {
         throw new Error("intent is required");
       }
@@ -350,9 +351,24 @@ export function createHttpExecutorRelayerClient({
               buildExecutionEnvelope({
                 intent: normalizedIntent,
                 quote: normalizeQuote(quote),
-              }),
+                }),
           ),
         );
+      const normalizedQuote = quote ? normalizeQuote(quote) : null;
+      if (requiresSubstrateSourceMetadata(normalizedIntent.sourceChain) && !normalizedQuote) {
+        throw new Error(
+          `quote is required when dispatching ${normalizedIntent.sourceChain} source intents through the relayer`,
+        );
+      }
+      const sourceIntent = normalizedQuote
+        ? buildSourceIntentMetadata({
+            intent: normalizedIntent,
+            quote: normalizedQuote,
+          })
+        : undefined;
+      const sourceDispatch = dispatchResult
+        ? normalizeSourceDispatch(dispatchResult)
+        : undefined;
 
       return requestJson(`${normalizedEndpoint}/jobs/dispatch`, {
         method: "POST",
@@ -362,6 +378,8 @@ export function createHttpExecutorRelayerClient({
           intentId,
           intent: toPlainIntent(normalizedIntent),
           request: toPlainObject(normalizedRequest),
+          sourceIntent,
+          sourceDispatch,
         },
       });
     },
@@ -426,6 +444,40 @@ export function createHttpExecutorRelayerClient({
         headers: requestHeaders,
       });
     },
+  };
+}
+
+function buildSourceIntentMetadata({ intent, quote }) {
+  return {
+    kind: inferSourceIntentKind(intent.sourceChain),
+    refundAsset: quote.submission.asset,
+    refundableAmount: (
+      quote.submission.amount + quote.submission.xcmFee + quote.submission.destinationFee
+    ).toString(),
+    minOutputAmount: quote.submission.minOutputAmount.toString(),
+  };
+}
+
+function inferSourceIntentKind(sourceChain) {
+  return requiresSubstrateSourceMetadata(sourceChain) ? "substrate-source" : "router-evm";
+}
+
+function requiresSubstrateSourceMetadata(sourceChain) {
+  return SUBSTRATE_SOURCE_CHAINS.has(sourceChain);
+}
+
+function normalizeSourceDispatch(dispatchResult) {
+  const txHash = dispatchResult?.txHash ?? dispatchResult?.transactionHash;
+  if (!txHash) {
+    throw new Error("dispatchResult.txHash is required");
+  }
+
+  return {
+    txHash,
+    strategy:
+      typeof dispatchResult?.strategy === "string" && dispatchResult.strategy.trim() !== ""
+        ? dispatchResult.strategy.trim()
+        : undefined,
   };
 }
 
@@ -598,31 +650,6 @@ function buildExecuteQuoteArgs(shared, params) {
         params.value.toString(),
         "--gas-limit",
         params.gasLimit.toString(),
-        "--fallback-ref-time",
-        String(params.fallbackWeight.refTime),
-        "--fallback-proof-size",
-        String(params.fallbackWeight.proofSize),
-      ]);
-    case EXECUTION_TYPES.VTOKEN_ORDER:
-      return shared.concat([
-        "--execution-type",
-        params.executionType,
-        "--asset",
-        params.asset,
-        "--amount",
-        params.amount.toString(),
-        "--max-payment-amount",
-        params.maxPaymentAmount.toString(),
-        "--operation",
-        params.operation,
-        "--recipient",
-        params.recipient,
-        "--recipient-account-id",
-        params.recipientAccountIdHex,
-        "--channel-id",
-        String(params.channelId),
-        "--remark",
-        params.remark,
         "--fallback-ref-time",
         String(params.fallbackWeight.refTime),
         "--fallback-proof-size",

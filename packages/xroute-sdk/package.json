@@ -25,7 +25,9 @@
     "prepack": "npm run build"
   },
   "dependencies": {
+    "@scure/sr25519": "1.0.0",
     "@polkadot-api/metadata-builders": "0.13.9",
-    "@polkadot-api/substrate-bindings": "0.17.0"
+    "@polkadot-api/substrate-bindings": "0.17.0",
+    "polkadot-api": "1.23.3"
   }
 }

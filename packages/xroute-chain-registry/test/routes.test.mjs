@@ -1,172 +1,69 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { findTransferPath, assertExecuteRoute, assertSwapRoute } from "../index.mjs";
+import {
+  assertExecuteRoute,
+  assertSwapRoute,
+  findTransferPath,
+  getAsset,
+  getChain,
+  listRoutes,
+} from "../index.mjs";
 
-test("findTransferPath composes hub-centered multihop spokes", () => {
+test("mainnet exposes hub, hydration, moonbeam, and bifrost", () => {
+  assert.equal(getChain("polkadot-hub").key, "polkadot-hub");
+  assert.equal(getChain("hydration").key, "hydration");
+  assert.equal(getChain("moonbeam").key, "moonbeam");
+  assert.equal(getChain("bifrost").key, "bifrost");
+  assert.equal(getAsset("DOT").symbol, "DOT");
+  assert.equal(listRoutes().length, 6);
+});
+
+test("findTransferPath composes the supported mainnet multihop spokes", () => {
   assert.deepEqual(findTransferPath("moonbeam", "hydration", "DOT"), [
     "moonbeam",
     "polkadot-hub",
     "hydration",
   ]);
-  assert.deepEqual(findTransferPath("hydration", "bifrost", "DOT"), [
-    "hydration",
+  assert.deepEqual(findTransferPath("bifrost", "moonbeam", "DOT"), [
     "bifrost",
-  ]);
-  assert.deepEqual(findTransferPath("polkadot-hub", "bifrost", "DOT"), [
     "polkadot-hub",
     "moonbeam",
-    "bifrost",
-  ]);
-  assert.equal(findTransferPath("polkadot-hub", "bifrost", "VDOT"), null);
-});
-
-test("assertSwapRoute accepts multihop source paths into hydration", () => {
-  const route = assertSwapRoute(
-    "moonbeam",
-    "hydration",
-    "DOT",
-    "USDT",
-    "polkadot-hub",
-  );
-
-  assert.deepEqual(route.executionPath, [
-    "moonbeam",
-    "polkadot-hub",
-    "hydration",
   ]);
 });
 
-test("assertExecuteRoute accepts multihop execution into destination capabilities", () => {
-  const route = assertExecuteRoute(
-    "moonbeam",
-    "bifrost",
-    "DOT",
-    "vtoken-order",
-  );
+test("assertSwapRoute accepts hydration swaps with local or hub settlement", () => {
+  assert.deepEqual(assertSwapRoute("polkadot-hub", "hydration", "DOT", "USDT"), {
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    settlementChain: "hydration",
+    executionPath: ["polkadot-hub", "hydration"],
+    action: "swap",
+  });
 
-  assert.deepEqual(route.path, [
-    "moonbeam",
-    "bifrost",
-  ]);
-});
-
-test("findTransferPath exposes the paseo proof route", () => {
-  assert.deepEqual(findTransferPath("polkadot-hub", "people", "PAS", "paseo"), [
-    "polkadot-hub",
-    "people",
-  ]);
-});
-
-test("hydration-snakenet stays focused on Hub and Hydration swap flows", () => {
   assert.deepEqual(
-    findTransferPath("polkadot-hub", "hydration", "PAS", "hydration-snakenet"),
-    ["polkadot-hub", "hydration"],
-  );
-  const route = assertSwapRoute(
-    "polkadot-hub",
-    "hydration",
-    "PAS",
-    "HDX",
-    "hydration",
-    "hydration-snakenet",
-  );
-
-  assert.deepEqual(route.executionPath, ["polkadot-hub", "hydration"]);
-});
-
-test("moonbase-alpha exposes Moonbeam execute capabilities without Bifrost edges", () => {
-  const route = assertExecuteRoute(
-    "polkadot-hub",
-    "moonbeam",
-    "DOT",
-    "evm-contract-call",
-    "moonbase-alpha",
-  );
-
-  assert.deepEqual(route.path, ["polkadot-hub", "moonbeam"]);
-  assert.throws(
-    () => findTransferPath("polkadot-hub", "bifrost", "DOT", "moonbase-alpha"),
-    /unsupported chain/,
+    assertSwapRoute("moonbeam", "hydration", "DOT", "USDT", "polkadot-hub"),
+    {
+      sourceChain: "moonbeam",
+      destinationChain: "hydration",
+      settlementChain: "polkadot-hub",
+      executionPath: ["moonbeam", "polkadot-hub", "hydration"],
+      action: "swap",
+    },
   );
 });
 
-test("core-multihop exposes the serious three-chain multihop graph", () => {
-  assert.deepEqual(findTransferPath("moonbeam", "hydration", "DOT", "core-multihop"), [
-    "moonbeam",
-    "polkadot-hub",
-    "hydration",
-  ]);
-
-  const swapRoute = assertSwapRoute(
-    "moonbeam",
-    "hydration",
-    "DOT",
-    "USDT",
-    "polkadot-hub",
-    "core-multihop",
-  );
-  assert.deepEqual(swapRoute.executionPath, ["moonbeam", "polkadot-hub", "hydration"]);
-
-  const executeRoute = assertExecuteRoute(
-    "hydration",
-    "moonbeam",
-    "DOT",
-    "evm-contract-call",
-    "core-multihop",
-  );
-  assert.deepEqual(executeRoute.path, ["hydration", "polkadot-hub", "moonbeam"]);
-});
-
-test("bifrost-via-hydration exposes only the docs-backed Hydration to Bifrost capability path", () => {
-  assert.deepEqual(findTransferPath("hydration", "bifrost", "DOT", "bifrost-via-hydration"), [
-    "hydration",
-    "bifrost",
-  ]);
-  const route = assertExecuteRoute(
-    "hydration",
-    "bifrost",
-    "DOT",
-    "vtoken-order",
-    "bifrost-via-hydration",
+test("assertExecuteRoute accepts mainnet execute targets and rejects unsupported ones", () => {
+  assert.deepEqual(
+    assertExecuteRoute("hydration", "moonbeam", "DOT", "evm-contract-call"),
+    {
+      sourceChain: "hydration",
+      destinationChain: "moonbeam",
+      path: ["hydration", "polkadot-hub", "moonbeam"],
+      executionType: "evm-contract-call",
+      action: "execute",
+    },
   );
 
-  assert.deepEqual(route.path, ["hydration", "bifrost"]);
-  assert.throws(
-    () => findTransferPath("polkadot-hub", "bifrost", "DOT", "bifrost-via-hydration"),
-    /unsupported chain/,
-  );
-});
-
-test("bifrost-via-moonbeam exposes only the docs-backed Moonbeam to Bifrost capability path", () => {
-  assert.deepEqual(findTransferPath("moonbeam", "bifrost", "DOT", "bifrost-via-moonbeam"), [
-    "moonbeam",
-    "bifrost",
-  ]);
-  const route = assertExecuteRoute(
-    "moonbeam",
-    "bifrost",
-    "DOT",
-    "vtoken-order",
-    "bifrost-via-moonbeam",
-  );
-
-  assert.deepEqual(route.path, ["moonbeam", "bifrost"]);
-  assert.throws(
-    () => findTransferPath("polkadot-hub", "bifrost", "DOT", "bifrost-via-moonbeam"),
-    /unsupported chain/,
-  );
-});
-
-test("integration exposes the full four-chain multihop graph", () => {
-  assert.deepEqual(findTransferPath("polkadot-hub", "bifrost", "DOT", "integration"), [
-    "polkadot-hub",
-    "moonbeam",
-    "bifrost",
-  ]);
-  assert.deepEqual(findTransferPath("moonbeam", "hydration", "DOT", "integration"), [
-    "moonbeam",
-    "polkadot-hub",
-    "hydration",
-  ]);
+  assert.throws(() => assertExecuteRoute("bifrost", "hydration", "DOT", "evm-contract-call"));
 });

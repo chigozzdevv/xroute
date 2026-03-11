@@ -11,6 +11,6 @@ pub use model::{
     ExecuteIntent, ExecutionPlan, ExecutionType, FeeBreakdown, FeeType, Intent, IntentAction,
     PlanStep, Quote, RouteHop, RouteSegment, RouteSegmentKind, RuntimeCallExecuteIntent,
     RuntimeCallOriginKind, SubmissionAction, SubmissionTerms, SwapIntent, TransferIntent,
-    VtokenOrderExecuteIntent, VtokenOrderOperation, XcmInstruction, XcmWeight,
+    XcmInstruction, XcmWeight,
 };
 pub use registry::{RouteRegistry, SwapRoute, TransferEdge, TransferPath};

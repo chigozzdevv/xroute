@@ -5,8 +5,7 @@ use route_engine::{
     EvmContractCallExecuteIntent, ExecuteIntent, ExecutionPlan, ExecutionType, FeeBreakdown,
     FeeType, Intent, IntentAction, PlanStep, Quote, RouteEngine, RouteHop, RouteRegistry,
     RouteSegment, RouteSegmentKind, RuntimeCallExecuteIntent, RuntimeCallOriginKind,
-    SubmissionAction, SwapIntent, TransferIntent, VtokenOrderExecuteIntent, VtokenOrderOperation,
-    XcmInstruction, XcmWeight,
+    SubmissionAction, SwapIntent, TransferIntent, XcmInstruction, XcmWeight,
 };
 
 pub fn run() -> Result<(), String> {
@@ -116,7 +115,6 @@ fn required<'a>(options: &'a HashMap<String, String>, key: &str) -> Result<&'a s
 
 fn parse_chain(value: &str) -> Result<ChainKey, String> {
     match value {
-        "people" => Ok(ChainKey::People),
         "polkadot-hub" | "asset-hub" => Ok(ChainKey::PolkadotHub),
         "hydration" => Ok(ChainKey::Hydration),
         "moonbeam" => Ok(ChainKey::Moonbeam),
@@ -127,35 +125,15 @@ fn parse_chain(value: &str) -> Result<ChainKey, String> {
 
 fn parse_asset(value: &str) -> Result<AssetKey, String> {
     match value {
-        "PAS" => Ok(AssetKey::Pas),
         "DOT" => Ok(AssetKey::Dot),
         "USDT" => Ok(AssetKey::Usdt),
         "HDX" => Ok(AssetKey::Hdx),
-        "VDOT" => Ok(AssetKey::Vdot),
         other => Err(format!("unsupported asset: {other}")),
     }
 }
 
 fn parse_deployment_profile(value: &str) -> Result<DeploymentProfile, String> {
     match value {
-        "paseo" | "testnet" => Ok(DeploymentProfile::Paseo),
-        "hydration-snakenet" | "hydration-testnet" => Ok(DeploymentProfile::HydrationSnakenet),
-        "moonbase-alpha" | "moonbeam" | "moonbase" | "moonbeam-testnet" => {
-            Ok(DeploymentProfile::MoonbaseAlpha)
-        }
-        "core-multihop" | "multihop" | "hub-hydration-moonbeam" => {
-            Ok(DeploymentProfile::CoreMultihop)
-        }
-        "bifrost-via-hydration"
-        | "bifrost-via-hydration-snakenet"
-        | "bifrost-via-hydration-testnet" => Ok(DeploymentProfile::BifrostViaHydration),
-        "bifrost-via-moonbase-alpha"
-        | "bifrost-via-moonbeam"
-        | "bifrost-via-moonbase"
-        | "bifrost-via-moonbeam-testnet" => Ok(DeploymentProfile::BifrostViaMoonbeam),
-        "integration" | "integration-testnet" | "lab" | "multichain-lab" => {
-            Ok(DeploymentProfile::Integration)
-        }
         "mainnet" => Ok(DeploymentProfile::Mainnet),
         other => Err(format!("unsupported deployment profile: {other}")),
     }
@@ -165,16 +143,7 @@ fn parse_execution_type(value: &str) -> Result<ExecutionType, String> {
     match value {
         "runtime-call" => Ok(ExecutionType::RuntimeCall),
         "evm-contract-call" => Ok(ExecutionType::EvmContractCall),
-        "vtoken-order" => Ok(ExecutionType::VtokenOrder),
         other => Err(format!("unsupported execution type: {other}")),
-    }
-}
-
-fn parse_vtoken_order_operation(value: &str) -> Result<VtokenOrderOperation, String> {
-    match value {
-        "mint" => Ok(VtokenOrderOperation::Mint),
-        "redeem" => Ok(VtokenOrderOperation::Redeem),
-        other => Err(format!("unsupported vtoken order operation: {other}")),
     }
 }
 
@@ -222,29 +191,6 @@ fn parse_h160_string(value: &str, name: &str) -> Result<String, String> {
     }
 
     Ok(normalized)
-}
-
-fn parse_h256_string(value: &str, name: &str) -> Result<String, String> {
-    let normalized = parse_hex_string(value, name)?;
-    if normalized.len() != 66 {
-        return Err(format!("{name} must be a 32-byte 0x-prefixed hex string"));
-    }
-
-    Ok(normalized)
-}
-
-fn parse_u32(value: &str, name: &str) -> Result<u32, String> {
-    value
-        .parse::<u32>()
-        .map_err(|_| format!("{name} must be an unsigned integer"))
-}
-
-fn parse_ascii_remark(value: &str, name: &str) -> Result<String, String> {
-    if value.as_bytes().len() > 32 {
-        return Err(format!("{name} must be at most 32 bytes"));
-    }
-
-    Ok(value.to_owned())
 }
 
 fn build_execute_intent(options: &HashMap<String, String>) -> Result<ExecuteIntent, String> {
@@ -295,33 +241,6 @@ fn build_execute_intent(options: &HashMap<String, String>) -> Result<ExecuteInte
                 fallback_weight,
             },
         )),
-        ExecutionType::VtokenOrder => Ok(ExecuteIntent::VtokenOrder(VtokenOrderExecuteIntent {
-            asset: parse_asset(required(options, "asset")?)?,
-            amount: parse_u128(required(options, "amount")?, "amount")?,
-            max_payment_amount: parse_u128(
-                required(options, "max-payment-amount")?,
-                "max-payment-amount",
-            )?,
-            operation: parse_vtoken_order_operation(required(options, "operation")?)?,
-            recipient: required(options, "recipient")?.to_owned(),
-            recipient_account_id_hex: parse_h256_string(
-                required(options, "recipient-account-id")?,
-                "recipient-account-id",
-            )?,
-            channel_id: options
-                .get("channel-id")
-                .map(String::as_str)
-                .map(|value| parse_u32(value, "channel-id"))
-                .transpose()?
-                .unwrap_or(0),
-            remark: options
-                .get("remark")
-                .map(String::as_str)
-                .map(|value| parse_ascii_remark(value, "remark"))
-                .transpose()?
-                .unwrap_or_else(String::new),
-            fallback_weight,
-        })),
     }
 }
 
@@ -660,14 +579,13 @@ fn route_segment_kind_label(kind: RouteSegmentKind) -> &'static str {
 fn usage() -> String {
     [
         "usage:",
-        "  route-engine quote --source-chain <chain> --destination-chain <chain> --refund-address <address> --deadline <unix-seconds> --action <transfer|swap|execute> [action flags] [--deployment-profile <paseo|hydration-snakenet|moonbase-alpha|core-multihop|integration|mainnet>]",
+        "  route-engine quote --source-chain <chain> --destination-chain <chain> --refund-address <address> --deadline <unix-seconds> --action <transfer|swap|execute> [action flags] [--deployment-profile <mainnet>]",
         "",
         "action flags:",
         "  transfer: --asset <symbol> --amount <units> --recipient <address>",
         "  swap: --asset-in <symbol> --asset-out <symbol> --amount-in <units> --min-amount-out <units> --recipient <address> [--settlement-chain <chain>]",
         "  execute/runtime-call: --execution-type runtime-call --asset <symbol> --max-payment-amount <units> --call-data <hex> --fallback-ref-time <u64> --fallback-proof-size <u64> [--origin-kind <sovereign-account|xcm|native|superuser>]",
         "  execute/evm-contract-call: --execution-type evm-contract-call --asset <symbol> --max-payment-amount <units> --contract-address <0x...> --calldata <hex> --gas-limit <u64> [--value <u128>] --fallback-ref-time <u64> --fallback-proof-size <u64>",
-        "  execute/vtoken-order: --execution-type vtoken-order --asset <DOT|VDOT> --amount <units> --max-payment-amount <units> --operation <mint|redeem> --recipient <address> --recipient-account-id <0x...> [--channel-id <u32>] [--remark <text>] --fallback-ref-time <u64> --fallback-proof-size <u64>",
     ]
     .join("\n")
 }

@@ -3,22 +3,15 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import {
-  DEPLOYMENT_PROFILES,
-  XCM_PRECOMPILE_ADDRESS,
-  normalizeDeploymentProfile,
-} from "../packages/xroute-precompile-interfaces/index.mjs";
+import { DEPLOYMENT_PROFILES, XCM_PRECOMPILE_ADDRESS } from "../packages/xroute-precompile-interfaces/index.mjs";
+import { getRouterDeploymentArtifactPath } from "./lib/deployment-artifacts.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = resolve(scriptDir, "..");
 const contractRoot = resolve(workspaceRoot, "contracts/polkadot-hub-router");
 
 export function deployStack(overrides = {}) {
-  const deploymentProfile = normalizeDeploymentProfile(
-    overrides.deploymentProfile ??
-      process.env.XROUTE_DEPLOYMENT_PROFILE ??
-      DEPLOYMENT_PROFILES.PASEO,
-  );
+  const deploymentProfile = DEPLOYMENT_PROFILES.MAINNET;
 
   assertLiveDeploymentConfirmed(
     overrides.allowLiveDeployment ?? process.env.XROUTE_ALLOW_LIVE_DEPLOY,
@@ -34,16 +27,18 @@ export function deployStack(overrides = {}) {
     overrides.platformFeeBps ?? process.env.XROUTE_PLATFORM_FEE_BPS ?? "10";
   const xcmAddress =
     overrides.xcmAddress ?? process.env.XROUTE_XCM_ADDRESS ?? XCM_PRECOMPILE_ADDRESS;
-  const chainKey = resolveDeploymentChainKey(deploymentProfile);
+  const chainKey = resolveDeploymentChainKey(
+    deploymentProfile,
+    overrides.chainKey ?? process.env.XROUTE_DEPLOYMENT_CHAIN_KEY,
+  );
   const stackOutputPath =
     overrides.stackOutputPath ??
     process.env.XROUTE_STACK_OUTPUT_PATH ??
-    resolve(
-      contractRoot,
-      "deployments",
+    getRouterDeploymentArtifactPath({
+      workspaceRoot,
       deploymentProfile,
-      "polkadot-hub.json",
-    );
+      chainKey,
+    });
 
   const deployer = runCast(["wallet", "address", "--private-key", privateKey], {
     rpcUrl,
@@ -144,13 +139,18 @@ function runCast(args, { rpcUrl }) {
   }).trim();
 }
 
-function resolveDeploymentChainKey(deploymentProfile) {
+function resolveDeploymentChainKey(deploymentProfile, requestedChainKey) {
+  const normalizedRequestedChainKey = String(requestedChainKey ?? "").trim().toLowerCase();
+  if (normalizedRequestedChainKey) {
+    if (!["polkadot-hub", "moonbeam"].includes(normalizedRequestedChainKey)) {
+      throw new Error(
+        `unsupported deployment chain key: ${normalizedRequestedChainKey}`,
+      );
+    }
+    return normalizedRequestedChainKey;
+  }
+
   switch (deploymentProfile) {
-    case DEPLOYMENT_PROFILES.MOONBASE_ALPHA:
-    case DEPLOYMENT_PROFILES.BIFROST_VIA_MOONBASE_ALPHA:
-      return "moonbeam";
-    case DEPLOYMENT_PROFILES.BIFROST_VIA_HYDRATION:
-      return "hydration";
     default:
       return "polkadot-hub";
   }

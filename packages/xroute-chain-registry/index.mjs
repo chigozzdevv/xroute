@@ -47,51 +47,8 @@ function route({
   });
 }
 
-const PASEO_PROFILE = Object.freeze({
+const MAINNET_PROFILE = Object.freeze({
   chains: Object.freeze({
-    "polkadot-hub": Object.freeze({
-      key: "polkadot-hub",
-      label: "Polkadot Hub",
-      parachainId: 1000,
-      transitEnabled: true,
-      supportedActions: Object.freeze([ACTION_TYPES.TRANSFER]),
-    }),
-    people: Object.freeze({
-      key: "people",
-      label: "People Chain",
-      parachainId: 1004,
-      transitEnabled: false,
-      supportedActions: Object.freeze([ACTION_TYPES.TRANSFER]),
-    }),
-  }),
-  assets: Object.freeze({
-    PAS: Object.freeze({
-      symbol: "PAS",
-      decimals: 10,
-      supportedChains: Object.freeze(["polkadot-hub", "people"]),
-      xcmLocations: Object.freeze({
-        "polkadot-hub": Object.freeze({
-          parents: 1,
-          interior: Object.freeze({ type: "here" }),
-        }),
-        people: Object.freeze({
-          parents: 1,
-          interior: Object.freeze({ type: "here" }),
-        }),
-      }),
-    }),
-  }),
-  routes: Object.freeze([
-    route({
-      sourceChain: "polkadot-hub",
-      destinationChain: "people",
-      actions: [ACTION_TYPES.TRANSFER],
-      transferableAssets: ["PAS"],
-    }),
-  ]),
-});
-
-const FULL_GRAPH_CHAINS = Object.freeze({
     "polkadot-hub": Object.freeze({
       key: "polkadot-hub",
       label: "Polkadot Hub",
@@ -128,30 +85,11 @@ const FULL_GRAPH_CHAINS = Object.freeze({
       key: "bifrost",
       label: "Bifrost",
       parachainId: 2030,
-      transitEnabled: false,
-      supportedActions: Object.freeze([
-        ACTION_TYPES.TRANSFER,
-        ACTION_TYPES.EXECUTE,
-      ]),
+      transitEnabled: true,
+      supportedActions: Object.freeze([ACTION_TYPES.TRANSFER]),
     }),
-  });
-
-const FULL_GRAPH_ASSETS = Object.freeze({
-    PAS: Object.freeze({
-      symbol: "PAS",
-      decimals: 10,
-      supportedChains: Object.freeze(["polkadot-hub", "hydration"]),
-      xcmLocations: Object.freeze({
-        "polkadot-hub": Object.freeze({
-          parents: 1,
-          interior: Object.freeze({ type: "here" }),
-        }),
-        hydration: Object.freeze({
-          parents: 1,
-          interior: Object.freeze({ type: "here" }),
-        }),
-      }),
-    }),
+  }),
+  assets: Object.freeze({
     DOT: Object.freeze({
       symbol: "DOT",
       decimals: 10,
@@ -235,234 +173,62 @@ const FULL_GRAPH_ASSETS = Object.freeze({
         }),
       }),
     }),
-    VDOT: Object.freeze({
-      symbol: "VDOT",
-      decimals: 10,
-      supportedChains: Object.freeze(["bifrost", "moonbeam", "hydration"]),
-      xcmLocations: Object.freeze({
-        bifrost: Object.freeze({
-          parents: 0,
-          interior: Object.freeze({
-            type: "x1",
-            value: Object.freeze({
-              type: "general-key",
-              value: "0x0900",
-            }),
-          }),
-        }),
-        moonbeam: Object.freeze({
-          parents: 1,
-          interior: Object.freeze({
-            type: "x2",
-            value: Object.freeze([
-              Object.freeze({ type: "parachain", value: 2030 }),
-              Object.freeze({ type: "general-key", value: "0x0900" }),
-            ]),
-          }),
-        }),
-        hydration: Object.freeze({
-          parents: 1,
-          interior: Object.freeze({
-            type: "x2",
-            value: Object.freeze([
-              Object.freeze({ type: "parachain", value: 2030 }),
-              Object.freeze({ type: "general-key", value: "0x0900" }),
-            ]),
-          }),
-        }),
-      }),
-    }),
-  });
-
-const FULL_GRAPH_ROUTES = Object.freeze([
-  route({
-    sourceChain: "polkadot-hub",
-    destinationChain: "moonbeam",
-    actions: [ACTION_TYPES.TRANSFER, ACTION_TYPES.EXECUTE],
-    transferableAssets: ["DOT"],
-    executeCapabilities: [
-      capability(EXECUTION_TYPES.RUNTIME_CALL, ["DOT"]),
-      capability(EXECUTION_TYPES.EVM_CONTRACT_CALL, ["DOT"]),
-    ],
-  }),
-  route({
-    sourceChain: "polkadot-hub",
-    destinationChain: "hydration",
-    actions: [ACTION_TYPES.TRANSFER, ACTION_TYPES.SWAP, ACTION_TYPES.EXECUTE],
-    transferableAssets: ["DOT"],
-    swapPairs: [
-      {
-        assetIn: "DOT",
-        assetOut: "USDT",
-        settlementChains: ["hydration", "polkadot-hub"],
-      },
-      {
-        assetIn: "DOT",
-        assetOut: "HDX",
-        settlementChains: ["hydration", "polkadot-hub"],
-      },
-    ],
-    executeCapabilities: [
-      capability(EXECUTION_TYPES.RUNTIME_CALL, ["DOT"]),
-    ],
-  }),
-  route({
-    sourceChain: "hydration",
-    destinationChain: "polkadot-hub",
-    actions: [ACTION_TYPES.TRANSFER],
-    transferableAssets: ["DOT", "USDT", "HDX"],
-  }),
-  route({
-    sourceChain: "moonbeam",
-    destinationChain: "polkadot-hub",
-    actions: [ACTION_TYPES.TRANSFER],
-    transferableAssets: ["DOT"],
-  }),
-  route({
-    sourceChain: "moonbeam",
-    destinationChain: "bifrost",
-    actions: [ACTION_TYPES.TRANSFER, ACTION_TYPES.EXECUTE],
-    transferableAssets: ["DOT", "VDOT"],
-    executeCapabilities: [
-      capability(EXECUTION_TYPES.RUNTIME_CALL, ["DOT"]),
-      capability(EXECUTION_TYPES.VTOKEN_ORDER, ["DOT", "VDOT"]),
-    ],
-  }),
-  route({
-    sourceChain: "bifrost",
-    destinationChain: "moonbeam",
-    actions: [ACTION_TYPES.TRANSFER],
-    transferableAssets: ["DOT", "VDOT"],
-  }),
-  route({
-    sourceChain: "hydration",
-    destinationChain: "bifrost",
-    actions: [ACTION_TYPES.TRANSFER, ACTION_TYPES.EXECUTE],
-    transferableAssets: ["DOT", "VDOT"],
-    executeCapabilities: [
-      capability(EXECUTION_TYPES.RUNTIME_CALL, ["DOT"]),
-      capability(EXECUTION_TYPES.VTOKEN_ORDER, ["DOT", "VDOT"]),
-    ],
-  }),
-  route({
-    sourceChain: "bifrost",
-    destinationChain: "hydration",
-    actions: [ACTION_TYPES.TRANSFER],
-    transferableAssets: ["DOT", "VDOT"],
-  }),
-]);
-
-const FULL_GRAPH_PROFILE = Object.freeze({
-  chains: FULL_GRAPH_CHAINS,
-  assets: FULL_GRAPH_ASSETS,
-  routes: FULL_GRAPH_ROUTES,
-});
-
-function subsetProfile({ chains, assets, routes }) {
-  return Object.freeze({
-    chains: Object.freeze(
-      Object.fromEntries(chains.map((chainKey) => [chainKey, FULL_GRAPH_CHAINS[chainKey]])),
-    ),
-    assets: Object.freeze(
-      Object.fromEntries(assets.map((assetKey) => [assetKey, FULL_GRAPH_ASSETS[assetKey]])),
-    ),
-    routes: Object.freeze(
-      FULL_GRAPH_ROUTES.filter((candidate) =>
-        routes.some(
-          (routeKey) =>
-            routeKey.sourceChain === candidate.sourceChain &&
-            routeKey.destinationChain === candidate.destinationChain,
-        ),
-      ),
-    ),
-  });
-}
-
-const HYDRATION_SNAKENET_PROFILE = Object.freeze({
-  chains: Object.freeze({
-    "polkadot-hub": FULL_GRAPH_CHAINS["polkadot-hub"],
-    hydration: FULL_GRAPH_CHAINS.hydration,
-  }),
-  assets: Object.freeze({
-    PAS: FULL_GRAPH_ASSETS.PAS,
-    HDX: FULL_GRAPH_ASSETS.HDX,
   }),
   routes: Object.freeze([
     route({
       sourceChain: "polkadot-hub",
+      destinationChain: "moonbeam",
+      actions: [ACTION_TYPES.TRANSFER, ACTION_TYPES.EXECUTE],
+      transferableAssets: ["DOT"],
+      executeCapabilities: [
+        capability(EXECUTION_TYPES.RUNTIME_CALL, ["DOT"]),
+        capability(EXECUTION_TYPES.EVM_CONTRACT_CALL, ["DOT"]),
+      ],
+    }),
+    route({
+      sourceChain: "polkadot-hub",
       destinationChain: "hydration",
       actions: [ACTION_TYPES.TRANSFER, ACTION_TYPES.SWAP, ACTION_TYPES.EXECUTE],
-      transferableAssets: ["PAS"],
+      transferableAssets: ["DOT"],
       swapPairs: [
         {
-          assetIn: "PAS",
+          assetIn: "DOT",
+          assetOut: "USDT",
+          settlementChains: ["hydration", "polkadot-hub"],
+        },
+        {
+          assetIn: "DOT",
           assetOut: "HDX",
-          settlementChains: ["hydration"],
+          settlementChains: ["hydration", "polkadot-hub"],
         },
       ],
-      executeCapabilities: [
-        capability(EXECUTION_TYPES.RUNTIME_CALL, ["PAS"]),
-      ],
+      executeCapabilities: [capability(EXECUTION_TYPES.RUNTIME_CALL, ["DOT"])],
     }),
     route({
       sourceChain: "hydration",
       destinationChain: "polkadot-hub",
       actions: [ACTION_TYPES.TRANSFER],
-      transferableAssets: ["PAS", "HDX"],
+      transferableAssets: ["DOT", "USDT", "HDX"],
+    }),
+    route({
+      sourceChain: "moonbeam",
+      destinationChain: "polkadot-hub",
+      actions: [ACTION_TYPES.TRANSFER],
+      transferableAssets: ["DOT"],
+    }),
+    route({
+      sourceChain: "polkadot-hub",
+      destinationChain: "bifrost",
+      actions: [ACTION_TYPES.TRANSFER],
+      transferableAssets: ["DOT"],
+    }),
+    route({
+      sourceChain: "bifrost",
+      destinationChain: "polkadot-hub",
+      actions: [ACTION_TYPES.TRANSFER],
+      transferableAssets: ["DOT"],
     }),
   ]),
-});
-
-const MOONBASE_ALPHA_PROFILE = subsetProfile({
-  chains: ["polkadot-hub", "moonbeam"],
-  assets: ["DOT"],
-  routes: [
-    { sourceChain: "polkadot-hub", destinationChain: "moonbeam" },
-    { sourceChain: "moonbeam", destinationChain: "polkadot-hub" },
-  ],
-});
-
-const CORE_MULTIHOP_PROFILE = subsetProfile({
-  chains: ["polkadot-hub", "hydration", "moonbeam"],
-  assets: ["DOT", "USDT", "HDX"],
-  routes: [
-    { sourceChain: "polkadot-hub", destinationChain: "hydration" },
-    { sourceChain: "hydration", destinationChain: "polkadot-hub" },
-    { sourceChain: "polkadot-hub", destinationChain: "moonbeam" },
-    { sourceChain: "moonbeam", destinationChain: "polkadot-hub" },
-  ],
-});
-
-const BIFROST_VIA_HYDRATION_PROFILE = subsetProfile({
-  chains: ["hydration", "bifrost"],
-  assets: ["DOT", "VDOT"],
-  routes: [
-    { sourceChain: "hydration", destinationChain: "bifrost" },
-    { sourceChain: "bifrost", destinationChain: "hydration" },
-  ],
-});
-
-const BIFROST_VIA_MOONBEAM_PROFILE = subsetProfile({
-  chains: ["moonbeam", "bifrost"],
-  assets: ["DOT", "VDOT"],
-  routes: [
-    { sourceChain: "moonbeam", destinationChain: "bifrost" },
-    { sourceChain: "bifrost", destinationChain: "moonbeam" },
-  ],
-});
-
-const INTEGRATION_PROFILE = FULL_GRAPH_PROFILE;
-const MAINNET_PROFILE = FULL_GRAPH_PROFILE;
-
-const ROUTE_PROFILES = Object.freeze({
-  [DEPLOYMENT_PROFILES.PASEO]: PASEO_PROFILE,
-  [DEPLOYMENT_PROFILES.HYDRATION_SNAKENET]: HYDRATION_SNAKENET_PROFILE,
-  [DEPLOYMENT_PROFILES.MOONBASE_ALPHA]: MOONBASE_ALPHA_PROFILE,
-  [DEPLOYMENT_PROFILES.CORE_MULTIHOP]: CORE_MULTIHOP_PROFILE,
-  [DEPLOYMENT_PROFILES.BIFROST_VIA_HYDRATION]: BIFROST_VIA_HYDRATION_PROFILE,
-  [DEPLOYMENT_PROFILES.BIFROST_VIA_MOONBEAM]: BIFROST_VIA_MOONBEAM_PROFILE,
-  [DEPLOYMENT_PROFILES.INTEGRATION]: INTEGRATION_PROFILE,
-  [DEPLOYMENT_PROFILES.MAINNET]: MAINNET_PROFILE,
 });
 
 function resolveProfile(deploymentProfile = DEFAULT_DEPLOYMENT_PROFILE) {
@@ -471,7 +237,10 @@ function resolveProfile(deploymentProfile = DEFAULT_DEPLOYMENT_PROFILE) {
 
 function getProfile(deploymentProfile = DEFAULT_DEPLOYMENT_PROFILE) {
   const normalized = resolveProfile(deploymentProfile);
-  return ROUTE_PROFILES[normalized];
+  if (normalized !== DEPLOYMENT_PROFILES.MAINNET) {
+    throw new Error(`unsupported deploymentProfile: ${normalized}`);
+  }
+  return MAINNET_PROFILE;
 }
 
 export function getChain(chainKey, deploymentProfile = DEFAULT_DEPLOYMENT_PROFILE) {
@@ -753,6 +522,6 @@ export function assertSupportedDeploymentProfile(profile) {
   return assertIncluded(
     "deploymentProfile",
     resolveProfile(profile),
-    Object.keys(ROUTE_PROFILES),
+    Object.values(DEPLOYMENT_PROFILES),
   );
 }

@@ -3,7 +3,7 @@ use crate::error::RouteError;
 use crate::model::{
     AssetAmount, AssetKey, ChainKey, DeploymentProfile, ExecuteIntent, FeeBreakdown, FeeType,
     Intent, IntentAction, PlanStep, Quote, RouteSegment, RouteSegmentKind, SubmissionAction,
-    SubmissionTerms, VtokenOrderOperation, XcmInstruction,
+    SubmissionTerms, XcmInstruction,
 };
 use crate::registry::{RouteRegistry, SwapRoute, TransferPath};
 
@@ -394,22 +394,12 @@ fn build_transfer_plan(
         recipient: recipient.clone(),
         asset_count: 1,
     }];
-    let send_instructions = if uses_paseo_teleport_transfer(path, principal.asset) {
-        build_paseo_teleport_transfer_instructions(
-            path,
-            principal.amount,
-            fees.xcm_fee.amount,
-            fees.destination_fee.amount,
-            final_remote_instructions,
-        )?
-    } else {
-        vec![build_multihop_transfer_instruction(
-            &path.hops,
-            0,
-            principal.amount,
-            final_remote_instructions,
-        )]
-    };
+    let send_instructions = build_multihop_transfer_instructions(
+        intent.source_chain,
+        path,
+        principal.amount,
+        final_remote_instructions,
+    )?;
 
     Ok(crate::model::ExecutionPlan {
         route: path.route.clone(),
@@ -449,52 +439,6 @@ fn build_transfer_plan(
     })
 }
 
-fn uses_paseo_teleport_transfer(path: &TransferPath, asset: AssetKey) -> bool {
-    matches!(
-        path.hops.as_slice(),
-        [hop]
-            if hop.source == ChainKey::PolkadotHub
-                && hop.destination == ChainKey::People
-                && asset == AssetKey::Pas
-    )
-}
-
-fn build_paseo_teleport_transfer_instructions(
-    path: &TransferPath,
-    amount: u128,
-    xcm_fee_amount: u128,
-    destination_fee_amount: u128,
-    final_remote_instructions: Vec<XcmInstruction>,
-) -> Result<Vec<XcmInstruction>, RouteError> {
-    let [hop] = path.hops.as_slice() else {
-        return Err(RouteError::ArithmeticOverflow);
-    };
-    let withdrawn_amount = amount
-        .checked_add(xcm_fee_amount)
-        .and_then(|value| value.checked_add(destination_fee_amount))
-        .ok_or(RouteError::ArithmeticOverflow)?;
-
-    Ok(vec![
-        XcmInstruction::WithdrawAsset {
-            asset: hop.asset,
-            amount: withdrawn_amount,
-        },
-        XcmInstruction::PayFees {
-            asset: hop.asset,
-            amount: xcm_fee_amount,
-        },
-        XcmInstruction::InitiateTransfer {
-            asset: hop.asset,
-            amount,
-            destination: hop.destination,
-            remote_fee_asset: hop.buy_execution_fee.asset,
-            remote_fee_amount: destination_fee_amount,
-            preserve_origin: false,
-            remote_instructions: final_remote_instructions,
-        },
-    ])
-}
-
 fn build_execute_plan(
     intent: &Intent,
     path: &TransferPath,
@@ -513,27 +457,12 @@ fn build_execute_plan(
         fallback_weight: execute.fallback_weight(),
         call_data: build_execute_call_data(execute, intent.destination_chain, deployment_profile)?,
     }];
-    let is_redeem_teleport = matches!(
-        execute,
-        ExecuteIntent::VtokenOrder(order)
-            if order.operation == VtokenOrderOperation::Redeem
-                && execute.asset().reserve_chain() == intent.destination_chain
-                && path.hops.len() == 1
-    );
-    let send_instructions = if is_redeem_teleport {
-        vec![build_teleport_execute_instruction(
-            &path.hops,
-            transfer_amount,
-            final_remote_instructions,
-        )?]
-    } else {
-        vec![build_multihop_transfer_instruction(
-            &path.hops,
-            0,
-            transfer_amount,
-            final_remote_instructions,
-        )]
-    };
+    let send_instructions = build_multihop_transfer_instructions(
+        intent.source_chain,
+        path,
+        transfer_amount,
+        final_remote_instructions,
+    )?;
 
     Ok(crate::model::ExecutionPlan {
         route: path.route.clone(),
@@ -615,12 +544,12 @@ fn build_swap_plan(
                     .route
                     .get(1)
                     .ok_or(RouteError::ArithmeticOverflow)?,
-                instructions: vec![build_multihop_transfer_instruction(
-                    &execution_path.hops,
-                    0,
+                instructions: build_multihop_transfer_instructions(
+                    intent.source_chain,
+                    execution_path,
                     swap.amount_in,
                     final_remote_instructions,
-                )],
+                )?,
             },
             PlanStep::ExpectSettlement {
                 chain: settlement.settlement_chain,
@@ -697,7 +626,111 @@ fn build_swap_settlement_instructions(
     Ok(vec![instruction])
 }
 
-fn build_multihop_transfer_instruction(
+fn build_multihop_transfer_instructions(
+    source_chain: ChainKey,
+    path: &TransferPath,
+    amount: u128,
+    final_remote_instructions: Vec<XcmInstruction>,
+) -> Result<Vec<XcmInstruction>, RouteError> {
+    let Some(first_hop) = path.hops.first() else {
+        return Err(RouteError::ArithmeticOverflow);
+    };
+    let reserve_chain = first_hop.asset.reserve_chain();
+
+    if source_chain == reserve_chain {
+        return Ok(vec![build_legacy_multihop_transfer_instruction(
+            &path.hops,
+            0,
+            amount,
+            final_remote_instructions,
+        )]);
+    }
+
+    if path.route.get(1).copied() == Some(reserve_chain) && path.hops.len() <= 2 {
+        return build_reserve_withdraw_transfer_instructions(
+            &path.hops,
+            amount,
+            final_remote_instructions,
+        );
+    }
+
+    Ok(vec![build_legacy_multihop_transfer_instruction(
+        &path.hops,
+        0,
+        amount,
+        final_remote_instructions,
+    )])
+}
+
+fn build_reserve_withdraw_transfer_instructions(
+    hops: &[crate::registry::TransferEdge],
+    amount: u128,
+    final_remote_instructions: Vec<XcmInstruction>,
+) -> Result<Vec<XcmInstruction>, RouteError> {
+    let Some(first_hop) = hops.first() else {
+        return Err(RouteError::ArithmeticOverflow);
+    };
+    let reserve_chain = first_hop.asset.reserve_chain();
+    let mut reserve_remote_instructions = vec![XcmInstruction::BuyExecution {
+        asset: first_hop.buy_execution_fee.asset,
+        amount: first_hop.buy_execution_fee.amount,
+    }];
+
+    if hops.len() == 1 {
+        reserve_remote_instructions.extend(final_remote_instructions);
+    } else {
+        reserve_remote_instructions.push(build_deposit_reserve_instruction(
+            &hops[1..],
+            0,
+            amount,
+            final_remote_instructions,
+        )?);
+    }
+
+    Ok(vec![
+        XcmInstruction::WithdrawAsset {
+            asset: first_hop.asset,
+            amount,
+        },
+        XcmInstruction::InitiateReserveWithdraw {
+            asset_count: 1,
+            reserve: reserve_chain,
+            remote_instructions: reserve_remote_instructions,
+        },
+    ])
+}
+
+fn build_deposit_reserve_instruction(
+    hops: &[crate::registry::TransferEdge],
+    index: usize,
+    amount: u128,
+    final_remote_instructions: Vec<XcmInstruction>,
+) -> Result<XcmInstruction, RouteError> {
+    let hop = hops[index];
+    let mut remote_instructions = vec![XcmInstruction::BuyExecution {
+        asset: hop.buy_execution_fee.asset,
+        amount: hop.buy_execution_fee.amount,
+    }];
+
+    if index + 1 < hops.len() {
+        remote_instructions.push(build_legacy_multihop_transfer_instruction(
+            hops,
+            index + 1,
+            amount,
+            final_remote_instructions,
+        ));
+    } else {
+        remote_instructions.extend(final_remote_instructions);
+    }
+
+    Ok(XcmInstruction::DepositReserveAsset {
+        asset_count: 1,
+        destination: hop.destination,
+        remote_instructions,
+    })
+}
+
+fn build_legacy_multihop_transfer_instruction(
     hops: &[crate::registry::TransferEdge],
     index: usize,
     amount: u128,
@@ -710,7 +743,7 @@ fn build_multihop_transfer_instruction(
     }];
 
     if index + 1 < hops.len() {
-        remote_instructions.push(build_multihop_transfer_instruction(
+        remote_instructions.push(build_legacy_multihop_transfer_instruction(
             hops,
             index + 1,
             amount,
@@ -726,30 +759,6 @@ fn build_multihop_transfer_instruction(
         destination: hop.destination,
         remote_instructions,
     }
-}
-
-fn build_teleport_execute_instruction(
-    hops: &[crate::registry::TransferEdge],
-    transfer_amount: u128,
-    final_remote_instructions: Vec<XcmInstruction>,
-) -> Result<XcmInstruction, RouteError> {
-    let [hop] = hops else {
-        return Err(RouteError::ArithmeticOverflow);
-    };
-
-    let mut remote_instructions = vec![XcmInstruction::BuyExecution {
-        asset: hop.buy_execution_fee.asset,
-        amount: hop.buy_execution_fee.amount,
-    }];
-    remote_instructions.extend(final_remote_instructions);
-
-    let _ = transfer_amount;
-
-    Ok(XcmInstruction::InitiateTeleport {
-        asset_count: 1,
-        destination: hop.destination,
-        remote_instructions,
-    })
 }
 
 fn quote_swap_output(route: &SwapRoute, amount_in: u128) -> Result<AssetAmount, RouteError> {

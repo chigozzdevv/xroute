@@ -1,14 +1,7 @@
 use crate::error::RouteError;
-use crate::model::{
-    ChainKey, DeploymentProfile, ExecuteIntent, ExecutionType, VtokenOrderExecuteIntent,
-    VtokenOrderOperation,
-};
+use crate::model::{ChainKey, DeploymentProfile, ExecuteIntent, ExecutionType};
 
 const MOONBEAM_ETHEREUM_XCM_PALLET_MAINNET: u8 = 109;
-const MOONBEAM_ETHEREUM_XCM_PALLET_TESTNET: u8 = 38;
-const BIFROST_SLPX_PALLET_INDEX: u8 = 125;
-const BIFROST_SLPX_MINT_CALL_INDEX: u8 = 0;
-const BIFROST_SLPX_REDEEM_CALL_INDEX: u8 = 2;
 const MOONBEAM_ETHEREUM_XCM_TRANSACT_CALL_INDEX: u8 = 0;
 
 pub fn build_execute_call_data(
@@ -43,63 +36,12 @@ pub fn build_execute_call_data(
 
             Ok(bytes_to_hex(&encoded))
         }
-        ExecuteIntent::VtokenOrder(intent) => {
-            build_bifrost_vtoken_order_call(intent, destination_chain)
-        }
-    }
-}
-
-fn build_bifrost_vtoken_order_call(
-    intent: &VtokenOrderExecuteIntent,
-    destination_chain: ChainKey,
-) -> Result<String, RouteError> {
-    if destination_chain != ChainKey::Bifrost {
-        return Err(RouteError::InvalidExecutionTarget {
-            execution_type: ExecutionType::VtokenOrder,
-            destination: destination_chain,
-        });
-    }
-
-    match intent.operation {
-        VtokenOrderOperation::Mint => {
-            let mut encoded = vec![BIFROST_SLPX_PALLET_INDEX, BIFROST_SLPX_MINT_CALL_INDEX];
-            encoded.extend([8, 0]);
-            encoded.extend(intent.amount.to_le_bytes());
-            encoded.push(6);
-            encoded.extend(parse_h256(
-                &intent.recipient_account_id_hex,
-                "recipient_account_id_hex",
-            )?);
-            encoded.extend(encode_bytes(intent.remark.as_bytes()));
-            encoded.extend(intent.channel_id.to_le_bytes());
-            Ok(bytes_to_hex(&encoded))
-        }
-        VtokenOrderOperation::Redeem => {
-            let mut encoded = vec![BIFROST_SLPX_PALLET_INDEX, BIFROST_SLPX_REDEEM_CALL_INDEX];
-            encoded.push(0);
-            encoded.extend([9, 0]);
-            encoded.extend(intent.amount.to_le_bytes());
-            encoded.push(6);
-            encoded.extend(parse_h256(
-                &intent.recipient_account_id_hex,
-                "recipient_account_id_hex",
-            )?);
-            Ok(bytes_to_hex(&encoded))
-        }
     }
 }
 
 fn moonbeam_ethereum_xcm_pallet_index(profile: DeploymentProfile) -> u8 {
-    match profile {
-        DeploymentProfile::Paseo
-        | DeploymentProfile::HydrationSnakenet
-        | DeploymentProfile::MoonbaseAlpha
-        | DeploymentProfile::CoreMultihop
-        | DeploymentProfile::BifrostViaHydration
-        | DeploymentProfile::BifrostViaMoonbeam
-        | DeploymentProfile::Integration => MOONBEAM_ETHEREUM_XCM_PALLET_TESTNET,
-        DeploymentProfile::Mainnet => MOONBEAM_ETHEREUM_XCM_PALLET_MAINNET,
-    }
+    let _ = profile;
+    MOONBEAM_ETHEREUM_XCM_PALLET_MAINNET
 }
 
 fn parse_hex_bytes(value: &str, field: &'static str) -> Result<Vec<u8>, RouteError> {
@@ -124,17 +66,6 @@ fn parse_h160(value: &str, field: &'static str) -> Result<[u8; 20], RouteError> 
     }
 
     let mut result = [0u8; 20];
-    result.copy_from_slice(&bytes);
-    Ok(result)
-}
-
-fn parse_h256(value: &str, field: &'static str) -> Result<[u8; 32], RouteError> {
-    let bytes = parse_hex_bytes(value, field)?;
-    if bytes.len() != 32 {
-        return Err(RouteError::InvalidBytes32 { field });
-    }
-
-    let mut result = [0u8; 32];
     result.copy_from_slice(&bytes);
     Ok(result)
 }
@@ -192,7 +123,7 @@ mod tests {
     use super::build_execute_call_data;
     use crate::model::{
         AssetKey, ChainKey, DeploymentProfile, EvmContractCallExecuteIntent, ExecuteIntent,
-        VtokenOrderExecuteIntent, VtokenOrderOperation, XcmWeight,
+        XcmWeight,
     };
 
     #[test]
@@ -211,71 +142,12 @@ mod tests {
                 },
             }),
             ChainKey::Moonbeam,
-            DeploymentProfile::Paseo,
+            DeploymentProfile::Mainnet,
         )
         .expect("moonbeam call should encode");
 
-        assert!(call_data.starts_with("0x260001"));
+        assert!(call_data.starts_with("0x6d0001"));
         assert!(call_data.contains("1111111111111111111111111111111111111111"));
         assert!(call_data.ends_with("10deadbeef00"));
-    }
-
-    #[test]
-    fn encodes_bifrost_vtoken_order() {
-        let call_data = build_execute_call_data(
-            &ExecuteIntent::VtokenOrder(VtokenOrderExecuteIntent {
-                asset: AssetKey::Dot,
-                amount: 1_000_000_000_000,
-                max_payment_amount: 100_000_000,
-                operation: VtokenOrderOperation::Mint,
-                recipient: "5Frecipient".to_owned(),
-                recipient_account_id_hex:
-                    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
-                channel_id: 7,
-                remark: "xroute".to_owned(),
-                fallback_weight: XcmWeight {
-                    ref_time: 600_000_000,
-                    proof_size: 12_288,
-                },
-            }),
-            ChainKey::Bifrost,
-            DeploymentProfile::Paseo,
-        )
-        .expect("bifrost order should encode");
-
-        assert!(call_data.starts_with("0x7d000800"));
-        assert!(
-            call_data.contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        );
-        assert!(call_data.ends_with("1878726f75746507000000"));
-    }
-
-    #[test]
-    fn encodes_bifrost_vtoken_redeem_order() {
-        let call_data = build_execute_call_data(
-            &ExecuteIntent::VtokenOrder(VtokenOrderExecuteIntent {
-                asset: AssetKey::Vdot,
-                amount: 1_000_000_000_000,
-                max_payment_amount: 100_000_000,
-                operation: VtokenOrderOperation::Redeem,
-                recipient: "5Frecipient".to_owned(),
-                recipient_account_id_hex:
-                    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned(),
-                channel_id: 0,
-                remark: String::new(),
-                fallback_weight: XcmWeight {
-                    ref_time: 600_000_000,
-                    proof_size: 12_288,
-                },
-            }),
-            ChainKey::Bifrost,
-            DeploymentProfile::Paseo,
-        )
-        .expect("bifrost redeem should encode");
-
-        assert!(call_data.starts_with("0x7d02000900"));
-        assert!(
-            call_data.contains("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-        );
     }
 }

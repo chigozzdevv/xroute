@@ -316,10 +316,10 @@ contract XRouteHubRouter {
         if (intent.status != IntentStatus.Failed) revert InvalidIntentStatus();
 
         uint128 refundableAmount = _refundableAmount(intent);
-        if (refundAmount == 0 || refundAmount > refundableAmount) revert InvalidRefundAmount();
+        if (refundAmount == 0 || refundAmount != refundableAmount) revert InvalidRefundAmount();
 
         intent.status = IntentStatus.Refunded;
-        intent.refundAmount = refundAmount;
+        intent.refundAmount += refundAmount;
 
         _transferAsset(intent.asset, intent.refundAddress, refundAmount);
 

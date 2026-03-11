@@ -3,36 +3,10 @@ import { ACTION_TYPES, DISPATCH_MODES, assertIncluded, assertNonEmptyString } fr
 export const XCM_PRECOMPILE_ADDRESS = "0x00000000000000000000000000000000000a0000";
 
 export const DEPLOYMENT_PROFILES = Object.freeze({
-  PASEO: "paseo",
-  HYDRATION_SNAKENET: "hydration-snakenet",
-  MOONBASE_ALPHA: "moonbase-alpha",
-  CORE_MULTIHOP: "core-multihop",
-  BIFROST_VIA_HYDRATION: "bifrost-via-hydration",
-  BIFROST_VIA_MOONBEAM: "bifrost-via-moonbeam",
-  INTEGRATION: "integration",
   MAINNET: "mainnet",
 });
 
 export const DEFAULT_DEPLOYMENT_PROFILE = DEPLOYMENT_PROFILES.MAINNET;
-const DEPLOYMENT_PROFILE_ALIASES = Object.freeze({
-  testnet: DEPLOYMENT_PROFILES.PASEO,
-  "hydration-testnet": DEPLOYMENT_PROFILES.HYDRATION_SNAKENET,
-  moonbeam: DEPLOYMENT_PROFILES.MOONBASE_ALPHA,
-  moonbase: DEPLOYMENT_PROFILES.MOONBASE_ALPHA,
-  "moonbeam-testnet": DEPLOYMENT_PROFILES.MOONBASE_ALPHA,
-  "core-multihop": DEPLOYMENT_PROFILES.CORE_MULTIHOP,
-  "hub-hydration-moonbeam": DEPLOYMENT_PROFILES.CORE_MULTIHOP,
-  "bifrost-via-hydration-snakenet": DEPLOYMENT_PROFILES.BIFROST_VIA_HYDRATION,
-  "bifrost-via-hydration-testnet": DEPLOYMENT_PROFILES.BIFROST_VIA_HYDRATION,
-  "bifrost-via-moonbase-alpha": DEPLOYMENT_PROFILES.BIFROST_VIA_MOONBEAM,
-  "bifrost-via-moonbeam": DEPLOYMENT_PROFILES.BIFROST_VIA_MOONBEAM,
-  "bifrost-via-moonbase": DEPLOYMENT_PROFILES.BIFROST_VIA_MOONBEAM,
-  "bifrost-via-moonbeam-testnet": DEPLOYMENT_PROFILES.BIFROST_VIA_MOONBEAM,
-  lab: DEPLOYMENT_PROFILES.INTEGRATION,
-  "multichain-lab": DEPLOYMENT_PROFILES.INTEGRATION,
-  multihop: DEPLOYMENT_PROFILES.CORE_MULTIHOP,
-  "integration-testnet": DEPLOYMENT_PROFILES.INTEGRATION,
-});
 
 export const PRECOMPILE_METADATA = Object.freeze({
   xcm: Object.freeze({
@@ -56,7 +30,7 @@ export function normalizeDeploymentProfile(profile) {
   const normalized = assertNonEmptyString("deploymentProfile", profile);
   return assertIncluded(
     "deploymentProfile",
-    DEPLOYMENT_PROFILE_ALIASES[normalized] ?? normalized,
+    normalized,
     Object.values(DEPLOYMENT_PROFILES),
   );
 }

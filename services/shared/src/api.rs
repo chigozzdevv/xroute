@@ -3,8 +3,8 @@ use route_engine::{
     AssetAmount, AssetKey, ChainKey, DeploymentProfile, EvmContractCallExecuteIntent,
     ExecuteIntent, ExecutionPlan, ExecutionType, FeeBreakdown, FeeType, Intent, IntentAction,
     PlanStep, Quote, RouteHop, RouteSegment, RouteSegmentKind, RuntimeCallExecuteIntent,
-    RuntimeCallOriginKind, SubmissionAction, SwapIntent, TransferIntent, VtokenOrderExecuteIntent,
-    VtokenOrderOperation, XcmInstruction, XcmWeight,
+    RuntimeCallOriginKind, SubmissionAction, SwapIntent, TransferIntent, XcmInstruction,
+    XcmWeight,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -43,12 +43,30 @@ pub struct DispatchRequest {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceIntentMetadata {
+    pub kind: String,
+    pub refund_asset: String,
+    pub refundable_amount: String,
+    pub min_output_amount: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceDispatchMetadata {
+    pub tx_hash: String,
+    pub strategy: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct DispatchJobRequest {
     pub intent_id: String,
     pub wire_intent: WireIntent,
     pub intent: Intent,
     pub request: DispatchRequest,
+    pub source_intent: Option<SourceIntentMetadata>,
+    pub source_dispatch: Option<SourceDispatchMetadata>,
 }
 
 #[derive(Debug, Clone)]
@@ -84,6 +102,8 @@ struct DispatchJobBody {
     intent_id: String,
     intent: WireIntent,
     request: DispatchRequest,
+    source_intent: Option<SourceIntentMetadata>,
+    source_dispatch: Option<SourceDispatchMetadata>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -163,22 +183,6 @@ struct EvmContractCallParams {
     fallback_weight: FallbackWeight,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct VtokenOrderParams {
-    #[serde(rename = "executionType")]
-    _execution_type: String,
-    asset: String,
-    amount: String,
-    max_payment_amount: String,
-    operation: String,
-    recipient: String,
-    recipient_account_id_hex: String,
-    channel_id: u32,
-    remark: String,
-    fallback_weight: FallbackWeight,
-}
-
 pub fn quote_request_from_slice(body: &[u8]) -> Result<QuoteRequest, HttpError> {
     let payload: QuoteBody = serde_json::from_slice(body)
         .map_err(|error| HttpError::bad_request(format!("invalid quote request: {error}")))?;
@@ -214,6 +218,16 @@ pub fn dispatch_job_request_from_slice(body: &[u8]) -> Result<DispatchJobRequest
             message: normalize_hex(&payload.request.message, "request.message")
                 .map_err(HttpError::bad_request)?,
         },
+        source_intent: payload
+            .source_intent
+            .map(normalize_source_intent_metadata)
+            .transpose()
+            .map_err(HttpError::bad_request)?,
+        source_dispatch: payload
+            .source_dispatch
+            .map(normalize_source_dispatch_metadata)
+            .transpose()
+            .map_err(HttpError::bad_request)?,
     })
 }
 
@@ -433,31 +447,6 @@ fn parse_execute_intent(
                 },
             ))
         }
-        "vtoken-order" => {
-            let params: VtokenOrderParams = serde_json::from_value(params.clone())
-                .map_err(|error| format!("invalid vtoken-order params: {error}"))?;
-            ensure_supported_execute_destination(destination_chain, ExecutionType::VtokenOrder)?;
-            Ok(ExecuteIntent::VtokenOrder(VtokenOrderExecuteIntent {
-                asset: parse_asset(&params.asset)?,
-                amount: parse_u128(&params.amount, "action.params.amount")?,
-                max_payment_amount: parse_u128(
-                    &params.max_payment_amount,
-                    "action.params.maxPaymentAmount",
-                )?,
-                operation: parse_vtoken_operation(&params.operation)?,
-                recipient: require_non_empty(&params.recipient, "action.params.recipient")?,
-                recipient_account_id_hex: normalize_bytes32(
-                    &params.recipient_account_id_hex,
-                    "action.params.recipientAccountIdHex",
-                )?,
-                channel_id: params.channel_id,
-                remark: normalize_remark(&params.remark)?,
-                fallback_weight: XcmWeight {
-                    ref_time: params.fallback_weight.ref_time,
-                    proof_size: params.fallback_weight.proof_size,
-                },
-            }))
-        }
         other => Err(format!("unsupported execution type: {other}")),
     }
 }
@@ -469,7 +458,6 @@ fn ensure_supported_execute_destination(
     match (destination, execution_type) {
         (_, ExecutionType::RuntimeCall) => Ok(()),
         (ChainKey::Moonbeam, ExecutionType::EvmContractCall) => Ok(()),
-        (ChainKey::Bifrost, ExecutionType::VtokenOrder) => Ok(()),
         _ => Err(format!(
             "{} is not supported on {}",
             execution_type.as_str(),
@@ -530,21 +518,6 @@ fn execute_to_json_value(execute: &ExecuteIntent) -> Value {
             "fallbackWeight": {
                 "refTime": evm_call.fallback_weight.ref_time,
                 "proofSize": evm_call.fallback_weight.proof_size,
-            },
-        }),
-        ExecuteIntent::VtokenOrder(vtoken_order) => json!({
-            "executionType": "vtoken-order",
-            "asset": vtoken_order.asset.symbol(),
-            "amount": vtoken_order.amount.to_string(),
-            "maxPaymentAmount": vtoken_order.max_payment_amount.to_string(),
-            "operation": vtoken_order.operation.as_str(),
-            "recipient": vtoken_order.recipient,
-            "recipientAccountIdHex": vtoken_order.recipient_account_id_hex,
-            "channelId": vtoken_order.channel_id,
-            "remark": vtoken_order.remark,
-            "fallbackWeight": {
-                "refTime": vtoken_order.fallback_weight.ref_time,
-                "proofSize": vtoken_order.fallback_weight.proof_size,
             },
         }),
     }
@@ -760,21 +733,18 @@ fn asset_amount_to_json_value(amount: &AssetAmount) -> Value {
 fn parse_chain(value: &str) -> Result<ChainKey, String> {
     match value.trim() {
         "polkadot-hub" | "asset-hub" => Ok(ChainKey::PolkadotHub),
-        "people" => Ok(ChainKey::People),
         "hydration" => Ok(ChainKey::Hydration),
-        "moonbeam" => Ok(ChainKey::Moonbeam),
         "bifrost" => Ok(ChainKey::Bifrost),
+        "moonbeam" => Ok(ChainKey::Moonbeam),
         other => Err(format!("unsupported chain: {other}")),
     }
 }
 
 fn parse_asset(value: &str) -> Result<AssetKey, String> {
     match value.trim().to_uppercase().as_str() {
-        "PAS" => Ok(AssetKey::Pas),
         "DOT" => Ok(AssetKey::Dot),
         "USDT" => Ok(AssetKey::Usdt),
         "HDX" => Ok(AssetKey::Hdx),
-        "VDOT" => Ok(AssetKey::Vdot),
         other => Err(format!("unsupported asset: {other}")),
     }
 }
@@ -789,18 +759,45 @@ fn parse_origin_kind(value: &str) -> Result<RuntimeCallOriginKind, String> {
     }
 }
 
-fn parse_vtoken_operation(value: &str) -> Result<VtokenOrderOperation, String> {
-    match value {
-        "mint" => Ok(VtokenOrderOperation::Mint),
-        "redeem" => Ok(VtokenOrderOperation::Redeem),
-        other => Err(format!("unsupported vtoken order operation: {other}")),
-    }
-}
-
 fn parse_u128(value: &str, name: &str) -> Result<u128, String> {
     value
         .parse::<u128>()
         .map_err(|_| format!("{name} must be an unsigned integer"))
+}
+
+fn normalize_source_intent_metadata(
+    metadata: SourceIntentMetadata,
+) -> Result<SourceIntentMetadata, String> {
+    Ok(SourceIntentMetadata {
+        kind: normalize_source_intent_kind(&metadata.kind)?,
+        refund_asset: metadata.refund_asset.trim().to_owned(),
+        refundable_amount: parse_u128(&metadata.refundable_amount, "sourceIntent.refundableAmount")?
+            .to_string(),
+        min_output_amount: parse_u128(&metadata.min_output_amount, "sourceIntent.minOutputAmount")?
+            .to_string(),
+    })
+}
+
+fn normalize_source_dispatch_metadata(
+    metadata: SourceDispatchMetadata,
+) -> Result<SourceDispatchMetadata, String> {
+    Ok(SourceDispatchMetadata {
+        tx_hash: normalize_bytes32(&metadata.tx_hash, "sourceDispatch.txHash")?,
+        strategy: metadata
+            .strategy
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty()),
+    })
+}
+
+fn normalize_source_intent_kind(value: &str) -> Result<String, String> {
+    match value.trim() {
+        "router-evm" => Ok("router-evm".to_owned()),
+        "substrate-source" => Ok("substrate-source".to_owned()),
+        other => Err(format!(
+            "sourceIntent.kind must be one of router-evm or substrate-source, received {other}"
+        )),
+    }
 }
 
 fn parse_u64(value: &str, name: &str) -> Result<u64, String> {
@@ -849,14 +846,6 @@ fn normalize_bytes32(value: &str, name: &str) -> Result<String, String> {
     }
 
     Ok(normalized)
-}
-
-fn normalize_remark(value: &str) -> Result<String, String> {
-    if value.as_bytes().len() > 32 {
-        return Err("action.params.remark must be at most 32 bytes".to_owned());
-    }
-
-    Ok(value.to_owned())
 }
 
 fn require_non_empty(value: &str, name: &str) -> Result<String, String> {

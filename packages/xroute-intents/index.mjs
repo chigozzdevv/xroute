@@ -1,12 +1,8 @@
-import { AccountId } from "@polkadot-api/substrate-bindings";
-
 import {
   ACTION_TYPES,
   EXECUTION_TYPES,
   RUNTIME_CALL_ORIGIN_KINDS,
-  VTOKEN_ORDER_OPERATIONS,
   assertAddress,
-  assertBytes32Hex,
   assertInteger,
   assertIncluded,
   assertHexString,
@@ -186,8 +182,6 @@ function normalizeExecute(sourceChain, destinationChain, params, deploymentProfi
       return normalizeRuntimeCall(sourceChain, destinationChain, params, deploymentProfile);
     case EXECUTION_TYPES.EVM_CONTRACT_CALL:
       return normalizeEvmContractCall(sourceChain, destinationChain, params, deploymentProfile);
-    case EXECUTION_TYPES.VTOKEN_ORDER:
-      return normalizeVtokenOrder(sourceChain, destinationChain, params, deploymentProfile);
     default:
       throw new Error(`unsupported execution type: ${executionType}`);
   }
@@ -276,70 +270,6 @@ function normalizeEvmContractCall(sourceChain, destinationChain, params, deploym
   });
 }
 
-function normalizeVtokenOrder(sourceChain, destinationChain, params, deploymentProfile) {
-  const asset = assertNonEmptyString("action.params.asset", params.asset).toUpperCase();
-  const operation = assertIncluded(
-    "action.params.operation",
-    params.operation,
-    Object.values(VTOKEN_ORDER_OPERATIONS),
-  );
-  assertValidVtokenOrderAsset(asset, operation);
-  assertExecuteRoute(
-    sourceChain,
-    destinationChain,
-    asset,
-    EXECUTION_TYPES.VTOKEN_ORDER,
-    deploymentProfile,
-  );
-  const recipient = assertNonEmptyString("action.params.recipient", params.recipient);
-
-  return Object.freeze({
-    type: ACTION_TYPES.EXECUTE,
-    params: Object.freeze({
-      executionType: EXECUTION_TYPES.VTOKEN_ORDER,
-      asset,
-      amount: assertPositiveBigInt("action.params.amount", params.amount),
-      maxPaymentAmount: assertPositiveBigInt(
-        "action.params.maxPaymentAmount",
-        params.maxPaymentAmount,
-      ),
-      operation,
-      recipient,
-      recipientAccountIdHex: encodeAccountIdHex(
-        "action.params.recipient",
-        recipient,
-      ),
-      channelId:
-        params.channelId === undefined
-          ? 0
-          : assertInteger("action.params.channelId", params.channelId),
-      remark: normalizeRemark(params.remark),
-      fallbackWeight: Object.freeze({
-        refTime: assertInteger(
-          "action.params.fallbackWeight.refTime",
-          params.fallbackWeight?.refTime,
-        ),
-        proofSize: assertInteger(
-          "action.params.fallbackWeight.proofSize",
-          params.fallbackWeight?.proofSize,
-        ),
-      }),
-    }),
-  });
-}
-
-function encodeAccountIdHex(name, value) {
-  if (typeof value === "string" && /^0x[0-9a-fA-F]{64}$/.test(value.trim())) {
-    return assertBytes32Hex(name, value);
-  }
-
-  try {
-    return `0x${Buffer.from(AccountId().enc(value)).toString("hex")}`;
-  } catch {
-    throw new Error(`${name} must be a valid SS58 or 32-byte hex account id`);
-  }
-}
-
 function assertPositiveOrZeroBigInt(name, value) {
   const normalized = toBigInt(value, name);
   if (normalized < 0n) {
@@ -347,26 +277,4 @@ function assertPositiveOrZeroBigInt(name, value) {
   }
 
   return normalized;
-}
-
-function normalizeRemark(value) {
-  if (value === undefined) {
-    return "";
-  }
-
-  const normalized = String(value);
-  if (Buffer.byteLength(normalized, "utf8") > 32) {
-    throw new Error("action.params.remark must be at most 32 bytes");
-  }
-
-  return normalized;
-}
-
-function assertValidVtokenOrderAsset(asset, operation) {
-  if (operation === VTOKEN_ORDER_OPERATIONS.MINT && asset !== "DOT") {
-    throw new Error("action.params.asset must be DOT for vtoken-order mint");
-  }
-  if (operation === VTOKEN_ORDER_OPERATIONS.REDEEM && asset !== "VDOT") {
-    throw new Error("action.params.asset must be VDOT for vtoken-order redeem");
-  }
 }

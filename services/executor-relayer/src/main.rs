@@ -1,17 +1,18 @@
 mod store;
 
-use crate::store::{Job, JobPayload, JobStatus, JobStore, JobType};
+use crate::store::{Job, JobPayload, JobStatus, JobStore, JobType, SourceIntentRecord};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
 use route_engine::DeploymentProfile;
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::env;
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::task;
@@ -19,10 +20,10 @@ use tokio::time::sleep;
 use xroute_service_shared::{
     assert_bearer_token, assert_intent_allowed_by_execution_policy,
     dispatch_job_request_from_slice, fail_job_request_from_slice, health_json, json_response,
-    load_execution_policy_from_file, load_hub_deployment_artifact, read_request_body,
-    refund_job_request_from_slice, resolve_workspace_root, settle_job_request_from_slice,
-    summarize_execution_policy, summary_json, DispatchRequest, ExecutionPolicy, HttpError,
-    WireIntent,
+    load_chain_deployment_artifact, load_execution_policy_from_file,
+    load_hub_deployment_artifact, read_request_body, refund_job_request_from_slice,
+    resolve_workspace_root, settle_job_request_from_slice, summarize_execution_policy,
+    summary_json, DispatchRequest, ExecutionPolicy, HttpError, WireIntent,
 };
 
 const DISPATCH_INTENT_SIGNATURE: &str = "dispatchIntent(bytes32,(uint8,bytes,bytes))";
@@ -34,16 +35,26 @@ const REFUND_FAILED_INTENT_SIGNATURE: &str = "refundFailedIntent(bytes32,uint128
 const XCM_EXECUTE_SIGNATURE: &str = "execute(bytes,(uint64,uint64))";
 const XCM_WEIGH_MESSAGE_SIGNATURE: &str = "weighMessage(bytes)((uint64,uint64))";
 const XCM_PRECOMPILE_ADDRESS: &str = "0x00000000000000000000000000000000000a0000";
+const SUPPORTED_EXECUTION_CHAINS: &[&str] =
+    &["polkadot-hub", "hydration", "moonbeam", "bifrost"];
+
+#[derive(Clone)]
+struct ExecutionContext {
+    chain_key: String,
+    rpc_url: String,
+    private_key: String,
+    router_address: String,
+    xcm_address: String,
+}
 
 #[derive(Clone)]
 struct RelayerState {
     deployment_profile: DeploymentProfile,
     max_body_bytes: usize,
     auth_token: String,
-    rpc_url: String,
-    private_key: String,
-    router_address: String,
-    xcm_address: String,
+    primary_chain_key: String,
+    primary_execution_context: ExecutionContext,
+    execution_contexts: BTreeMap<String, ExecutionContext>,
     policy: Option<ExecutionPolicy>,
     job_store: Arc<JobStore>,
     event_log_path: PathBuf,
@@ -51,6 +62,8 @@ struct RelayerState {
     max_attempts: u32,
     retry_delay_ms: u64,
     poll_interval_ms: u64,
+    node_bin: String,
+    substrate_dispatch_script: PathBuf,
 }
 
 #[tokio::main]
@@ -75,7 +88,8 @@ async fn run() -> Result<(), String> {
         json!({
             "url": format!("http://{}:{}", display_host(), local_addr.port()),
             "deploymentProfile": state.deployment_profile.as_str(),
-            "routerAddress": state.router_address,
+            "routerAddress": state.primary_execution_context.router_address,
+            "executionContexts": state.execution_context_summary(),
         })
     );
 
@@ -112,12 +126,7 @@ async fn run() -> Result<(), String> {
 }
 
 fn load_state() -> Result<RelayerState, String> {
-    let deployment_profile = parse_deployment_profile(
-        env::var("XROUTE_DEPLOYMENT_PROFILE")
-            .ok()
-            .as_deref()
-            .unwrap_or("mainnet"),
-    )?;
+    let deployment_profile = DeploymentProfile::Mainnet;
     let max_body_bytes = parse_positive_usize(
         env::var("XROUTE_RELAYER_MAX_BODY_BYTES")
             .ok()
@@ -130,6 +139,17 @@ fn load_state() -> Result<RelayerState, String> {
     let private_key = required_env("XROUTE_PRIVATE_KEY")?;
     let workspace_root = resolve_workspace_root(env::var("XROUTE_WORKSPACE_ROOT").ok().as_deref());
     let deployment = load_hub_deployment_artifact(&workspace_root, deployment_profile).ok();
+    let primary_chain_key = env::var("XROUTE_DEFAULT_SOURCE_CHAIN")
+        .ok()
+        .as_deref()
+        .map(normalize_chain_key)
+        .transpose()?
+        .or_else(|| {
+            deployment
+                .as_ref()
+                .and_then(|artifact| normalize_chain_key(&artifact.chain_key).ok())
+        })
+        .unwrap_or_else(|| "polkadot-hub".to_owned());
     let router_address = env::var("XROUTE_ROUTER_ADDRESS")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -145,6 +165,30 @@ fn load_state() -> Result<RelayerState, String> {
         }
         _ => None,
     };
+    let default_xcm_address = env::var("XROUTE_XCM_ADDRESS")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            deployment
+                .as_ref()
+                .and_then(|artifact| artifact.xcm_address.clone())
+        })
+        .unwrap_or_else(|| XCM_PRECOMPILE_ADDRESS.to_owned());
+    let base_execution_context = ExecutionContext {
+        chain_key: primary_chain_key.clone(),
+        rpc_url,
+        private_key,
+        router_address,
+        xcm_address: default_xcm_address,
+    };
+    let mut execution_contexts = load_chain_specific_execution_contexts(
+        &base_execution_context,
+        &workspace_root,
+        deployment_profile,
+    )?;
+    let primary_execution_context = execution_contexts
+        .remove(&primary_chain_key)
+        .unwrap_or_else(|| base_execution_context.clone());
     let data_root = workspace_root
         .join("services")
         .join("executor-relayer")
@@ -161,18 +205,29 @@ fn load_state() -> Result<RelayerState, String> {
         .unwrap_or_else(|| {
             data_root.join(format!("{}-status.ndjson", deployment_profile.as_str()))
         });
+    let node_bin = env::var("XROUTE_NODE_BIN")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "node".to_owned());
+    let substrate_dispatch_script = env::var("XROUTE_SUBSTRATE_DISPATCH_SCRIPT")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            workspace_root
+                .join("services")
+                .join("executor-relayer")
+                .join("scripts")
+                .join("dispatch-substrate-xcm.mjs")
+        });
 
     Ok(RelayerState {
         deployment_profile,
         max_body_bytes,
         auth_token,
-        rpc_url,
-        private_key,
-        router_address,
-        xcm_address: env::var("XROUTE_XCM_ADDRESS")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| XCM_PRECOMPILE_ADDRESS.to_owned()),
+        primary_chain_key,
+        primary_execution_context,
+        execution_contexts,
         policy,
         job_store: Arc::new(JobStore::load(job_store_path)?),
         event_log_path,
@@ -202,6 +257,8 @@ fn load_state() -> Result<RelayerState, String> {
                 .unwrap_or("1000"),
             "XROUTE_RELAYER_POLL_INTERVAL_MS",
         )?,
+        node_bin,
+        substrate_dispatch_script,
     })
 }
 
@@ -229,8 +286,10 @@ async fn route_request(
                 StatusCode::OK,
                 &health_json(
                     state.deployment_profile,
-                    Some(&state.router_address),
+                    Some(&state.primary_execution_context.router_address),
                     json!({
+                        "primarySourceChain": state.primary_chain_key,
+                        "executionContexts": state.execution_context_summary(),
                         "policy": summarize_execution_policy(state.policy.as_ref()),
                         "jobs": summary_json(summary.0, summary.1, summary.2, summary.3),
                     }),
@@ -268,6 +327,35 @@ async fn route_authenticated_request(
             let parsed = dispatch_job_request_from_slice(&body)?;
             assert_intent_allowed_by_execution_policy(&parsed.intent, state.policy.as_ref())
                 .map_err(HttpError::bad_request)?;
+            let normalized_source_chain =
+                normalize_chain_key(&parsed.wire_intent.source_chain).map_err(HttpError::bad_request)?;
+            if source_chain_requires_source_intent_metadata(&normalized_source_chain)
+                && parsed.source_intent.is_none()
+            {
+                return Err(HttpError::bad_request(
+                    format!(
+                        "{} source dispatch requires sourceIntent metadata",
+                        normalized_source_chain
+                    ),
+                ));
+            }
+            if let Some(source_intent) = parsed
+                .source_intent
+                .as_ref()
+                .filter(|metadata| metadata.kind == "substrate-source")
+            {
+                state
+                    .job_store
+                    .record_source_intent_submission(
+                        &parsed.intent_id,
+                        &normalized_source_chain,
+                        source_intent,
+                    )
+                    .await
+                    .map_err(|error| {
+                        HttpError::new(StatusCode::INTERNAL_SERVER_ERROR, error)
+                    })?;
+            }
 
             let job = enqueue_job(
                 &state.job_store,
@@ -276,6 +364,8 @@ async fn route_authenticated_request(
                     intent_id: parsed.intent_id,
                     wire_intent: parsed.wire_intent,
                     request: parsed.request,
+                    source_intent: parsed.source_intent,
+                    source_dispatch: parsed.source_dispatch,
                 },
                 state.max_attempts,
             )
@@ -399,6 +489,21 @@ async fn process_ready_jobs(state: Arc<RelayerState>) -> Result<(), String> {
 
         match run_job(Arc::clone(&state), &current).await {
             Ok(result) => {
+                if let Err(error) =
+                    record_source_intent_progress(&state.job_store, &current.payload, &result).await
+                {
+                    let should_retry = current.attempts < current.max_attempts;
+                    let failed = Job {
+                        status: JobStatus::Failed,
+                        updated_at: now_millis(),
+                        next_attempt_at: should_retry
+                            .then(|| now_millis().saturating_add(state.retry_delay_ms)),
+                        last_error: Some(error),
+                        ..current.clone()
+                    };
+                    state.job_store.upsert(failed).await?;
+                    continue;
+                }
                 let finished = Job {
                     status: JobStatus::Completed,
                     updated_at: now_millis(),
@@ -430,21 +535,27 @@ async fn process_ready_jobs(state: Arc<RelayerState>) -> Result<(), String> {
 
 async fn run_job(state: Arc<RelayerState>, job: &Job) -> Result<Value, String> {
     let deployment_profile = state.deployment_profile;
-    let rpc_url = state.rpc_url.clone();
-    let private_key = state.private_key.clone();
-    let router_address = state.router_address.clone();
-    let xcm_address = state.xcm_address.clone();
-    let gas_limit = state.gas_limit;
     let payload = job.payload.clone();
+    let source_chain = resolve_source_chain_for_payload(&state.job_store, &payload).await?;
+    let source_intent = source_intent_for_payload(&state.job_store, &payload).await;
+    let execution_context = if job_requires_execution_context(&payload, source_intent.as_ref()) {
+        Some(state.execution_context_for_chain(&source_chain)?)
+    } else {
+        None
+    };
+    let gas_limit = state.gas_limit;
+    let node_bin = state.node_bin.clone();
+    let substrate_dispatch_script = state.substrate_dispatch_script.clone();
     task::spawn_blocking(move || {
         run_job_blocking(
             deployment_profile,
-            &rpc_url,
-            &private_key,
-            &router_address,
-            &xcm_address,
+            &source_chain,
+            execution_context,
             gas_limit,
             payload,
+            source_intent,
+            &node_bin,
+            &substrate_dispatch_script,
         )
     })
     .await
@@ -453,52 +564,95 @@ async fn run_job(state: Arc<RelayerState>, job: &Job) -> Result<Value, String> {
 
 fn run_job_blocking(
     deployment_profile: DeploymentProfile,
-    rpc_url: &str,
-    private_key: &str,
-    router_address: &str,
-    xcm_address: &str,
+    chain_key: &str,
+    execution_context: Option<ExecutionContext>,
     gas_limit: Option<u64>,
     payload: JobPayload,
+    source_intent: Option<SourceIntentRecord>,
+    node_bin: &str,
+    substrate_dispatch_script: &Path,
 ) -> Result<Value, String> {
     match payload {
         JobPayload::Dispatch {
             intent_id,
             wire_intent,
             request,
+            source_intent,
+            source_dispatch,
         } => {
+            if is_substrate_source_metadata(source_intent.as_ref()) {
+                if let Some(registered_dispatch) = source_dispatch {
+                    return Ok(json!({
+                        "intentId": intent_id,
+                        "sourceChain": chain_key,
+                        "txHash": registered_dispatch.tx_hash,
+                        "strategy": registered_dispatch
+                            .strategy
+                            .unwrap_or_else(|| "substrate-source-dispatch".to_owned()),
+                        "request": request,
+                    }));
+                }
+
+                let execution_context = execution_context.as_ref().ok_or_else(|| {
+                    format!("missing execution context for source chain {chain_key}")
+                })?;
+                return dispatch_substrate_source_intent(
+                    &intent_id,
+                    chain_key,
+                    execution_context,
+                    &request,
+                    source_intent.as_ref(),
+                    node_bin,
+                    substrate_dispatch_script,
+                );
+            }
+
+            let execution_context = execution_context
+                .as_ref()
+                .ok_or_else(|| format!("missing execution context for source chain {chain_key}"))?;
             let uses_external_source_dispatch =
                 should_use_external_source_dispatch(deployment_profile, &wire_intent);
             let tx_hash = if uses_external_source_dispatch {
                 let (ref_time, proof_size) =
-                    weigh_xcm_message(xcm_address, &request.message, rpc_url)?;
+                    weigh_xcm_message(
+                        &execution_context.xcm_address,
+                        &request.message,
+                        &execution_context.rpc_url,
+                    )?;
                 send_transaction(
-                    xcm_address,
+                    &execution_context.xcm_address,
                     XCM_EXECUTE_SIGNATURE,
                     &[
                         request.message.clone(),
                         format!("({ref_time},{proof_size})"),
                     ],
-                    rpc_url,
-                    private_key,
+                    &execution_context.rpc_url,
+                    &execution_context.private_key,
                     gas_limit,
                 )?
             } else {
                 send_transaction(
-                    router_address,
+                    &execution_context.router_address,
                     DISPATCH_INTENT_SIGNATURE,
                     &[intent_id.clone(), format_dispatch_request_tuple(&request)],
-                    rpc_url,
-                    private_key,
+                    &execution_context.rpc_url,
+                    &execution_context.private_key,
                     gas_limit,
                 )?
             };
             Ok(json!({
                 "intentId": intent_id,
+                "sourceChain": chain_key,
                 "txHash": tx_hash,
                 "strategy": if uses_external_source_dispatch {
                     "external-source-execute"
                 } else {
                     "router-dispatch"
+                },
+                "targetAddress": if uses_external_source_dispatch {
+                    &execution_context.xcm_address
+                } else {
+                    &execution_context.router_address
                 },
                 "request": request,
             }))
@@ -509,14 +663,35 @@ fn run_job_blocking(
             result_asset_id,
             result_amount,
         } => {
+            if is_substrate_source_record(source_intent.as_ref()) {
+                let record = require_substrate_source_intent(source_intent.as_ref(), &intent_id)?;
+                assert_source_intent_status(&record, &intent_id, "dispatched")?;
+                assert_result_amount_meets_minimum(&record, &result_amount)?;
+                return Ok(json!({
+                    "intentId": intent_id,
+                    "sourceChain": chain_key,
+                    "strategy": "substrate-source-settlement",
+                    "outcomeReference": outcome_reference,
+                    "resultAssetId": result_asset_id,
+                    "resultAmount": result_amount,
+                }));
+            }
+
+            let execution_context = execution_context
+                .as_ref()
+                .ok_or_else(|| format!("missing execution context for source chain {chain_key}"))?;
             let settle_signature =
-                if should_use_external_settlement(router_address, rpc_url, &intent_id)? {
+                if should_use_external_settlement(
+                    &execution_context.router_address,
+                    &execution_context.rpc_url,
+                    &intent_id,
+                )? {
                     FINALIZE_EXTERNAL_SUCCESS_SIGNATURE
                 } else {
                     FINALIZE_SUCCESS_SIGNATURE
                 };
             let tx_hash = send_transaction(
-                router_address,
+                &execution_context.router_address,
                 settle_signature,
                 &[
                     intent_id.clone(),
@@ -524,13 +699,15 @@ fn run_job_blocking(
                     result_asset_id.clone(),
                     result_amount.clone(),
                 ],
-                rpc_url,
-                private_key,
+                &execution_context.rpc_url,
+                &execution_context.private_key,
                 gas_limit,
             )?;
             Ok(json!({
                 "intentId": intent_id,
+                "sourceChain": chain_key,
                 "txHash": tx_hash,
+                "routerAddress": &execution_context.router_address,
                 "outcomeReference": outcome_reference,
                 "resultAssetId": result_asset_id,
                 "resultAmount": result_amount,
@@ -541,21 +718,38 @@ fn run_job_blocking(
             outcome_reference,
             failure_reason_hash,
         } => {
+            if is_substrate_source_record(source_intent.as_ref()) {
+                let record = require_substrate_source_intent(source_intent.as_ref(), &intent_id)?;
+                assert_source_intent_status(&record, &intent_id, "dispatched")?;
+                return Ok(json!({
+                    "intentId": intent_id,
+                    "sourceChain": chain_key,
+                    "strategy": "substrate-source-failure",
+                    "outcomeReference": outcome_reference,
+                    "failureReasonHash": failure_reason_hash,
+                }));
+            }
+
+            let execution_context = execution_context
+                .as_ref()
+                .ok_or_else(|| format!("missing execution context for source chain {chain_key}"))?;
             let tx_hash = send_transaction(
-                router_address,
+                &execution_context.router_address,
                 FINALIZE_FAILURE_SIGNATURE,
                 &[
                     intent_id.clone(),
                     outcome_reference.clone(),
                     failure_reason_hash.clone(),
                 ],
-                rpc_url,
-                private_key,
+                &execution_context.rpc_url,
+                &execution_context.private_key,
                 gas_limit,
             )?;
             Ok(json!({
                 "intentId": intent_id,
+                "sourceChain": chain_key,
                 "txHash": tx_hash,
+                "routerAddress": &execution_context.router_address,
                 "outcomeReference": outcome_reference,
                 "failureReasonHash": failure_reason_hash,
             }))
@@ -565,22 +759,257 @@ fn run_job_blocking(
             refund_amount,
             refund_asset,
         } => {
+            if is_substrate_source_record(source_intent.as_ref()) {
+                let record = require_substrate_source_intent(source_intent.as_ref(), &intent_id)?;
+                assert_source_intent_status(&record, &intent_id, "failed")?;
+                let resolved_refund_asset =
+                    resolve_substrate_refund_asset(&record, refund_asset.as_deref());
+                assert_refund_amount_allowed(&record, &refund_amount)?;
+                return Ok(json!({
+                    "intentId": intent_id,
+                    "sourceChain": chain_key,
+                    "strategy": "substrate-source-refund",
+                    "refundAmount": refund_amount,
+                    "refundAsset": resolved_refund_asset,
+                }));
+            }
+
+            let execution_context = execution_context
+                .as_ref()
+                .ok_or_else(|| format!("missing execution context for source chain {chain_key}"))?;
             let tx_hash = send_transaction(
-                router_address,
+                &execution_context.router_address,
                 REFUND_FAILED_INTENT_SIGNATURE,
                 &[intent_id.clone(), refund_amount.clone()],
-                rpc_url,
-                private_key,
+                &execution_context.rpc_url,
+                &execution_context.private_key,
                 gas_limit,
             )?;
             Ok(json!({
                 "intentId": intent_id,
+                "sourceChain": chain_key,
                 "txHash": tx_hash,
+                "routerAddress": &execution_context.router_address,
                 "refundAmount": refund_amount,
                 "refundAsset": refund_asset,
             }))
         }
     }
+}
+
+async fn source_intent_for_payload(
+    job_store: &JobStore,
+    payload: &JobPayload,
+) -> Option<SourceIntentRecord> {
+    match payload {
+        JobPayload::Dispatch { intent_id, .. }
+        | JobPayload::Settle { intent_id, .. }
+        | JobPayload::Fail { intent_id, .. }
+        | JobPayload::Refund { intent_id, .. } => job_store.source_intent(intent_id).await,
+    }
+}
+
+async fn record_source_intent_progress(
+    job_store: &JobStore,
+    payload: &JobPayload,
+    result: &Value,
+) -> Result<(), String> {
+    match payload {
+        JobPayload::Dispatch {
+            intent_id,
+            source_intent,
+            ..
+        } if is_substrate_source_metadata(source_intent.as_ref()) => {
+            let tx_hash = result
+                .get("txHash")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("missing txHash in dispatch result for {intent_id}"))?;
+            let strategy = result
+                .get("strategy")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            job_store
+                .mark_source_intent_dispatched(
+                    intent_id,
+                    Some(&xroute_service_shared::SourceDispatchMetadata {
+                        tx_hash: tx_hash.to_owned(),
+                        strategy,
+                    }),
+                )
+                .await
+        }
+        JobPayload::Settle {
+            intent_id,
+            outcome_reference,
+            result_asset_id,
+            result_amount,
+        } => {
+            if let Some(record) = job_store.source_intent(intent_id).await {
+                if record.kind == "substrate-source" {
+                    job_store
+                        .mark_source_intent_settled(
+                            intent_id,
+                            outcome_reference,
+                            result_asset_id,
+                            result_amount,
+                        )
+                        .await?;
+                }
+            }
+            Ok(())
+        }
+        JobPayload::Fail {
+            intent_id,
+            outcome_reference,
+            failure_reason_hash,
+        } => {
+            if let Some(record) = job_store.source_intent(intent_id).await {
+                if record.kind == "substrate-source" {
+                    job_store
+                        .mark_source_intent_failed(
+                            intent_id,
+                            outcome_reference,
+                            failure_reason_hash,
+                        )
+                        .await?;
+                }
+            }
+            Ok(())
+        }
+        JobPayload::Refund {
+            intent_id,
+            refund_amount,
+            refund_asset,
+        } => {
+            if let Some(record) = job_store.source_intent(intent_id).await {
+                if record.kind == "substrate-source" {
+                    job_store
+                        .mark_source_intent_refunded(
+                            intent_id,
+                            refund_amount,
+                            refund_asset.as_deref(),
+                        )
+                        .await?;
+                }
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn job_requires_execution_context(
+    payload: &JobPayload,
+    source_intent: Option<&SourceIntentRecord>,
+) -> bool {
+    match payload {
+        JobPayload::Dispatch {
+            source_intent,
+            source_dispatch,
+            ..
+        } => {
+            if is_substrate_source_metadata(source_intent.as_ref()) {
+                source_dispatch.is_none()
+            } else {
+                true
+            }
+        }
+        _ => !is_substrate_source_record(source_intent),
+    }
+}
+
+fn is_substrate_source_metadata(
+    metadata: Option<&xroute_service_shared::SourceIntentMetadata>,
+) -> bool {
+    metadata
+        .map(|value| value.kind == "substrate-source")
+        .unwrap_or(false)
+}
+
+fn is_substrate_source_record(record: Option<&SourceIntentRecord>) -> bool {
+    record
+        .map(|value| value.kind == "substrate-source")
+        .unwrap_or(false)
+}
+
+fn require_substrate_source_intent(
+    record: Option<&SourceIntentRecord>,
+    intent_id: &str,
+) -> Result<SourceIntentRecord, String> {
+    record
+        .cloned()
+        .ok_or_else(|| format!("missing substrate source intent record for {intent_id}"))
+}
+
+fn assert_source_intent_status(
+    record: &SourceIntentRecord,
+    intent_id: &str,
+    expected_status: &str,
+) -> Result<(), String> {
+    let current_status = source_intent_status_label(&record.status);
+    if current_status == expected_status {
+        return Ok(());
+    }
+
+    Err(format!(
+        "source intent {intent_id} is {current_status}; expected {expected_status}"
+    ))
+}
+
+fn source_intent_status_label(status: &crate::store::SourceIntentStatus) -> &'static str {
+    match status {
+        crate::store::SourceIntentStatus::Submitted => "submitted",
+        crate::store::SourceIntentStatus::Dispatched => "dispatched",
+        crate::store::SourceIntentStatus::Settled => "settled",
+        crate::store::SourceIntentStatus::Failed => "failed",
+        crate::store::SourceIntentStatus::Refunded => "refunded",
+    }
+}
+
+fn assert_result_amount_meets_minimum(
+    record: &SourceIntentRecord,
+    result_amount: &str,
+) -> Result<(), String> {
+    let minimum = parse_stored_u128(&record.min_output_amount, "minOutputAmount")?;
+    let candidate = parse_stored_u128(result_amount, "resultAmount")?;
+    if candidate < minimum {
+        return Err(format!(
+            "resultAmount {candidate} is below minOutputAmount {minimum}"
+        ));
+    }
+
+    Ok(())
+}
+
+fn assert_refund_amount_allowed(record: &SourceIntentRecord, refund_amount: &str) -> Result<(), String> {
+    let candidate = parse_stored_u128(refund_amount, "refundAmount")?;
+    let refundable = parse_stored_u128(&record.refundable_amount, "refundableAmount")?;
+    let already_refunded = parse_stored_u128(&record.refund_amount, "storedRefundAmount")?;
+    let remaining = refundable.saturating_sub(already_refunded);
+    if candidate == 0 || candidate != remaining {
+        return Err(format!(
+            "refundAmount {candidate} must equal refundable amount {remaining}"
+        ));
+    }
+
+    Ok(())
+}
+
+fn source_chain_requires_source_intent_metadata(chain_key: &str) -> bool {
+    matches!(chain_key, "hydration" | "bifrost")
+}
+
+fn resolve_substrate_refund_asset(record: &SourceIntentRecord, refund_asset: Option<&str>) -> String {
+    refund_asset
+        .map(str::to_owned)
+        .unwrap_or_else(|| record.refund_asset.clone())
+}
+
+fn parse_stored_u128(value: &str, field: &str) -> Result<u128, String> {
+    value
+        .trim()
+        .parse::<u128>()
+        .map_err(|error| format!("invalid {field}: {error}"))
 }
 
 fn send_transaction(
@@ -676,25 +1105,9 @@ fn should_use_external_source_dispatch(
     deployment_profile: DeploymentProfile,
     wire_intent: &WireIntent,
 ) -> bool {
-    if wire_intent.source_chain != "polkadot-hub" {
-        return false;
-    }
-
-    match deployment_profile {
-        DeploymentProfile::Paseo => {
-            if wire_intent.destination_chain != "people" || wire_intent.action.action_type != "transfer" {
-                return false;
-            }
-
-            intent_payment_asset(wire_intent)
-                .map(|asset| asset == "PAS")
-                .unwrap_or(false)
-        }
-        DeploymentProfile::HydrationSnakenet => intent_payment_asset(wire_intent)
-            .map(|asset| asset == "PAS")
-            .unwrap_or(false),
-        _ => false,
-    }
+    let _ = deployment_profile;
+    let _ = wire_intent;
+    false
 }
 
 fn should_use_external_settlement(
@@ -743,11 +1156,210 @@ fn should_use_external_settlement(
 
 fn intent_payment_asset(wire_intent: &WireIntent) -> Option<&str> {
     match wire_intent.action.action_type.as_str() {
-        "transfer" => wire_intent.action.params.get("asset").and_then(Value::as_str),
-        "swap" => wire_intent.action.params.get("assetIn").and_then(Value::as_str),
-        "execute" => wire_intent.action.params.get("asset").and_then(Value::as_str),
+        "transfer" => wire_intent
+            .action
+            .params
+            .get("asset")
+            .and_then(Value::as_str),
+        "swap" => wire_intent
+            .action
+            .params
+            .get("assetIn")
+            .and_then(Value::as_str),
+        "execute" => wire_intent
+            .action
+            .params
+            .get("asset")
+            .and_then(Value::as_str),
         _ => None,
     }
+}
+
+impl RelayerState {
+    fn execution_context_for_chain(&self, chain_key: &str) -> Result<ExecutionContext, String> {
+        let normalized_chain_key = normalize_chain_key(chain_key)?;
+        if normalized_chain_key == self.primary_chain_key {
+            return Ok(self.primary_execution_context.clone());
+        }
+
+        self.execution_contexts
+            .get(&normalized_chain_key)
+            .cloned()
+            .ok_or_else(|| missing_execution_context_message(&normalized_chain_key))
+    }
+
+    fn execution_context_summary(&self) -> Value {
+        let mut contexts = BTreeMap::new();
+        contexts.insert(
+            self.primary_chain_key.clone(),
+            execution_context_to_json(&self.primary_execution_context),
+        );
+        for (chain_key, context) in &self.execution_contexts {
+            contexts.insert(chain_key.clone(), execution_context_to_json(context));
+        }
+
+        json!(contexts)
+    }
+}
+
+async fn resolve_source_chain_for_payload(
+    job_store: &JobStore,
+    payload: &JobPayload,
+) -> Result<String, String> {
+    match payload {
+        JobPayload::Dispatch { wire_intent, .. } => normalize_chain_key(&wire_intent.source_chain),
+        JobPayload::Settle { intent_id, .. }
+        | JobPayload::Fail { intent_id, .. }
+        | JobPayload::Refund { intent_id, .. } => job_store
+            .dispatch_source_chain(intent_id)
+            .await
+            .ok_or_else(|| {
+                format!(
+                    "missing source-chain context for intent {intent_id}; dispatch this intent before running settlement jobs",
+                )
+            })
+            .and_then(|chain_key| normalize_chain_key(&chain_key)),
+    }
+}
+
+fn load_chain_specific_execution_contexts(
+    base_execution_context: &ExecutionContext,
+    workspace_root: &Path,
+    deployment_profile: DeploymentProfile,
+) -> Result<BTreeMap<String, ExecutionContext>, String> {
+    let mut contexts = BTreeMap::new();
+
+    for chain_key in SUPPORTED_EXECUTION_CHAINS {
+        let env_prefix = env_prefix_for_chain(chain_key);
+        if !has_chain_specific_execution_context(&env_prefix) {
+            continue;
+        }
+        let deployment =
+            load_chain_deployment_artifact(workspace_root, deployment_profile, chain_key).ok();
+
+        contexts.insert(
+            (*chain_key).to_owned(),
+            ExecutionContext {
+                chain_key: (*chain_key).to_owned(),
+                rpc_url: required_chain_env(&env_prefix, "RPC_URL")?,
+                private_key: optional_chain_env(&env_prefix, "PRIVATE_KEY")
+                    .unwrap_or_else(|| base_execution_context.private_key.clone()),
+                router_address: if chain_uses_substrate_dispatch(chain_key) {
+                    optional_chain_env(&env_prefix, "ROUTER_ADDRESS")
+                        .or_else(|| deployment.as_ref().map(|artifact| artifact.router_address.clone()))
+                        .unwrap_or_else(|| base_execution_context.router_address.clone())
+                } else {
+                    optional_chain_env(&env_prefix, "ROUTER_ADDRESS")
+                        .or_else(|| deployment.as_ref().map(|artifact| artifact.router_address.clone()))
+                        .ok_or_else(|| {
+                            format!(
+                                "missing required setting: {}; configure {} for this source chain or add {}",
+                                chain_env_name(&env_prefix, "ROUTER_ADDRESS"),
+                                chain_env_name(&env_prefix, "ROUTER_ADDRESS"),
+                                deployment
+                                    .as_ref()
+                                    .map(|artifact| artifact.artifact_path.display().to_string())
+                                    .unwrap_or_else(|| {
+                                        workspace_root
+                                            .join("contracts")
+                                            .join("polkadot-hub-router")
+                                            .join("deployments")
+                                            .join(deployment_profile.as_str())
+                                            .join(format!("{chain_key}.json"))
+                                            .display()
+                                            .to_string()
+                                    }),
+                            )
+                        })?
+                },
+                xcm_address: optional_chain_env(&env_prefix, "XCM_ADDRESS")
+                    .or_else(|| deployment.as_ref().and_then(|artifact| artifact.xcm_address.clone()))
+                    .unwrap_or_else(|| base_execution_context.xcm_address.clone()),
+            },
+        );
+    }
+
+    Ok(contexts)
+}
+
+fn has_chain_specific_execution_context(env_prefix: &str) -> bool {
+    ["RPC_URL", "ROUTER_ADDRESS", "PRIVATE_KEY", "XCM_ADDRESS"]
+        .iter()
+        .any(|suffix| env::var(chain_env_name(env_prefix, suffix)).is_ok())
+}
+
+fn required_chain_env(env_prefix: &str, suffix: &str) -> Result<String, String> {
+    optional_chain_env(env_prefix, suffix).ok_or_else(|| {
+        format!(
+            "missing required setting: {}; configure {} for this source chain",
+            chain_env_name(env_prefix, suffix),
+            chain_env_name(env_prefix, suffix),
+        )
+    })
+}
+
+fn optional_chain_env(env_prefix: &str, suffix: &str) -> Option<String> {
+    env::var(chain_env_name(env_prefix, suffix))
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn chain_env_name(env_prefix: &str, suffix: &str) -> String {
+    format!("XROUTE_{env_prefix}_{suffix}")
+}
+
+fn env_prefix_for_chain(chain_key: &str) -> String {
+    chain_key
+        .trim()
+        .chars()
+        .map(|character| match character {
+            'a'..='z' => character.to_ascii_uppercase(),
+            'A'..='Z' | '0'..='9' => character,
+            _ => '_',
+        })
+        .collect()
+}
+
+fn normalize_chain_key(value: &str) -> Result<String, String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return Err("source chain must not be empty".to_owned());
+    }
+
+    Ok(match normalized.as_str() {
+        "asset-hub" => "polkadot-hub".to_owned(),
+        "bifrost" => "bifrost".to_owned(),
+        other => other.to_owned(),
+    })
+}
+
+fn missing_execution_context_message(chain_key: &str) -> String {
+    let env_prefix = env_prefix_for_chain(chain_key);
+    if chain_uses_substrate_dispatch(chain_key) {
+        return format!(
+            "missing execution context for source chain {chain_key}; configure {}",
+            chain_env_name(&env_prefix, "RPC_URL"),
+        );
+    }
+
+    format!(
+        "missing execution context for source chain {chain_key}; configure {} and {}",
+        chain_env_name(&env_prefix, "RPC_URL"),
+        chain_env_name(&env_prefix, "ROUTER_ADDRESS"),
+    )
+}
+
+fn chain_uses_substrate_dispatch(chain_key: &str) -> bool {
+    matches!(chain_key, "hydration" | "bifrost")
+}
+
+fn execution_context_to_json(context: &ExecutionContext) -> Value {
+    json!({
+        "chainKey": context.chain_key,
+        "rpcUrl": context.rpc_url,
+        "routerAddress": context.router_address,
+        "xcmAddress": context.xcm_address,
+    })
 }
 
 fn format_dispatch_request_tuple(request: &DispatchRequest) -> String {
@@ -755,6 +1367,102 @@ fn format_dispatch_request_tuple(request: &DispatchRequest) -> String {
         "({},{},{})",
         request.mode, request.destination, request.message
     )
+}
+
+fn dispatch_substrate_source_intent(
+    intent_id: &str,
+    chain_key: &str,
+    execution_context: &ExecutionContext,
+    request: &DispatchRequest,
+    source_intent: Option<&xroute_service_shared::SourceIntentMetadata>,
+    node_bin: &str,
+    substrate_dispatch_script: &Path,
+) -> Result<Value, String> {
+    let script_path = substrate_dispatch_script;
+    let payload = json!({
+        "intentId": intent_id,
+        "sourceChain": chain_key,
+        "rpcUrl": execution_context.rpc_url,
+        "privateKey": execution_context.private_key,
+        "request": request,
+        "refundAsset": source_intent.map(|metadata| metadata.refund_asset.clone()),
+    });
+
+    let mut child = Command::new(node_bin)
+        .arg(script_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| {
+            format!(
+                "failed to start substrate dispatch helper {} with {}: {error}",
+                script_path.display(),
+                node_bin
+            )
+        })?;
+
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(payload.to_string().as_bytes())
+            .map_err(|error| {
+                format!(
+                    "failed to write substrate dispatch payload to {}: {error}",
+                    script_path.display()
+                )
+            })?;
+    }
+
+    let output = child.wait_with_output().map_err(|error| {
+        format!(
+            "failed to read substrate dispatch helper output from {}: {error}",
+            script_path.display()
+        )
+    })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        let detail = if !stderr.is_empty() { stderr } else { stdout };
+        return Err(format!(
+            "substrate dispatch helper {} failed: {}",
+            script_path.display(),
+            detail
+        ));
+    }
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).map_err(|error| {
+        format!(
+            "failed to decode substrate dispatch helper output from {}: {error}",
+            script_path.display()
+        )
+    })?;
+    let tx_hash = parsed
+        .get("txHash")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            format!(
+                "substrate dispatch helper {} did not return txHash",
+                script_path.display()
+            )
+        })?;
+    let strategy = parsed
+        .get("strategy")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| {
+            if request.mode == 0 {
+                "substrate-xcm-execute"
+            } else {
+                "substrate-xcm-send"
+            }
+        });
+
+    Ok(json!({
+        "intentId": intent_id,
+        "sourceChain": chain_key,
+        "txHash": tx_hash,
+        "strategy": strategy,
+        "request": request,
+    }))
 }
 
 fn extract_transaction_hash(value: &str) -> Result<String, String> {
@@ -956,31 +1664,6 @@ fn required_env(name: &str) -> Result<String, String> {
         .ok()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| format!("missing required setting: {name}"))
-}
-
-fn parse_deployment_profile(value: &str) -> Result<DeploymentProfile, String> {
-    match value {
-        "paseo" | "testnet" => Ok(DeploymentProfile::Paseo),
-        "hydration-snakenet" | "hydration-testnet" => Ok(DeploymentProfile::HydrationSnakenet),
-        "moonbase-alpha" | "moonbeam" | "moonbase" | "moonbeam-testnet" => {
-            Ok(DeploymentProfile::MoonbaseAlpha)
-        }
-        "core-multihop" | "multihop" | "hub-hydration-moonbeam" => {
-            Ok(DeploymentProfile::CoreMultihop)
-        }
-        "bifrost-via-hydration"
-        | "bifrost-via-hydration-snakenet"
-        | "bifrost-via-hydration-testnet" => Ok(DeploymentProfile::BifrostViaHydration),
-        "bifrost-via-moonbase-alpha"
-        | "bifrost-via-moonbeam"
-        | "bifrost-via-moonbase"
-        | "bifrost-via-moonbeam-testnet" => Ok(DeploymentProfile::BifrostViaMoonbeam),
-        "integration" | "integration-testnet" | "lab" | "multichain-lab" => {
-            Ok(DeploymentProfile::Integration)
-        }
-        "mainnet" => Ok(DeploymentProfile::Mainnet),
-        other => Err(format!("unsupported deployment profile: {other}")),
-    }
 }
 
 fn parse_positive_usize(value: &str, name: &str) -> Result<usize, String> {

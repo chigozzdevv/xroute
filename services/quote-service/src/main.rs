@@ -1,12 +1,17 @@
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
-use route_engine::{DeploymentProfile, EngineSettings, RouteEngine, RouteRegistry};
-use serde_json::json;
+use route_engine::{AssetKey, ChainKey, DeploymentProfile, EngineSettings, RouteEngine, RouteRegistry};
+use serde::Deserialize;
+use serde_json::{json, Value};
 use std::convert::Infallible;
 use std::env;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::process::Command;
+use tokio::sync::Mutex;
 use xroute_service_shared::{
     assert_intent_allowed_by_execution_policy, health_json, intent_to_json_value, json_response,
     load_execution_policy_from_file, load_hub_deployment_artifact, quote_request_from_slice,
@@ -20,6 +25,69 @@ struct QuoteState {
     max_body_bytes: usize,
     policy: Option<ExecutionPolicy>,
     deployment: Option<HubDeploymentArtifact>,
+    live_inputs: Option<Arc<Mutex<LiveQuoteInputsCache>>>,
+}
+
+#[derive(Clone)]
+struct LiveQuoteInputsConfig {
+    source: LiveQuoteInputsSource,
+    refresh_interval_ms: u64,
+    fail_open: bool,
+    workspace_root: PathBuf,
+    deployment_profile: DeploymentProfile,
+}
+
+#[derive(Clone)]
+enum LiveQuoteInputsSource {
+    File(PathBuf),
+    Command(String),
+}
+
+struct LiveQuoteInputsCache {
+    config: LiveQuoteInputsConfig,
+    snapshot: Option<LoadedLiveQuoteInputs>,
+    last_error: Option<String>,
+    last_attempt_at_ms: Option<u64>,
+}
+
+#[derive(Clone)]
+struct LoadedLiveQuoteInputs {
+    document: LiveQuoteInputsDocument,
+    loaded_at_ms: u64,
+    applied_transfer_edges: usize,
+    applied_swap_routes: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LiveQuoteInputsDocument {
+    #[serde(default)]
+    generated_at: Option<String>,
+    #[serde(default)]
+    transfer_edges: Vec<TransferEdgeInput>,
+    #[serde(default)]
+    swap_routes: Vec<SwapRouteInput>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TransferEdgeInput {
+    source_chain: String,
+    destination_chain: String,
+    asset: String,
+    transport_fee: String,
+    buy_execution_fee: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SwapRouteInput {
+    destination_chain: String,
+    asset_in: String,
+    asset_out: String,
+    price_numerator: String,
+    price_denominator: String,
+    dex_fee_bps: u16,
 }
 
 #[tokio::main]
@@ -70,12 +138,7 @@ async fn run() -> Result<(), String> {
 }
 
 fn load_state() -> Result<QuoteState, String> {
-    let deployment_profile = parse_deployment_profile(
-        env::var("XROUTE_DEPLOYMENT_PROFILE")
-            .ok()
-            .as_deref()
-            .unwrap_or("mainnet"),
-    )?;
+    let deployment_profile = DeploymentProfile::Mainnet;
     let max_body_bytes = parse_positive_usize(
         env::var("XROUTE_QUOTE_MAX_BODY_BYTES")
             .ok()
@@ -91,12 +154,28 @@ fn load_state() -> Result<QuoteState, String> {
         _ => None,
     };
     let deployment = load_hub_deployment_artifact(&workspace_root, deployment_profile).ok();
+    let live_inputs = load_live_inputs_config(&workspace_root, deployment_profile)?
+        .map(|config| {
+            Arc::new(Mutex::new(LiveQuoteInputsCache {
+                config,
+                snapshot: None,
+                last_error: None,
+                last_attempt_at_ms: None,
+            }))
+        });
+    if deployment_profile == DeploymentProfile::Mainnet && live_inputs.is_none() {
+        return Err(
+            "mainnet requires live quote inputs; configure XROUTE_LIVE_QUOTE_INPUTS_PATH or XROUTE_LIVE_QUOTE_INPUTS_COMMAND"
+                .to_owned(),
+        );
+    }
 
     Ok(QuoteState {
         deployment_profile,
         max_body_bytes,
         policy,
         deployment,
+        live_inputs,
     })
 }
 
@@ -117,27 +196,32 @@ async fn route_request(
     state: Arc<QuoteState>,
 ) -> Result<Response<Body>, HttpError> {
     match (request.method(), request.uri().path()) {
-        (&Method::GET, "/healthz") => Ok(json_response(
-            StatusCode::OK,
-            &health_json(
-                state.deployment_profile,
-                state
-                    .deployment
-                    .as_ref()
-                    .map(|deployment| deployment.router_address.as_str()),
-                json!({
-                    "policy": summarize_execution_policy(state.policy.as_ref()),
-                }),
-            ),
-        )),
+        (&Method::GET, "/healthz") => {
+            let quote_inputs = live_inputs_metadata(state.live_inputs.as_ref()).await;
+            Ok(json_response(
+                StatusCode::OK,
+                &health_json(
+                    state.deployment_profile,
+                    state
+                        .deployment
+                        .as_ref()
+                        .map(|deployment| deployment.router_address.as_str()),
+                    json!({
+                        "policy": summarize_execution_policy(state.policy.as_ref()),
+                        "quoteInputs": quote_inputs,
+                    }),
+                ),
+            ))
+        }
         (&Method::POST, "/quote") => {
             let body = read_request_body(request, state.max_body_bytes).await?;
             let parsed = quote_request_from_slice(&body)?;
             assert_intent_allowed_by_execution_policy(&parsed.intent, state.policy.as_ref())
                 .map_err(HttpError::bad_request)?;
 
+            let (registry, quote_inputs) = resolve_quote_registry(&state).await?;
             let quote = RouteEngine::new(
-                RouteRegistry::for_profile(state.deployment_profile),
+                registry,
                 EngineSettings {
                     platform_fee_bps: 10,
                     deployment_profile: state.deployment_profile,
@@ -153,6 +237,7 @@ async fn route_request(
                     "quote": quote_to_json_value(&quote, &parsed.quote_id),
                     "deploymentProfile": state.deployment_profile.as_str(),
                     "routerAddress": state.deployment.as_ref().map(|deployment| deployment.router_address.as_str()),
+                    "quoteInputs": quote_inputs,
                 }),
             ))
         }
@@ -163,6 +248,288 @@ async fn route_request(
             }),
         )),
     }
+}
+
+async fn resolve_quote_registry(
+    state: &QuoteState,
+) -> Result<(RouteRegistry, Value), HttpError> {
+    let mut registry = RouteRegistry::for_profile(state.deployment_profile);
+    let quote_inputs = match &state.live_inputs {
+        Some(cache) => {
+            let mut guard = cache.lock().await;
+            guard
+                .refresh_if_needed()
+                .await
+                .map_err(|error| HttpError::new(StatusCode::SERVICE_UNAVAILABLE, error))?;
+
+            if let Some(snapshot) = &guard.snapshot {
+                apply_live_quote_inputs(&mut registry, &snapshot.document)
+                    .map_err(|error| HttpError::new(StatusCode::SERVICE_UNAVAILABLE, error))?;
+            } else if !guard.config.fail_open {
+                return Err(HttpError::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "live quote inputs are required but no snapshot is loaded",
+                ));
+            }
+
+            guard.metadata_json()
+        }
+        None => static_quote_inputs_json(),
+    };
+
+    Ok((registry, quote_inputs))
+}
+
+fn load_live_inputs_config(
+    workspace_root: &Path,
+    deployment_profile: DeploymentProfile,
+) -> Result<Option<LiveQuoteInputsConfig>, String> {
+    let file_path = env::var("XROUTE_LIVE_QUOTE_INPUTS_PATH")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    let command = env::var("XROUTE_LIVE_QUOTE_INPUTS_COMMAND")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+
+    let source = match (file_path, command) {
+        (Some(_), Some(_)) => {
+            return Err(
+                "configure only one of XROUTE_LIVE_QUOTE_INPUTS_PATH or XROUTE_LIVE_QUOTE_INPUTS_COMMAND"
+                    .to_owned(),
+            )
+        }
+        (Some(path), None) => {
+            let resolved = if Path::new(&path).is_absolute() {
+                PathBuf::from(path)
+            } else {
+                workspace_root.join(path)
+            };
+            LiveQuoteInputsSource::File(resolved)
+        }
+        (None, Some(command)) => LiveQuoteInputsSource::Command(command),
+        (None, None) => return Ok(None),
+    };
+
+    let fail_open = match env::var("XROUTE_LIVE_QUOTE_INPUTS_FAIL_OPEN")
+        .ok()
+        .as_deref()
+    {
+        Some(value) => parse_bool(value, "XROUTE_LIVE_QUOTE_INPUTS_FAIL_OPEN")?,
+        None => deployment_profile != DeploymentProfile::Mainnet,
+    };
+    if deployment_profile == DeploymentProfile::Mainnet && fail_open {
+        return Err(
+            "mainnet quote service must fail closed; set XROUTE_LIVE_QUOTE_INPUTS_FAIL_OPEN=false"
+                .to_owned(),
+        );
+    }
+
+    Ok(Some(LiveQuoteInputsConfig {
+        source,
+        refresh_interval_ms: parse_non_negative_u64(
+            env::var("XROUTE_LIVE_QUOTE_INPUTS_REFRESH_MS")
+                .ok()
+                .as_deref()
+                .unwrap_or("30000"),
+            "XROUTE_LIVE_QUOTE_INPUTS_REFRESH_MS",
+        )?,
+        fail_open,
+        workspace_root: workspace_root.to_path_buf(),
+        deployment_profile,
+    }))
+}
+
+impl LiveQuoteInputsCache {
+    async fn refresh_if_needed(&mut self) -> Result<(), String> {
+        let now_ms = unix_timestamp_ms();
+        if !self.should_refresh(now_ms) {
+            return Ok(());
+        }
+
+        self.last_attempt_at_ms = Some(now_ms);
+        match load_live_quote_inputs(&self.config).await {
+            Ok(snapshot) => {
+                self.snapshot = Some(snapshot);
+                self.last_error = None;
+                Ok(())
+            }
+            Err(error) => {
+                self.last_error = Some(error.clone());
+                if self.config.fail_open && self.snapshot.is_some() {
+                    Ok(())
+                } else if self.config.fail_open {
+                    Ok(())
+                } else {
+                    Err(error)
+                }
+            }
+        }
+    }
+
+    fn should_refresh(&self, now_ms: u64) -> bool {
+        let Some(snapshot) = &self.snapshot else {
+            return true;
+        };
+
+        self.config.refresh_interval_ms == 0
+            || now_ms.saturating_sub(snapshot.loaded_at_ms) >= self.config.refresh_interval_ms
+    }
+
+    fn metadata_json(&self) -> Value {
+        let source_mode = self.config.source.mode();
+        match &self.snapshot {
+            Some(snapshot) => json!({
+                "configured": true,
+                "mode": source_mode,
+                "status": if self.last_error.is_some() { "live-with-last-error" } else { "live" },
+                "failOpen": self.config.fail_open,
+                "refreshIntervalMs": self.config.refresh_interval_ms,
+                "generatedAt": snapshot.document.generated_at,
+                "loadedAtMs": snapshot.loaded_at_ms,
+                "appliedTransferEdges": snapshot.applied_transfer_edges,
+                "appliedSwapRoutes": snapshot.applied_swap_routes,
+                "lastAttemptAtMs": self.last_attempt_at_ms,
+                "lastError": self.last_error,
+                "usingStaticFallback": false,
+            }),
+            None => json!({
+                "configured": true,
+                "mode": source_mode,
+                "status": if self.last_error.is_some() {
+                    if self.config.fail_open { "static-fallback" } else { "error" }
+                } else {
+                    "pending"
+                },
+                "failOpen": self.config.fail_open,
+                "refreshIntervalMs": self.config.refresh_interval_ms,
+                "generatedAt": Value::Null,
+                "loadedAtMs": Value::Null,
+                "appliedTransferEdges": 0,
+                "appliedSwapRoutes": 0,
+                "lastAttemptAtMs": self.last_attempt_at_ms,
+                "lastError": self.last_error,
+                "usingStaticFallback": true,
+            }),
+        }
+    }
+}
+
+async fn live_inputs_metadata(live_inputs: Option<&Arc<Mutex<LiveQuoteInputsCache>>>) -> Value {
+    let Some(cache) = live_inputs else {
+        return static_quote_inputs_json();
+    };
+
+    let guard = cache.lock().await;
+    guard.metadata_json()
+}
+
+async fn load_live_quote_inputs(
+    config: &LiveQuoteInputsConfig,
+) -> Result<LoadedLiveQuoteInputs, String> {
+    let raw = match &config.source {
+        LiveQuoteInputsSource::File(path) => tokio::fs::read_to_string(path)
+            .await
+            .map_err(|error| format!("failed to read live quote inputs from {}: {error}", path.display()))?,
+        LiveQuoteInputsSource::Command(command) => {
+            let output = Command::new("/bin/sh")
+                .arg("-lc")
+                .arg(command)
+                .current_dir(&config.workspace_root)
+                .output()
+                .await
+                .map_err(|error| format!("failed to execute live quote inputs command: {error}"))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                return Err(format!(
+                    "live quote inputs command exited with status {}{}",
+                    output.status,
+                    if stderr.is_empty() {
+                        "".to_owned()
+                    } else {
+                        format!(": {stderr}")
+                    },
+                ));
+            }
+
+            String::from_utf8(output.stdout)
+                .map_err(|error| format!("live quote inputs command returned invalid utf8: {error}"))?
+        }
+    };
+
+    let document: LiveQuoteInputsDocument = serde_json::from_str(&raw)
+        .map_err(|error| format!("failed to parse live quote inputs json: {error}"))?;
+    let mut registry = RouteRegistry::for_profile(config.deployment_profile);
+    let applied = apply_live_quote_inputs(&mut registry, &document)?;
+
+    Ok(LoadedLiveQuoteInputs {
+        document,
+        loaded_at_ms: unix_timestamp_ms(),
+        applied_transfer_edges: applied.0,
+        applied_swap_routes: applied.1,
+    })
+}
+
+fn apply_live_quote_inputs(
+    registry: &mut RouteRegistry,
+    document: &LiveQuoteInputsDocument,
+) -> Result<(usize, usize), String> {
+    let mut applied_transfer_edges = 0usize;
+    for edge in &document.transfer_edges {
+        registry.override_transfer_edge(
+            ChainKey::from_str(&edge.source_chain)?,
+            ChainKey::from_str(&edge.destination_chain)?,
+            AssetKey::from_str(&edge.asset)?,
+            parse_u128_value(&edge.transport_fee, "transportFee")?,
+            parse_u128_value(&edge.buy_execution_fee, "buyExecutionFee")?,
+        )?;
+        applied_transfer_edges += 1;
+    }
+
+    let mut applied_swap_routes = 0usize;
+    for route in &document.swap_routes {
+        let price_denominator = parse_u128_value(&route.price_denominator, "priceDenominator")?;
+        if price_denominator == 0 {
+            return Err("priceDenominator must be greater than zero".to_owned());
+        }
+        registry.override_swap_route(
+            ChainKey::from_str(&route.destination_chain)?,
+            AssetKey::from_str(&route.asset_in)?,
+            AssetKey::from_str(&route.asset_out)?,
+            parse_u128_value(&route.price_numerator, "priceNumerator")?,
+            price_denominator,
+            route.dex_fee_bps,
+        )?;
+        applied_swap_routes += 1;
+    }
+
+    Ok((applied_transfer_edges, applied_swap_routes))
+}
+
+fn static_quote_inputs_json() -> Value {
+    json!({
+        "configured": false,
+        "mode": "static",
+        "status": "static",
+        "failOpen": true,
+        "refreshIntervalMs": Value::Null,
+        "generatedAt": Value::Null,
+        "loadedAtMs": Value::Null,
+        "appliedTransferEdges": 0,
+        "appliedSwapRoutes": 0,
+        "lastAttemptAtMs": Value::Null,
+        "lastError": Value::Null,
+        "usingStaticFallback": false,
+    })
+}
+
+fn unix_timestamp_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::from_millis(0))
+        .as_millis() as u64
 }
 
 fn bind_addr() -> Result<SocketAddr, String> {
@@ -199,27 +566,32 @@ fn parse_positive_usize(value: &str, name: &str) -> Result<usize, String> {
         .ok_or_else(|| format!("{name} must be a positive integer"))
 }
 
-fn parse_deployment_profile(value: &str) -> Result<DeploymentProfile, String> {
-    match value {
-        "paseo" | "testnet" => Ok(DeploymentProfile::Paseo),
-        "hydration-snakenet" | "hydration-testnet" => Ok(DeploymentProfile::HydrationSnakenet),
-        "moonbase-alpha" | "moonbeam" | "moonbase" | "moonbeam-testnet" => {
-            Ok(DeploymentProfile::MoonbaseAlpha)
+fn parse_non_negative_u64(value: &str, name: &str) -> Result<u64, String> {
+    value
+        .parse::<u64>()
+        .map_err(|_| format!("{name} must be a non-negative integer"))
+}
+
+fn parse_bool(value: &str, name: &str) -> Result<bool, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(format!("{name} must be a boolean")),
+    }
+}
+
+fn parse_u128_value(value: &str, name: &str) -> Result<u128, String> {
+    value
+        .trim()
+        .parse::<u128>()
+        .map_err(|_| format!("{name} must be an unsigned integer"))
+}
+
+impl LiveQuoteInputsSource {
+    fn mode(&self) -> &'static str {
+        match self {
+            Self::File(_) => "file",
+            Self::Command(_) => "command",
         }
-        "core-multihop" | "multihop" | "hub-hydration-moonbeam" => {
-            Ok(DeploymentProfile::CoreMultihop)
-        }
-        "bifrost-via-hydration"
-        | "bifrost-via-hydration-snakenet"
-        | "bifrost-via-hydration-testnet" => Ok(DeploymentProfile::BifrostViaHydration),
-        "bifrost-via-moonbase-alpha"
-        | "bifrost-via-moonbeam"
-        | "bifrost-via-moonbase"
-        | "bifrost-via-moonbeam-testnet" => Ok(DeploymentProfile::BifrostViaMoonbeam),
-        "integration" | "integration-testnet" | "lab" | "multichain-lab" => {
-            Ok(DeploymentProfile::Integration)
-        }
-        "mainnet" => Ok(DeploymentProfile::Mainnet),
-        other => Err(format!("unsupported deployment profile: {other}")),
     }
 }

@@ -6,7 +6,9 @@ import { createSwapIntent } from "../../xroute-intents/index.mjs";
 import { buildDispatchRequest, createDispatchEnvelope } from "../../xroute-xcm/index.mjs";
 import {
   createCastRouterAdapter,
+  createSubstrateXcmAdapter,
   NATIVE_ASSET_ADDRESS,
+  createSourceAwareRouterAdapter,
   createStaticAssetAddressResolver,
 } from "../router-adapters.mjs";
 import { InMemoryStatusIndexer } from "../status-indexer.mjs";
@@ -312,4 +314,450 @@ test("cast router adapter finalizes and refunds intents onchain", async () => {
   assert.equal(refundedStatus.failureReason, "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
   assert.equal(refundedStatus.refund.asset, "DOT");
   assert.equal(refundedStatus.refund.amount, 1000250000000n);
+});
+
+test("source-aware router adapter routes calls by source chain and remembers intent mappings", async () => {
+  const calls = [];
+  const moonbeamIntentId = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const hubIntentId = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+  function makeAdapter(chainKey, intentId) {
+    return {
+      async submitIntent({ intent }) {
+        calls.push(`submit:${chainKey}:${intent.sourceChain}`);
+        return { intentId };
+      },
+      async dispatchIntent({ intentId: dispatchedIntentId }) {
+        calls.push(`dispatch:${chainKey}:${dispatchedIntentId}`);
+        return { intentId: dispatchedIntentId };
+      },
+      async finalizeSuccess({ intentId: finalizedIntentId }) {
+        calls.push(`settle:${chainKey}:${finalizedIntentId}`);
+        return { intentId: finalizedIntentId };
+      },
+      async refundFailedIntent({ intentId: refundedIntentId }) {
+        calls.push(`refund:${chainKey}:${refundedIntentId}`);
+        return { intentId: refundedIntentId };
+      },
+      async previewRefundableAmount(intentIdToPreview) {
+        calls.push(`preview:${chainKey}:${intentIdToPreview}`);
+        return 123n;
+      },
+    };
+  }
+
+  const adapter = createSourceAwareRouterAdapter({
+    adaptersByChain: {
+      moonbeam: makeAdapter("moonbeam", moonbeamIntentId),
+      "polkadot-hub": makeAdapter("polkadot-hub", hubIntentId),
+    },
+  });
+
+  const moonbeamIntent = createSwapIntent({
+    sourceChain: "moonbeam",
+    destinationChain: "hydration",
+    refundAddress: signerAddress,
+    deadline: 1_773_185_200,
+    params: {
+      assetIn: "DOT",
+      assetOut: "USDT",
+      amountIn: "1000000000000",
+      minAmountOut: "490000000",
+      recipient: recipientAccount,
+    },
+  });
+  const hubIntent = createSwapIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    refundAddress: signerAddress,
+    deadline: 1_773_185_200,
+    params: {
+      assetIn: "DOT",
+      assetOut: "USDT",
+      amountIn: "1000000000000",
+      minAmountOut: "490000000",
+      recipient: recipientAccount,
+    },
+  });
+
+  await adapter.submitIntent({ intent: moonbeamIntent, quote: {}, request: {} });
+  await adapter.submitIntent({ intent: hubIntent, quote: {}, request: {} });
+  await adapter.dispatchIntent({ intentId: moonbeamIntentId, request: { mode: 0, destination: "0x", message: "0x1234" } });
+  await adapter.finalizeSuccess({
+    intentId: hubIntentId,
+    outcomeReference: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    resultAssetId: "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    resultAmount: 1n,
+  });
+  assert.equal(await adapter.previewRefundableAmount(moonbeamIntentId), 123n);
+  await adapter.refundFailedIntent({ intentId: moonbeamIntentId, refundAmount: 1n });
+
+  assert.deepEqual(calls, [
+    "submit:moonbeam:moonbeam",
+    "submit:polkadot-hub:polkadot-hub",
+    `dispatch:moonbeam:${moonbeamIntentId}`,
+    `settle:polkadot-hub:${hubIntentId}`,
+    `preview:moonbeam:${moonbeamIntentId}`,
+    `refund:moonbeam:${moonbeamIntentId}`,
+  ]);
+});
+
+test("source-aware router adapter requires a known adapter when intent mapping is missing", async () => {
+  const adapter = createSourceAwareRouterAdapter({
+    adaptersByChain: {
+      moonbeam: {
+        async submitIntent() {
+          return {
+            intentId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          };
+        },
+      },
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      adapter.dispatchIntent({
+        intentId: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        request: { mode: 0, destination: "0x", message: "0x1234" },
+      }),
+    /missing source-chain router mapping/,
+  );
+  await assert.rejects(
+    () =>
+      adapter.dispatchIntent({
+        intentId: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        chainKey: "polkadot-hub",
+        request: { mode: 0, destination: "0x", message: "0x1234" },
+      }),
+    /missing router adapter for source chain polkadot-hub/,
+  );
+});
+
+test("substrate XCM adapter submits hydration intents and dispatches through PolkadotXcm.execute", async () => {
+  const statusIndexer = new InMemoryStatusIndexer();
+  const runtimeCalls = [];
+  const signAndSubmitCalls = [];
+  const codecContext = {
+    decodeVersionedXcm(messageHex) {
+      assert.equal(messageHex, "0xfeedface");
+      return { type: "V5", program: "hydration-xcm" };
+    },
+    decodeVersionedLocation() {
+      throw new Error("decodeVersionedLocation should not be used for execute mode");
+    },
+  };
+  const adapter = createSubstrateXcmAdapter({
+    chainKey: "hydration",
+    rpcUrl: "wss://hydration.example.org",
+    privateKey: `0x${"11".repeat(32)}`,
+    codecContext,
+    statusIndexer,
+    eventClock: () => 300,
+    signerFactory() {
+      return {
+        address: recipientAccount,
+        accountIdHex: `0x${"22".repeat(32)}`,
+        signer: { role: "test-signer" },
+      };
+    },
+    clientFactory() {
+      return {
+        getUnsafeApi() {
+          return {
+            apis: {
+              XcmPaymentApi: {
+                async query_xcm_weight(message) {
+                  runtimeCalls.push(["query_xcm_weight", message]);
+                  return {
+                    success: true,
+                    value: {
+                      ref_time: 555n,
+                      proof_size: 777n,
+                    },
+                  };
+                },
+              },
+            },
+            tx: {
+              PolkadotXcm: {
+                execute({ message, max_weight }) {
+                  runtimeCalls.push(["execute", message, max_weight]);
+                  return {
+                    async signAndSubmit(signer) {
+                      signAndSubmitCalls.push(signer);
+                      return "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+                    },
+                  };
+                },
+                send() {
+                  throw new Error("send should not be used for execute mode");
+                },
+              },
+            },
+          };
+        },
+      };
+    },
+  });
+
+  const intent = {
+    quoteId: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    sourceChain: "hydration",
+    destinationChain: "moonbeam",
+    refundAddress: signerAddress,
+    deadline: 1_773_185_200,
+    action: { type: "execute", params: {} },
+  };
+  const quote = {
+    quoteId: intent.quoteId,
+    fees: {
+      platformFee: { asset: "DOT", amount: 180000n },
+    },
+    submission: {
+      asset: "DOT",
+      amount: 180000000n,
+      xcmFee: 260000000n,
+      destinationFee: 0n,
+    },
+  };
+  const submitRequest = {
+    amount: 180000000n,
+    xcmFee: 260000000n,
+    destinationFee: 0n,
+  };
+
+  const submitted = await adapter.submitIntent({
+    owner: `0x${"22".repeat(32)}`,
+    intent,
+    quote,
+    request: submitRequest,
+  });
+  const dispatched = await adapter.dispatchIntent({
+    intentId: submitted.intentId,
+    request: buildDispatchRequest(
+      createDispatchEnvelope({
+        mode: "execute",
+        message: "0xfeedface",
+      }),
+    ),
+  });
+  const settled = await adapter.finalizeSuccess({
+    intentId: submitted.intentId,
+    outcomeReference: `0x${"aa".repeat(32)}`,
+    resultAssetId: `0x${"bb".repeat(32)}`,
+    resultAmount: 180000000n,
+  });
+
+  assert.equal(submitted.lockedAmount, 440180000n);
+  assert.equal(dispatched.sourceChain, "hydration");
+  assert.equal(
+    dispatched.txHash,
+    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  );
+  assert.equal(settled.strategy, "substrate-source-settlement");
+  assert.deepEqual(runtimeCalls, [
+    ["query_xcm_weight", { type: "V5", program: "hydration-xcm" }],
+    [
+      "execute",
+      { type: "V5", program: "hydration-xcm" },
+      { ref_time: 555n, proof_size: 777n },
+    ],
+  ]);
+  assert.deepEqual(signAndSubmitCalls, [{ role: "test-signer" }]);
+  assert.equal(statusIndexer.getStatus(submitted.intentId).status, "settled");
+  assert.equal(
+    statusIndexer.getStatus(submitted.intentId).result.destinationTxHash,
+    `0x${"aa".repeat(32)}`,
+  );
+});
+
+test("substrate XCM adapter finalizes failures and refunds hydration intents", async () => {
+  const statusIndexer = new InMemoryStatusIndexer();
+  const adapter = createSubstrateXcmAdapter({
+    chainKey: "hydration",
+    rpcUrl: "wss://hydration.example.org",
+    privateKey: `0x${"11".repeat(32)}`,
+    codecContext: {
+      decodeVersionedXcm() {
+        return { type: "V5", program: "hydration-xcm" };
+      },
+      decodeVersionedLocation() {
+        throw new Error("decodeVersionedLocation should not be used for execute mode");
+      },
+    },
+    statusIndexer,
+    eventClock: () => 301,
+    signerFactory() {
+      return {
+        address: recipientAccount,
+        accountIdHex: `0x${"22".repeat(32)}`,
+        signer: { role: "test-signer" },
+      };
+    },
+    clientFactory() {
+      return {
+        getUnsafeApi() {
+          return {
+            apis: {
+              XcmPaymentApi: {
+                async query_xcm_weight() {
+                  return {
+                    success: true,
+                    value: {
+                      ref_time: 555n,
+                      proof_size: 777n,
+                    },
+                  };
+                },
+              },
+            },
+            tx: {
+              PolkadotXcm: {
+                execute() {
+                  return {
+                    async signAndSubmit() {
+                      return "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+                    },
+                  };
+                },
+                send() {
+                  throw new Error("send should not be used for execute mode");
+                },
+              },
+            },
+          };
+        },
+      };
+    },
+  });
+
+  const intent = {
+    quoteId: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    sourceChain: "hydration",
+    destinationChain: "moonbeam",
+    refundAddress: signerAddress,
+    deadline: 1_773_185_200,
+    action: { type: "transfer", params: {} },
+  };
+  const quote = {
+    quoteId: intent.quoteId,
+    fees: {
+      platformFee: { asset: "DOT", amount: 180000n },
+    },
+    submission: {
+      asset: "DOT",
+      amount: 180000000n,
+      xcmFee: 260000000n,
+      destinationFee: 0n,
+    },
+  };
+  const request = {
+    amount: 180000000n,
+    xcmFee: 260000000n,
+    destinationFee: 0n,
+    minOutputAmount: 0n,
+  };
+
+  const submitted = await adapter.submitIntent({
+    owner: `0x${"22".repeat(32)}`,
+    intent,
+    quote,
+    request,
+  });
+  await adapter.dispatchIntent({
+    intentId: submitted.intentId,
+    request: buildDispatchRequest(
+      createDispatchEnvelope({
+        mode: "execute",
+        message: "0xfeedface",
+      }),
+    ),
+  });
+  assert.equal(await adapter.previewRefundableAmount(submitted.intentId), 0n);
+
+  const failed = await adapter.finalizeFailure({
+    intentId: submitted.intentId,
+    outcomeReference: `0x${"cc".repeat(32)}`,
+    failureReasonHash: `0x${"dd".repeat(32)}`,
+  });
+  const refundable = await adapter.previewRefundableAmount(submitted.intentId);
+  await assert.rejects(
+    () =>
+      adapter.refundFailedIntent({
+        intentId: submitted.intentId,
+        refundAmount: refundable - 1n,
+      }),
+    /must equal refundable amount/i,
+  );
+  const refunded = await adapter.refundFailedIntent({
+    intentId: submitted.intentId,
+    refundAmount: refundable,
+  });
+
+  assert.equal(failed.strategy, "substrate-source-failure");
+  assert.equal(refundable, 440000000n);
+  assert.equal(refunded.strategy, "substrate-source-refund");
+  assert.equal(refunded.refundAsset, "DOT");
+  assert.equal(await adapter.previewRefundableAmount(submitted.intentId), 0n);
+  assert.equal(statusIndexer.getStatus(submitted.intentId).status, "refunded");
+  assert.equal(
+    statusIndexer.getStatus(submitted.intentId).failureReason,
+    `0x${"dd".repeat(32)}`,
+  );
+  assert.equal(statusIndexer.getStatus(submitted.intentId).refund.asset, "DOT");
+  assert.equal(statusIndexer.getStatus(submitted.intentId).refund.amount, 440000000n);
+});
+
+test("substrate XCM adapter rejects owners that do not match the substrate signer", async () => {
+  const adapter = createSubstrateXcmAdapter({
+    chainKey: "hydration",
+    rpcUrl: "wss://hydration.example.org",
+    privateKey: `0x${"11".repeat(32)}`,
+    signerFactory() {
+      return {
+        address: recipientAccount,
+        accountIdHex: `0x${"22".repeat(32)}`,
+        signer: { role: "test-signer" },
+      };
+    },
+    clientFactory() {
+      return {
+        getUnsafeApi() {
+          throw new Error("client should not be used");
+        },
+      };
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      adapter.submitIntent({
+        owner: `0x${"33".repeat(32)}`,
+        intent: {
+          quoteId: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          sourceChain: "hydration",
+          destinationChain: "moonbeam",
+          refundAddress: signerAddress,
+          deadline: 1_773_185_200,
+          action: { type: "execute", params: {} },
+        },
+        quote: {
+          quoteId: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          fees: { platformFee: { asset: "DOT", amount: 1n } },
+          submission: {
+            asset: "DOT",
+            amount: 1n,
+            xcmFee: 1n,
+            destinationFee: 1n,
+          },
+        },
+        request: {
+          amount: 1n,
+          xcmFee: 1n,
+          destinationFee: 1n,
+        },
+      }),
+    /does not match signer/i,
+  );
 });

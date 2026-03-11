@@ -14,6 +14,7 @@ import { getAssetLocation, getParachainId } from "../xroute-chain-registry/index
 import {
   DISPATCH_MODES,
   assertAddress,
+  assertBytes32Hex,
   assertHexString,
   assertIncluded,
   assertInteger,
@@ -285,53 +286,66 @@ function assertQuoteSegmentsMatchExecutionPlan(quote) {
   }
 
   if (topInstruction.type === "withdraw-asset") {
-    if (executionSegment.hops.length !== 1) {
-      throw new Error("withdraw-asset currently supports exactly one execution hop");
+    const nextInstruction = sendStep.instructions?.[1];
+    if (!nextInstruction) {
+      throw new Error("withdraw-asset must be followed by a routing instruction");
     }
 
-    const [hop] = executionSegment.hops;
-    const payFees = sendStep.instructions?.[1];
-    const initiateTransfer = sendStep.instructions?.[2];
+    if (nextInstruction.type === "pay-fees") {
+      if (executionSegment.hops.length !== 1) {
+        throw new Error("withdraw-asset plus pay-fees supports exactly one execution hop");
+      }
 
-    if (!payFees || payFees.type !== "pay-fees") {
-      throw new Error("withdraw-asset must be followed by a pay-fees instruction");
+      const [hop] = executionSegment.hops;
+      const payFees = nextInstruction;
+      const initiateTransfer = sendStep.instructions?.[2];
+
+      if (!initiateTransfer || initiateTransfer.type !== "initiate-transfer") {
+        throw new Error(
+          "withdraw-asset must be followed by an initiate-transfer instruction",
+        );
+      }
+      if (initiateTransfer.destination !== hop.destination) {
+        throw new Error(
+          "initiate-transfer destination must match the execution segment destination",
+        );
+      }
+      if (payFees.asset !== hop.transportFee.asset) {
+        throw new Error("pay-fees asset must match the execution segment transport fee asset");
+      }
+      if (
+        toBigInt(payFees.amount, "pay-fees.amount") !==
+        toBigInt(hop.transportFee.amount, "segments[0].hops[0].transportFee.amount")
+      ) {
+        throw new Error("pay-fees amount must match the execution segment transport fee");
+      }
+      if (initiateTransfer.remoteFeeAsset !== hop.buyExecutionFee.asset) {
+        throw new Error(
+          "initiate-transfer remote fee asset must match the execution segment fee asset",
+        );
+      }
+      if (
+        toBigInt(initiateTransfer.remoteFeeAmount, "initiate-transfer.remoteFeeAmount") !==
+        toBigInt(
+          hop.buyExecutionFee.amount,
+          "segments[0].hops[0].buyExecutionFee.amount",
+        )
+      ) {
+        throw new Error(
+          "initiate-transfer remote fee amount must match the execution segment fee",
+        );
+      }
+      return;
     }
-    if (!initiateTransfer || initiateTransfer.type !== "initiate-transfer") {
-      throw new Error(
-        "withdraw-asset must be followed by an initiate-transfer instruction",
-      );
+
+    if (nextInstruction.type === "initiate-reserve-withdraw") {
+      assertReserveWithdrawExecutionChain(executionSegment.hops, topInstruction, nextInstruction);
+      return;
     }
-    if (initiateTransfer.destination !== hop.destination) {
-      throw new Error(
-        "initiate-transfer destination must match the execution segment destination",
-      );
-    }
-    if (payFees.asset !== hop.transportFee.asset) {
-      throw new Error("pay-fees asset must match the execution segment transport fee asset");
-    }
-    if (
-      toBigInt(payFees.amount, "pay-fees.amount") !==
-      toBigInt(hop.transportFee.amount, "segments[0].hops[0].transportFee.amount")
-    ) {
-      throw new Error("pay-fees amount must match the execution segment transport fee");
-    }
-    if (initiateTransfer.remoteFeeAsset !== hop.buyExecutionFee.asset) {
-      throw new Error(
-        "initiate-transfer remote fee asset must match the execution segment fee asset",
-      );
-    }
-    if (
-      toBigInt(initiateTransfer.remoteFeeAmount, "initiate-transfer.remoteFeeAmount") !==
-      toBigInt(
-        hop.buyExecutionFee.amount,
-        "segments[0].hops[0].buyExecutionFee.amount",
-      )
-    ) {
-      throw new Error(
-        "initiate-transfer remote fee amount must match the execution segment fee",
-      );
-    }
-    return;
+
+    throw new Error(
+      `withdraw-asset must be followed by pay-fees or initiate-reserve-withdraw, got ${nextInstruction.type}`,
+    );
   }
 
   if (topInstruction.type === "initiate-teleport") {
@@ -390,6 +404,69 @@ function collectTransferChain(instruction) {
 
     chain.push(nestedTransfer);
     current = nestedTransfer;
+  }
+}
+
+function assertReserveWithdrawExecutionChain(hops, withdrawInstruction, reserveWithdrawInstruction) {
+  if (hops.length === 0 || hops.length > 2) {
+    throw new Error(
+      "withdraw-asset plus initiate-reserve-withdraw supports one or two execution hops",
+    );
+  }
+
+  const [firstHop, secondHop] = hops;
+  if (withdrawInstruction.asset !== firstHop.asset) {
+    throw new Error("withdraw-asset asset must match the first execution hop asset");
+  }
+  if (reserveWithdrawInstruction.reserve !== firstHop.destination) {
+    throw new Error(
+      "initiate-reserve-withdraw reserve must match the first execution hop destination",
+    );
+  }
+
+  const reserveBuyExecution = reserveWithdrawInstruction.remoteInstructions?.[0];
+  if (!reserveBuyExecution || reserveBuyExecution.type !== "buy-execution") {
+    throw new Error(
+      "initiate-reserve-withdraw must start with a reserve-side buy-execution instruction",
+    );
+  }
+  assertBuyExecutionMatchesHop(reserveBuyExecution, firstHop, 0);
+
+  if (!secondHop) {
+    return;
+  }
+
+  const depositReserve = reserveWithdrawInstruction.remoteInstructions?.[1];
+  if (!depositReserve || depositReserve.type !== "deposit-reserve-asset") {
+    throw new Error(
+      "reserve-withdraw multihop routes must forward with a deposit-reserve-asset instruction",
+    );
+  }
+  if (depositReserve.destination !== secondHop.destination) {
+    throw new Error(
+      "deposit-reserve-asset destination must match the second execution hop destination",
+    );
+  }
+
+  const destinationBuyExecution = depositReserve.remoteInstructions?.[0];
+  if (!destinationBuyExecution || destinationBuyExecution.type !== "buy-execution") {
+    throw new Error("deposit-reserve-asset must start with a buy-execution instruction");
+  }
+  assertBuyExecutionMatchesHop(destinationBuyExecution, secondHop, 1);
+}
+
+function assertBuyExecutionMatchesHop(buyExecution, hop, index) {
+  if (buyExecution.asset !== hop.buyExecutionFee.asset) {
+    throw new Error(`execution hop ${index} buy-execution asset must match the segment fee`);
+  }
+  if (
+    toBigInt(buyExecution.amount, "buy-execution.amount") !==
+    toBigInt(
+      hop.buyExecutionFee.amount,
+      `segments[0].hops[${index}].buyExecutionFee.amount`,
+    )
+  ) {
+    throw new Error(`execution hop ${index} buy-execution amount must match the segment fee`);
   }
 }
 
@@ -554,7 +631,7 @@ function buildInstruction({
     case "deposit-asset":
       return Enum("DepositAsset", {
         assets: buildCountedAssetFilter(instruction.assetCount ?? 1),
-        beneficiary: buildBeneficiaryLocation(instruction.recipient),
+        beneficiary: buildBeneficiaryLocation(currentChain, instruction.recipient),
       });
     default:
       throw new Error(`unsupported remote XCM instruction: ${instruction.type}`);
@@ -587,17 +664,63 @@ function buildParachainLocation(chainKey, deploymentProfile) {
   };
 }
 
-function buildBeneficiaryLocation(address) {
+function buildBeneficiaryLocation(chainKey, recipient) {
+  const normalizedRecipient = assertNonEmptyString("recipient", recipient);
+
   return {
     parents: 0,
     interior: Enum(
       "X1",
-      Enum("AccountId32", {
-        network: undefined,
-        id: Binary.fromBytes(AccountId().enc(address)),
-      }),
+      buildBeneficiaryJunction(chainKey, normalizedRecipient),
     ),
   };
+}
+
+function buildBeneficiaryJunction(chainKey, recipient) {
+  if (supportsAccountKey20(chainKey) && looksLikeAccountKey20(recipient)) {
+    return {
+      type: "AccountKey20",
+      value: {
+        network: undefined,
+        key: Binary.fromBytes(hexToBytes(assertAddress("recipient", recipient))),
+      },
+    };
+  }
+
+  if (looksLikeAccountKey20(recipient)) {
+    throw new Error(
+      `20-byte recipients are not supported on destination chain ${chainKey}`,
+    );
+  }
+
+  return {
+    type: "AccountId32",
+    value: {
+      network: undefined,
+      id: Binary.fromBytes(encodeAccountId32(recipient)),
+    },
+  };
+}
+
+function supportsAccountKey20(chainKey) {
+  return chainKey === "moonbeam";
+}
+
+function looksLikeAccountKey20(value) {
+  return /^0x[0-9a-fA-F]{40}$/.test(String(value).trim());
+}
+
+function encodeAccountId32(value) {
+  const normalized = value.trim();
+  if (/^0x[0-9a-fA-F]{64}$/.test(normalized)) {
+    return hexToBytes(assertBytes32Hex("recipient", normalized));
+  }
+
+  try {
+    return AccountId().enc(normalized);
+  } catch (error) {
+    throw new Error(`recipient must be a valid SS58 or 32-byte hex account id`);
+  }
 }
 
 function buildRuntimeCallOriginKind(originKind) {

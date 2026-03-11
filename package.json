@@ -6,18 +6,12 @@
     "build": "cargo build --workspace && npm run build:sdk-package && npm run test:node",
     "build:sdk-package": "node packages/xroute-sdk/scripts/build-package.mjs",
     "check": "npm test",
-    "deploy:hydration-snakenet": "forge build --root contracts/polkadot-hub-router && XROUTE_DEPLOYMENT_PROFILE=hydration-snakenet node scripts/deploy-stack.mjs",
-    "deploy:moonbase-router": "forge build --root contracts/polkadot-hub-router && XROUTE_DEPLOYMENT_PROFILE=moonbase-alpha node scripts/deploy-stack.mjs",
-    "deploy:moonbase-target": "forge build --root contracts/polkadot-hub-router && XROUTE_DEPLOYMENT_PROFILE=moonbase-alpha node scripts/deploy-moonbase-validation-target.mjs",
-    "deploy:paseo": "forge build --root contracts/polkadot-hub-router && XROUTE_DEPLOYMENT_PROFILE=paseo node scripts/deploy-stack.mjs",
-    "deploy:integration": "forge build --root contracts/polkadot-hub-router && XROUTE_DEPLOYMENT_PROFILE=integration node scripts/deploy-stack.mjs",
-    "deploy:mainnet": "forge build --root contracts/polkadot-hub-router && XROUTE_DEPLOYMENT_PROFILE=mainnet node scripts/deploy-stack.mjs",
+    "deploy:mainnet": "npm run deploy:mainnet-hub",
+    "deploy:mainnet-hub": "forge build --root contracts/polkadot-hub-router && XROUTE_DEPLOYMENT_CHAIN_KEY=polkadot-hub node scripts/deploy-stack.mjs",
+    "deploy:mainnet-moonbeam": "forge build --root contracts/polkadot-hub-router && XROUTE_DEPLOYMENT_CHAIN_KEY=moonbeam node scripts/deploy-stack.mjs",
+    "proof:mainnet": "node scripts/record-mainnet-proofs.mjs",
     "serve:quote": "cargo run -q -p quote-service --",
-    "smoke:core-multihop": "node scripts/run-core-multihop-e2e.mjs",
-    "smoke:hydration-snakenet": "node scripts/run-hydration-snakenet-validation.mjs",
-    "smoke:integration": "node scripts/run-integration-e2e.mjs",
-    "smoke:moonbase": "node scripts/run-moonbase-validation.mjs",
-    "smoke:paseo": "node scripts/run-paseo-e2e.mjs",
+    "smoke:mainnet": "node scripts/run-mainnet-e2e.mjs",
     "serve:executor-relayer": "cargo run -q -p executor-relayer --",
     "test": "npm run test:rust && npm run test:solidity && npm run test:node && npm run test:package",
     "test:node": "node --test packages/*/test/*.test.mjs services/*/test/*.test.mjs",
@@ -26,7 +20,9 @@
     "test:solidity": "forge test --root contracts/polkadot-hub-router"
   },
   "dependencies": {
-    "@polkadot-api/descriptors": "^0.0.1",
+    "@scure/sr25519": "^1.0.0",
+    "@polkadot-api/metadata-builders": "^0.13.9",
+    "@polkadot-api/substrate-bindings": "^0.17.0",
     "polkadot-api": "^1.23.3"
   }
 }
