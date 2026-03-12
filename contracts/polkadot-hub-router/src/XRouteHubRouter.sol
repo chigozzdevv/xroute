@@ -1,11 +1,20 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {IERC20} from "./interfaces/IERC20.sol";
+import {AccessControlDefaultAdminRules} from "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IXcm} from "./interfaces/IXcm.sol";
 
-contract XRouteHubRouter {
+contract XRouteHubRouter is AccessControlDefaultAdminRules, Pausable, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
     address public constant NATIVE_ASSET = address(0);
+    bytes32 public constant EXECUTOR_ROLE = keccak256("EXECUTOR_ROLE");
+    uint48 public constant DEFAULT_ADMIN_TRANSFER_DELAY = 1 days;
+    uint16 public constant MAX_PLATFORM_FEE_BPS = 1_000;
 
     enum ActionType {
         Transfer,
@@ -82,7 +91,7 @@ contract XRouteHubRouter {
     error InsufficientResultAmount();
     error AssetTransferFailed();
     error InvalidNativeValue();
-    error ReentrantCall();
+    error UseSetExecutor();
 
     event IntentSubmitted(
         bytes32 indexed intentId,
@@ -103,58 +112,42 @@ contract XRouteHubRouter {
     event ExecutorUpdated(address indexed executor);
     event TreasuryUpdated(address indexed treasury);
     event PlatformFeeUpdated(uint16 feeBps);
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-
-    uint16 public constant MAX_PLATFORM_FEE_BPS = 1_000;
 
     IXcm public immutable xcm;
 
-    address public owner;
     address public executor;
     address public treasury;
     uint16 public platformFeeBps;
     uint256 public nextIntentNonce;
-    uint256 private reentrancyLock;
 
     mapping(bytes32 intentId => IntentRecord) public intents;
 
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert Unauthorized();
-        _;
-    }
-
-    modifier onlyExecutor() {
-        if (msg.sender != executor) revert Unauthorized();
-        _;
-    }
-
-    modifier nonReentrant() {
-        if (reentrancyLock == 1) revert ReentrantCall();
-        reentrancyLock = 1;
-        _;
-        reentrancyLock = 0;
-    }
-
-    constructor(address xcmPrecompile, address initialExecutor, address initialTreasury, uint16 feeBps) {
+    constructor(address xcmPrecompile, address initialExecutor, address initialTreasury, uint16 feeBps)
+        AccessControlDefaultAdminRules(DEFAULT_ADMIN_TRANSFER_DELAY, msg.sender)
+    {
         if (xcmPrecompile == address(0) || initialExecutor == address(0) || initialTreasury == address(0)) {
             revert ZeroAddress();
         }
         if (feeBps > MAX_PLATFORM_FEE_BPS) revert InvalidFeeBps();
 
         xcm = IXcm(xcmPrecompile);
-        owner = msg.sender;
         executor = initialExecutor;
         treasury = initialTreasury;
         platformFeeBps = feeBps;
-        reentrancyLock = 0;
+        _grantRole(EXECUTOR_ROLE, initialExecutor);
 
-        emit OwnershipTransferred(address(0), msg.sender);
         emit ExecutorUpdated(initialExecutor);
         emit TreasuryUpdated(initialTreasury);
         emit PlatformFeeUpdated(feeBps);
     }
 
-    function submitIntent(IntentRequest calldata request) external payable nonReentrant returns (bytes32 intentId) {
+    function submitIntent(IntentRequest calldata request)
+        external
+        payable
+        whenNotPaused
+        nonReentrant
+        returns (bytes32 intentId)
+    {
         if (request.refundAddress == address(0)) revert ZeroAddress();
         if (request.amount == 0) revert InvalidAmount();
         if (request.deadline <= block.timestamp) revert InvalidDeadline();
@@ -212,7 +205,12 @@ contract XRouteHubRouter {
         );
     }
 
-    function dispatchIntent(bytes32 intentId, DispatchRequest calldata request) external onlyExecutor nonReentrant {
+    function dispatchIntent(bytes32 intentId, DispatchRequest calldata request)
+        external
+        onlyRole(EXECUTOR_ROLE)
+        whenNotPaused
+        nonReentrant
+    {
         IntentRecord storage intent = intents[intentId];
         if (intent.owner == address(0)) revert IntentNotFound();
         if (intent.status != IntentStatus.Submitted) revert InvalidIntentStatus();
@@ -242,7 +240,8 @@ contract XRouteHubRouter {
 
     function finalizeSuccess(bytes32 intentId, bytes32 outcomeReference, bytes32 resultAssetId, uint128 resultAmount)
         external
-        onlyExecutor
+        onlyRole(EXECUTOR_ROLE)
+        whenNotPaused
         nonReentrant
     {
         IntentRecord storage intent = intents[intentId];
@@ -266,7 +265,7 @@ contract XRouteHubRouter {
         bytes32 outcomeReference,
         bytes32 resultAssetId,
         uint128 resultAmount
-    ) external onlyExecutor nonReentrant {
+    ) external onlyRole(EXECUTOR_ROLE) whenNotPaused nonReentrant {
         IntentRecord storage intent = intents[intentId];
         if (intent.owner == address(0)) revert IntentNotFound();
         if (intent.status != IntentStatus.Submitted) revert InvalidIntentStatus();
@@ -280,7 +279,6 @@ contract XRouteHubRouter {
         intent.resultAmount = resultAmount;
         intent.refundAmount = 0;
 
-        // Reimburse the operator after it proves the source-chain dispatch.
         _transferAsset(intent.asset, executor, intent.amount + intent.xcmFee + intent.destinationFee);
         if (intent.platformFee != 0) {
             _transferAsset(intent.asset, treasury, intent.platformFee);
@@ -291,7 +289,8 @@ contract XRouteHubRouter {
 
     function finalizeFailure(bytes32 intentId, bytes32 outcomeReference, bytes32 failureReasonHash)
         external
-        onlyExecutor
+        onlyRole(EXECUTOR_ROLE)
+        whenNotPaused
         nonReentrant
     {
         IntentRecord storage intent = intents[intentId];
@@ -310,7 +309,12 @@ contract XRouteHubRouter {
         emit IntentFailed(intentId, outcomeReference, failureReasonHash);
     }
 
-    function refundFailedIntent(bytes32 intentId, uint128 refundAmount) external onlyExecutor nonReentrant {
+    function refundFailedIntent(bytes32 intentId, uint128 refundAmount)
+        external
+        onlyRole(EXECUTOR_ROLE)
+        whenNotPaused
+        nonReentrant
+    {
         IntentRecord storage intent = intents[intentId];
         if (intent.owner == address(0)) revert IntentNotFound();
         if (intent.status != IntentStatus.Failed) revert InvalidIntentStatus();
@@ -326,11 +330,11 @@ contract XRouteHubRouter {
         emit IntentRefunded(intentId, refundAmount);
     }
 
-    function cancelIntent(bytes32 intentId) external nonReentrant {
+    function cancelIntent(bytes32 intentId) external whenNotPaused nonReentrant {
         IntentRecord storage intent = intents[intentId];
         if (intent.owner == address(0)) revert IntentNotFound();
         if (intent.status != IntentStatus.Submitted) revert InvalidIntentStatus();
-        if (msg.sender != intent.owner && msg.sender != owner) revert Unauthorized();
+        if (msg.sender != intent.owner && msg.sender != owner()) revert Unauthorized();
 
         intent.status = IntentStatus.Cancelled;
 
@@ -340,28 +344,44 @@ contract XRouteHubRouter {
         emit IntentCancelled(intentId);
     }
 
-    function transferOwnership(address newOwner) external onlyOwner {
-        if (newOwner == address(0)) revert ZeroAddress();
-
-        address previousOwner = owner;
-        owner = newOwner;
-
-        emit OwnershipTransferred(previousOwner, newOwner);
+    function grantRole(bytes32 role, address account) public override {
+        if (role == EXECUTOR_ROLE) revert UseSetExecutor();
+        super.grantRole(role, account);
     }
 
-    function setExecutor(address newExecutor) external onlyOwner {
+    function revokeRole(bytes32 role, address account) public override {
+        if (role == EXECUTOR_ROLE) revert UseSetExecutor();
+        super.revokeRole(role, account);
+    }
+
+    function renounceRole(bytes32 role, address callerConfirmation) public override {
+        if (role == EXECUTOR_ROLE) revert UseSetExecutor();
+        super.renounceRole(role, callerConfirmation);
+    }
+
+    function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _pause();
+    }
+
+    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _unpause();
+    }
+
+    function setExecutor(address newExecutor) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (newExecutor == address(0)) revert ZeroAddress();
+        _revokeRole(EXECUTOR_ROLE, executor);
+        _grantRole(EXECUTOR_ROLE, newExecutor);
         executor = newExecutor;
         emit ExecutorUpdated(newExecutor);
     }
 
-    function setTreasury(address newTreasury) external onlyOwner {
+    function setTreasury(address newTreasury) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (newTreasury == address(0)) revert ZeroAddress();
         treasury = newTreasury;
         emit TreasuryUpdated(newTreasury);
     }
 
-    function setPlatformFeeBps(uint16 newFeeBps) external onlyOwner {
+    function setPlatformFeeBps(uint16 newFeeBps) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (newFeeBps > MAX_PLATFORM_FEE_BPS) revert InvalidFeeBps();
         platformFeeBps = newFeeBps;
         emit PlatformFeeUpdated(newFeeBps);
@@ -404,11 +424,10 @@ contract XRouteHubRouter {
     function _receiveAsset(address asset, address from, uint256 amount) internal {
         if (_isNativeAsset(asset)) {
             if (msg.value != amount) revert InvalidNativeValue();
-            if (from != msg.sender) revert Unauthorized();
             return;
         }
         if (msg.value != 0) revert InvalidNativeValue();
-        _safeTransferFrom(asset, from, address(this), amount);
+        IERC20(asset).safeTransferFrom(from, address(this), amount);
     }
 
     function _transferAsset(address asset, address to, uint256 amount) internal {
@@ -417,7 +436,7 @@ contract XRouteHubRouter {
             _safeNativeTransfer(to, amount);
             return;
         }
-        _safeTransfer(asset, to, amount);
+        IERC20(asset).safeTransfer(to, amount);
     }
 
     function _safeNativeTransfer(address to, uint256 amount) internal {
@@ -427,19 +446,5 @@ contract XRouteHubRouter {
 
     function _isNativeAsset(address asset) internal pure returns (bool) {
         return asset == NATIVE_ASSET;
-    }
-
-    function _safeTransfer(address asset, address to, uint256 amount) internal {
-        (bool success, bytes memory data) = asset.call(abi.encodeCall(IERC20.transfer, (to, amount)));
-        if (!success || (data.length != 0 && !abi.decode(data, (bool)))) {
-            revert AssetTransferFailed();
-        }
-    }
-
-    function _safeTransferFrom(address asset, address from, address to, uint256 amount) internal {
-        (bool success, bytes memory data) = asset.call(abi.encodeCall(IERC20.transferFrom, (from, to, amount)));
-        if (!success || (data.length != 0 && !abi.decode(data, (bool)))) {
-            revert AssetTransferFailed();
-        }
     }
 }

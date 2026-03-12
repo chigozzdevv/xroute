@@ -19,9 +19,9 @@ export function deployStack(overrides = {}) {
   );
 
   const rpcUrl = requiredSetting("XROUTE_RPC_URL", overrides.rpcUrl ?? process.env.XROUTE_RPC_URL);
-  const privateKey = requiredSetting(
-    "XROUTE_PRIVATE_KEY",
-    overrides.privateKey ?? process.env.XROUTE_PRIVATE_KEY,
+  const deployerPrivateKey = requiredSetting(
+    "XROUTE_DEPLOYER_PRIVATE_KEY",
+    overrides.deployerPrivateKey ?? process.env.XROUTE_DEPLOYER_PRIVATE_KEY,
   );
   const platformFeeBps =
     overrides.platformFeeBps ?? process.env.XROUTE_PLATFORM_FEE_BPS ?? "10";
@@ -40,7 +40,7 @@ export function deployStack(overrides = {}) {
       chainKey,
     });
 
-  const deployer = runCast(["wallet", "address", "--private-key", privateKey], {
+  const deployer = runCast(["wallet", "address", "--private-key", deployerPrivateKey], {
     rpcUrl,
   });
   const chainId = Number(
@@ -49,13 +49,24 @@ export function deployStack(overrides = {}) {
     }),
   );
   const executorAddress = normalizeAddress(
-    overrides.executorAddress ?? process.env.XROUTE_ROUTER_EXECUTOR ?? deployer,
+    requiredSetting(
+      "XROUTE_ROUTER_EXECUTOR",
+      overrides.executorAddress ?? process.env.XROUTE_ROUTER_EXECUTOR,
+    ),
     "XROUTE_ROUTER_EXECUTOR",
   );
   const treasuryAddress = normalizeAddress(
-    overrides.treasuryAddress ?? process.env.XROUTE_ROUTER_TREASURY ?? deployer,
+    requiredSetting(
+      "XROUTE_ROUTER_TREASURY",
+      overrides.treasuryAddress ?? process.env.XROUTE_ROUTER_TREASURY,
+    ),
     "XROUTE_ROUTER_TREASURY",
   );
+  assertSeparatedOperationalAddresses({
+    deployer,
+    executorAddress,
+    treasuryAddress,
+  });
   const routerAddress = deployContract("src/XRouteHubRouter.sol:XRouteHubRouter", [
     xcmAddress,
     executorAddress,
@@ -63,7 +74,7 @@ export function deployStack(overrides = {}) {
     platformFeeBps,
   ], {
     rpcUrl,
-    privateKey,
+    privateKey: deployerPrivateKey,
   });
 
   const deploymentArtifact = {
@@ -76,6 +87,7 @@ export function deployStack(overrides = {}) {
       XRouteHubRouter: routerAddress,
     },
     settings: {
+      adminAddress: deployer,
       xcmAddress,
       executorAddress,
       treasuryAddress,
@@ -89,6 +101,7 @@ export function deployStack(overrides = {}) {
     chainId,
     routerAddress,
     xcmAddress,
+    adminAddress: deployer,
     executorAddress,
     treasuryAddress,
     artifactPath: stackOutputPath,
@@ -180,6 +193,20 @@ function normalizeAddress(value, name) {
   }
 
   return normalized;
+}
+
+function assertSeparatedOperationalAddresses({ deployer, executorAddress, treasuryAddress }) {
+  if (executorAddress === deployer) {
+    throw new Error("XROUTE_ROUTER_EXECUTOR must not match the deployer/admin address");
+  }
+
+  if (treasuryAddress === deployer) {
+    throw new Error("XROUTE_ROUTER_TREASURY must not match the deployer/admin address");
+  }
+
+  if (treasuryAddress === executorAddress) {
+    throw new Error("XROUTE_ROUTER_TREASURY must not match XROUTE_ROUTER_EXECUTOR");
+  }
 }
 
 function writeJson(path, value) {

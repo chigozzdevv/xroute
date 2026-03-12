@@ -1242,8 +1242,7 @@ fn load_chain_specific_execution_contexts(
             ExecutionContext {
                 chain_key: (*chain_key).to_owned(),
                 rpc_url: required_chain_env(&env_prefix, "RPC_URL")?,
-                private_key: optional_chain_env(&env_prefix, "PRIVATE_KEY")
-                    .unwrap_or_else(|| base_execution_context.private_key.clone()),
+                private_key: required_chain_env(&env_prefix, "PRIVATE_KEY")?,
                 router_address: if chain_uses_substrate_dispatch(chain_key) {
                     optional_chain_env(&env_prefix, "ROUTER_ADDRESS")
                         .or_else(|| deployment.as_ref().map(|artifact| artifact.router_address.clone()))

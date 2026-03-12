@@ -6,6 +6,8 @@ interface Vm {
 
     function prank(address caller) external;
 
+    function warp(uint256 newTimestamp) external;
+
     function expectRevert(bytes4 revertData) external;
 
     function expectRevert(bytes calldata revertData) external;

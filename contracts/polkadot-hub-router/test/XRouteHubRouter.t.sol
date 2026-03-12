@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import {IAccessControlDefaultAdminRules} from "@openzeppelin/contracts/access/extensions/IAccessControlDefaultAdminRules.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {XRouteHubRouter} from "../src/XRouteHubRouter.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockXcm} from "./mocks/MockXcm.sol";
@@ -10,7 +13,10 @@ contract XRouteHubRouterTest is TestBase {
     address internal constant ALICE = address(0xA11CE);
     address internal constant REFUND_RECIPIENT = address(0xFEE1);
     address internal constant EXECUTOR = address(0xB0B);
+    address internal constant NEW_EXECUTOR = address(0xBEEF);
     address internal constant TREASURY = address(0xC0FFEE);
+    address internal constant NEW_TREASURY = address(0xCAFE);
+    address internal constant NEW_ADMIN = address(0xDAD);
 
     MockERC20 internal token;
     MockXcm internal xcm;
@@ -208,6 +214,97 @@ contract XRouteHubRouterTest is TestBase {
         assertEq(token.balanceOf(ALICE), 2_000 * 10 ** 10 - lockedAmount);
         assertEq(token.balanceOf(REFUND_RECIPIENT), lockedAmount);
         assertEq(token.balanceOf(address(router)), 0);
+    }
+
+    function test_pause_blocks_submit_until_unpaused() public {
+        bytes memory message = hex"050c000401000003008c864713010000";
+        bytes32 executionHash = _executionHash(XRouteHubRouter.DispatchMode.Execute, "", message);
+        XRouteHubRouter.IntentRequest memory request = _swapIntentRequest(executionHash);
+
+        router.pause();
+        assertEq(router.paused(), true);
+
+        vm.prank(ALICE);
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        router.submitIntent(request);
+
+        router.unpause();
+        assertEq(router.paused(), false);
+
+        vm.prank(ALICE);
+        bytes32 intentId = router.submitIntent(request);
+
+        XRouteHubRouter.IntentRecord memory intent = router.getIntent(intentId);
+        assertEq(uint256(intent.status), uint256(XRouteHubRouter.IntentStatus.Submitted));
+    }
+
+    function test_set_executor_rotates_executor_role() public {
+        bytes memory message = hex"050c000401000003008c864713010000";
+        bytes32 executionHash = _executionHash(XRouteHubRouter.DispatchMode.Execute, "", message);
+        XRouteHubRouter.IntentRequest memory request = _swapIntentRequest(executionHash);
+        bytes32 executorRole = router.EXECUTOR_ROLE();
+
+        vm.prank(ALICE);
+        bytes32 intentId = router.submitIntent(request);
+
+        router.setExecutor(NEW_EXECUTOR);
+
+        assertEq(router.executor(), NEW_EXECUTOR);
+
+        vm.prank(EXECUTOR);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, EXECUTOR, executorRole
+            )
+        );
+        router.dispatchIntent(intentId, _dispatchRequest(XRouteHubRouter.DispatchMode.Execute, "", message));
+
+        vm.prank(NEW_EXECUTOR);
+        router.dispatchIntent(intentId, _dispatchRequest(XRouteHubRouter.DispatchMode.Execute, "", message));
+
+        XRouteHubRouter.IntentRecord memory intent = router.getIntent(intentId);
+        assertEq(uint256(intent.status), uint256(XRouteHubRouter.IntentStatus.Dispatched));
+    }
+
+    function test_default_admin_transfer_requires_delay() public {
+        router.beginDefaultAdminTransfer(NEW_ADMIN);
+
+        (address pendingAdmin, uint48 acceptSchedule) = router.pendingDefaultAdmin();
+        assertEq(pendingAdmin, NEW_ADMIN);
+
+        vm.prank(NEW_ADMIN);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControlDefaultAdminRules.AccessControlEnforcedDefaultAdminDelay.selector, acceptSchedule
+            )
+        );
+        router.acceptDefaultAdminTransfer();
+
+        vm.warp(uint256(acceptSchedule) + 1);
+
+        vm.prank(NEW_ADMIN);
+        router.acceptDefaultAdminTransfer();
+
+        assertEq(router.owner(), NEW_ADMIN);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, address(this), bytes32(0)
+            )
+        );
+        router.setTreasury(NEW_TREASURY);
+
+        vm.prank(NEW_ADMIN);
+        router.setTreasury(NEW_TREASURY);
+
+        assertEq(router.treasury(), NEW_TREASURY);
+    }
+
+    function test_executor_role_cannot_be_granted_directly() public {
+        bytes32 executorRole = router.EXECUTOR_ROLE();
+
+        vm.expectRevert(XRouteHubRouter.UseSetExecutor.selector);
+        router.grantRole(executorRole, NEW_EXECUTOR);
     }
 
     function test_submit_native_reverts_for_wrong_value() public {

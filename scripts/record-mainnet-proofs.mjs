@@ -457,12 +457,9 @@ async function resolveSettings() {
       deploymentProfile,
       chainKey: "polkadot-hub",
     });
-  const hubOwnerAddress =
-    process.env.XROUTE_DEPLOYER_ADDRESS?.trim() ||
-    (await runCast(["wallet", "address", "--private-key", hubPrivateKey]));
+  const hubOwnerAddress = await runCast(["wallet", "address", "--private-key", hubPrivateKey]);
 
-  const moonbeamPrivateKey =
-    process.env.XROUTE_MOONBEAM_PRIVATE_KEY?.trim() || hubPrivateKey;
+  const moonbeamPrivateKey = process.env.XROUTE_MOONBEAM_PRIVATE_KEY?.trim() || null;
   const moonbeamRouterAddress =
     process.env.XROUTE_MOONBEAM_ROUTER_ADDRESS?.trim() ||
     resolveRouterAddressFromArtifact({
@@ -473,6 +470,9 @@ async function resolveSettings() {
   const moonbeamMissing = [];
   if (!process.env.XROUTE_MOONBEAM_RPC_URL?.trim()) {
     moonbeamMissing.push("XROUTE_MOONBEAM_RPC_URL");
+  }
+  if (!moonbeamPrivateKey) {
+    moonbeamMissing.push("XROUTE_MOONBEAM_PRIVATE_KEY");
   }
   if (!moonbeamRouterAddress) {
     moonbeamMissing.push(
@@ -512,7 +512,10 @@ async function resolveSettings() {
       rpcUrl: process.env.XROUTE_MOONBEAM_RPC_URL?.trim() || null,
       routerAddress: moonbeamRouterAddress,
       privateKey: moonbeamPrivateKey,
-      ownerAddress: await runCast(["wallet", "address", "--private-key", moonbeamPrivateKey]),
+      ownerAddress:
+        moonbeamPrivateKey
+          ? await runCast(["wallet", "address", "--private-key", moonbeamPrivateKey])
+          : null,
       dotAssetAddress: resolveMoonbeamDotAssetAddress(),
     },
     hydration: {

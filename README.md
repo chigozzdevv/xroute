@@ -142,7 +142,9 @@ Hub router:
 XROUTE_ALLOW_LIVE_DEPLOY=true \
 XROUTE_DEPLOYMENT_CHAIN_KEY=polkadot-hub \
 XROUTE_RPC_URL="<POLKADOT_HUB_RPC>" \
-XROUTE_PRIVATE_KEY="<HUB_DEPLOYER_KEY>" \
+XROUTE_DEPLOYER_PRIVATE_KEY="<HUB_ADMIN_DEPLOYER_KEY>" \
+XROUTE_ROUTER_EXECUTOR="<HUB_EXECUTOR_ADDRESS>" \
+XROUTE_ROUTER_TREASURY="<TREASURY_ADDRESS>" \
 node scripts/deploy-stack.mjs
 ```
 
@@ -152,9 +154,13 @@ Moonbeam router:
 XROUTE_ALLOW_LIVE_DEPLOY=true \
 XROUTE_DEPLOYMENT_CHAIN_KEY=moonbeam \
 XROUTE_RPC_URL="<MOONBEAM_RPC>" \
-XROUTE_PRIVATE_KEY="<MOONBEAM_DEPLOYER_KEY>" \
+XROUTE_DEPLOYER_PRIVATE_KEY="<MOONBEAM_ADMIN_DEPLOYER_KEY>" \
+XROUTE_ROUTER_EXECUTOR="<MOONBEAM_EXECUTOR_ADDRESS>" \
+XROUTE_ROUTER_TREASURY="<TREASURY_ADDRESS>" \
 node scripts/deploy-stack.mjs
 ```
+
+The deployer/admin key is not the executor. Deployments require explicit executor and treasury addresses, and the deploy script rejects overlapping admin, executor, and treasury roles.
 
 ## Service Configuration
 
@@ -175,16 +181,16 @@ The quote service is fail-closed. `XROUTE_LIVE_QUOTE_INPUTS_FAIL_OPEN=true` is r
 - `XROUTE_RELAYER_AUTH_TOKEN`
 - Hub execution context:
   - `XROUTE_RPC_URL`
-  - `XROUTE_PRIVATE_KEY`
+  - `XROUTE_PRIVATE_KEY` (`HUB_EXECUTOR_KEY`)
 - Moonbeam execution context:
   - `XROUTE_MOONBEAM_RPC_URL`
-  - `XROUTE_MOONBEAM_PRIVATE_KEY`
+  - `XROUTE_MOONBEAM_PRIVATE_KEY` (`MOONBEAM_EXECUTOR_KEY`)
 - Hydration execution context:
   - `XROUTE_HYDRATION_RPC_URL`
-  - `XROUTE_HYDRATION_PRIVATE_KEY`
+  - `XROUTE_HYDRATION_PRIVATE_KEY` (`HYDRATION_EXECUTOR_KEY`)
 - Bifrost execution context:
   - `XROUTE_BIFROST_RPC_URL`
-  - `XROUTE_BIFROST_PRIVATE_KEY`
+  - `XROUTE_BIFROST_PRIVATE_KEY` (`BIFROST_EXECUTOR_KEY`)
 - optional:
   - `XROUTE_EVM_POLICY_PATH`
   - `XROUTE_SUBSTRATE_DISPATCH_SCRIPT`
@@ -221,3 +227,4 @@ cargo run -q -p executor-relayer --
 - Mainnet quote inputs must be live; static fallback is not allowed.
 - `execute/evm-contract-call` should be protected with a Moonbeam execution allowlist policy.
 - The relayer should stay behind auth, rate limits, and your own control plane.
+- Keep the deployer/admin key cold and separate from the relayer executor keys.

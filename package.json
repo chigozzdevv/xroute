@@ -20,9 +20,10 @@
     "test:solidity": "forge test --root contracts/polkadot-hub-router"
   },
   "dependencies": {
-    "@scure/sr25519": "^1.0.0",
+    "@openzeppelin/contracts": "^5.2.0",
     "@polkadot-api/metadata-builders": "^0.13.9",
     "@polkadot-api/substrate-bindings": "^0.17.0",
+    "@scure/sr25519": "^1.0.0",
     "polkadot-api": "^1.23.3"
   }
 }

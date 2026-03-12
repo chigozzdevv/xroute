@@ -234,6 +234,7 @@ test("executor relayer routes moonbeam-origin dispatch and failure jobs through 
       XROUTE_PRIVATE_KEY: hubAnvil.privateKey,
       XROUTE_ROUTER_ADDRESS: hubRouterAddress,
       XROUTE_MOONBEAM_RPC_URL: moonbeamAnvil.rpcUrl,
+      XROUTE_MOONBEAM_PRIVATE_KEY: moonbeamAnvil.privateKey,
       XROUTE_MOONBEAM_ROUTER_ADDRESS: moonbeamRouterAddress,
       XROUTE_RELAYER_JOB_STORE_PATH: join(tempDir, "jobs.json"),
       XROUTE_STATUS_EVENTS_PATH: join(tempDir, "events.ndjson"),
