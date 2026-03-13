@@ -342,7 +342,7 @@ function buildScenarios(settings) {
           refundAddress: settings.hub.ownerAddress,
           deadline: Math.floor(Date.now() / 1000) + 3600,
           params: {
-            executionType: "evm-contract-call",
+            executionType: "call",
             asset: "DOT",
             maxPaymentAmount: "200000000",
             contractAddress:
@@ -394,8 +394,8 @@ function buildScenarios(settings) {
 
 function buildServiceEnv(settings, runtimeDir) {
   const env = {
-    XROUTE_RPC_URL: settings.hub.rpcUrl,
-    XROUTE_PRIVATE_KEY: settings.hub.privateKey,
+    XROUTE_HUB_RPC_URL: settings.hub.rpcUrl,
+    XROUTE_HUB_PRIVATE_KEY: settings.hub.privateKey,
     XROUTE_ROUTER_ADDRESS: settings.hub.routerAddress,
     XROUTE_RELAYER_AUTH_TOKEN: settings.relayerAuthToken,
     XROUTE_WORKSPACE_ROOT: workspaceRoot,
@@ -449,7 +449,7 @@ function resolveAssetAddress({ chainKey, assetKey, settings }) {
 }
 
 async function resolveSettings() {
-  const hubPrivateKey = requireEnv("XROUTE_PRIVATE_KEY");
+  const hubPrivateKey = requireEnv("XROUTE_HUB_PRIVATE_KEY");
   const hubRouterAddress =
     process.env.XROUTE_ROUTER_ADDRESS?.trim() ||
     resolveRouterAddressFromArtifact({
@@ -499,7 +499,7 @@ async function resolveSettings() {
   return {
     relayerAuthToken: requireEnv("XROUTE_RELAYER_AUTH_TOKEN"),
     hub: {
-      rpcUrl: requireEnv("XROUTE_RPC_URL"),
+      rpcUrl: requireEnv("XROUTE_HUB_RPC_URL"),
       privateKey: hubPrivateKey,
       routerAddress:
         hubRouterAddress ||

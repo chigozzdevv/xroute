@@ -1,9 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import {
-  actionButtonClass,
   fieldClass,
   fieldFullClass,
   formClass,
@@ -12,94 +11,174 @@ import {
   labelClass,
   textareaClass,
 } from "./form-classes";
-import { JourneyStatus } from "./journey-status";
 import { PoweredBy } from "./powered-by";
-import { QuoteFooter, type QuoteSnapshot } from "./quote-footer";
-import { useJourneyProgress } from "./use-journey-progress";
+import { QuoteFooter } from "./quote-footer";
+import {
+  type ExecuteType,
+  chainLabel,
+  coerceOptionValue,
+  executeAssetForType,
+  executeDestinationChain,
+  executeTypeOptions,
+  getExecuteSourceChainOptions,
+} from "./xroute-form-options";
 import { Select } from "@/components/ui/select";
+import type { QuoteRequest } from "@/lib/xroute/client";
+import { useXRouteQuote } from "@/lib/xroute/use-xroute-quote";
 
-const EXECUTE_QUOTES: readonly QuoteSnapshot[] = [
-  {
-    totalFee: { asset: "DOT", amount: BigInt("260180000") },
-    breakdown: [
-      { label: "XCM fee", fee: { asset: "DOT", amount: BigInt("260000000") } },
-      { label: "Destination fee", fee: { asset: "DOT", amount: BigInt("0") } },
-      { label: "Platform fee", fee: { asset: "DOT", amount: BigInt("180000") } },
-    ],
-  },
-  {
-    totalFee: { asset: "DOT", amount: BigInt("262180000") },
-    breakdown: [
-      { label: "XCM fee", fee: { asset: "DOT", amount: BigInt("262000000") } },
-      { label: "Destination fee", fee: { asset: "DOT", amount: BigInt("0") } },
-      { label: "Platform fee", fee: { asset: "DOT", amount: BigInt("180000") } },
-    ],
-  },
-  {
-    totalFee: { asset: "DOT", amount: BigInt("258180000") },
-    breakdown: [
-      { label: "XCM fee", fee: { asset: "DOT", amount: BigInt("258000000") } },
-      { label: "Destination fee", fee: { asset: "DOT", amount: BigInt("0") } },
-      { label: "Platform fee", fee: { asset: "DOT", amount: BigInt("180000") } },
-    ],
-  },
-];
+type ExecuteFormState = {
+  sourceChain: "polkadot-hub" | "hydration" | "bifrost";
+  destinationChain: "moonbeam";
+  executionType: ExecuteType;
+  maxPaymentAmount: string;
+  contractAddress: string;
+  calldata: string;
+  value: string;
+  gasLimit: string;
+  fallbackRefTime: string;
+  fallbackProofSize: string;
+};
 
-const EXECUTE_STEPS = [
-  "Preparing execution",
-  "Submitting intent",
-  "Executing call",
-  "Confirming result",
-] as const;
-
-function createInitialExecuteForm() {
+function createInitialExecuteForm(): ExecuteFormState {
   return {
-    chain: "Moonbeam",
-    target: "0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
-    method: "settleIntent(bytes)",
+    sourceChain: "hydration",
+    destinationChain: "moonbeam",
+    executionType: "call",
+    maxPaymentAmount: "200000000",
+    contractAddress: "0x2222222222222222222222222222222222222222",
+    calldata:
+      "0xdeadbeef0000000000000000000000001111111111111111111111111111111111111111",
     value: "0",
-    payload:
-      "0x7ab300000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+    gasLimit: "250000",
+    fallbackRefTime: "650000000",
+    fallbackProofSize: "12288",
+  };
+}
+
+function buildQuoteRequest(form: ExecuteFormState): QuoteRequest | null {
+  if (form.executionType !== "call") {
+    return null;
+  }
+
+  if (!form.maxPaymentAmount.trim()) {
+    return null;
+  }
+
+  if (!form.contractAddress.trim() || !form.calldata.trim()) {
+    return null;
+  }
+
+  return {
+    kind: "execute",
+    sourceChain: form.sourceChain,
+    destinationChain: form.destinationChain,
+    executionType: "call",
+    maxPaymentAmount: form.maxPaymentAmount,
+    contractAddress: form.contractAddress,
+    calldata: form.calldata,
+    value: form.value,
+    gasLimit: form.gasLimit,
+    fallbackRefTime: form.fallbackRefTime,
+    fallbackProofSize: form.fallbackProofSize,
   };
 }
 
 export function ExecuteForm() {
-  const [form, setForm] = useState(createInitialExecuteForm);
-  const journey = useJourneyProgress({ stepCount: EXECUTE_STEPS.length });
+  const [form, setForm] = useState<ExecuteFormState>(createInitialExecuteForm);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const sourceChainOptions = useMemo(
+    () => getExecuteSourceChainOptions(form.executionType),
+    [form.executionType],
+  );
+  const executionAsset = executeAssetForType(form.executionType);
+  const quoteRequest = useMemo(() => buildQuoteRequest(form), [form]);
+  const { quote } = useXRouteQuote(quoteRequest);
 
   return (
     <div className={formClass}>
-      {journey.phase === "idle" ? (
-        <>
-          <div className={gridClass}>
+      <div className={gridClass}>
             <label className={fieldClass}>
-              <span className={labelClass}>Execution chain</span>
+              <span className={labelClass}>Type</span>
               <Select
-                value={form.chain}
+                value={form.executionType}
                 onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    chain: event.target.value,
-                  }))
+                  setForm((current) => {
+                    const executionType = event.target.value as ExecuteType;
+                    const nextSourceChain = coerceOptionValue(
+                      current.sourceChain,
+                      getExecuteSourceChainOptions(executionType),
+                    );
+
+                    return {
+                      ...current,
+                      executionType,
+                      sourceChain: nextSourceChain,
+                      gasLimit: current.gasLimit || "250000",
+                    };
+                  })
                 }
               >
-                <option>Moonbeam</option>
-                <option>Ethereum</option>
-                <option>Base</option>
-                <option>Arbitrum</option>
+                {executeTypeOptions.map((option) => (
+                  <option
+                    key={option.value}
+                    value={option.value}
+                    disabled={option.disabled}
+                  >
+                    {option.label}
+                  </option>
+                ))}
               </Select>
             </label>
 
             <label className={fieldClass}>
-              <span className={labelClass}>Native value</span>
-              <input
-                className={inputClass}
-                inputMode="decimal"
-                value={form.value}
+              <span className={labelClass}>Source chain</span>
+              <Select
+                value={form.sourceChain}
                 onChange={(event) =>
                   setForm((current) => ({
                     ...current,
-                    value: event.target.value,
+                    sourceChain: event.target.value as ExecuteFormState["sourceChain"],
+                  }))
+                }
+              >
+                {sourceChainOptions.map((option) => (
+                  <option
+                    key={option.value}
+                    value={option.value}
+                    disabled={option.disabled}
+                  >
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+            </label>
+
+            <label className={fieldClass}>
+              <span className={labelClass}>Destination chain</span>
+              <Select value={form.destinationChain} disabled>
+                <option value={executeDestinationChain}>
+                  {chainLabel(executeDestinationChain)}
+                </option>
+              </Select>
+            </label>
+
+            <label className={fieldClass}>
+              <span className={labelClass}>Execution asset</span>
+              <Select value={executionAsset} disabled>
+                <option value={executionAsset}>{executionAsset}</option>
+              </Select>
+            </label>
+
+            <label className={fieldClass}>
+              <span className={labelClass}>Max payment amount</span>
+              <input
+                className={inputClass}
+                inputMode="numeric"
+                value={form.maxPaymentAmount}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    maxPaymentAmount: event.target.value,
                   }))
                 }
               />
@@ -109,77 +188,124 @@ export function ExecuteForm() {
               <span className={labelClass}>Target contract</span>
               <input
                 className={inputClass}
-                value={form.target}
+                value={form.contractAddress}
                 onChange={(event) =>
                   setForm((current) => ({
                     ...current,
-                    target: event.target.value,
+                    contractAddress: event.target.value,
                   }))
                 }
               />
             </label>
 
             <label className={fieldFullClass}>
-              <span className={labelClass}>Function</span>
-              <input
-                className={inputClass}
-                value={form.method}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    method: event.target.value,
-                  }))
-                }
-              />
-            </label>
-
-            <label className={fieldFullClass}>
-              <span className={labelClass}>Payload or calldata</span>
+              <span className={labelClass}>Calldata</span>
               <textarea
                 className={textareaClass}
                 rows={3}
-                value={form.payload}
+                value={form.calldata}
                 onChange={(event) =>
                   setForm((current) => ({
                     ...current,
-                    payload: event.target.value,
+                    calldata: event.target.value,
                   }))
                 }
               />
             </label>
-          </div>
 
-          <QuoteFooter quotes={EXECUTE_QUOTES} />
+            <div className={fieldFullClass}>
+              <button
+                type="button"
+                className="flex w-full items-center justify-between rounded-[18px] border border-line bg-white/62 px-4 py-3 text-left text-sm font-semibold tracking-tight text-ink transition duration-150 hover:-translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/30 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
+                onClick={() => setShowAdvanced((current) => !current)}
+                aria-expanded={showAdvanced}
+              >
+                <span>Advanced</span>
+                <svg
+                  aria-hidden="true"
+                  viewBox="0 0 12 8"
+                  className={`h-3.5 w-3.5 shrink-0 transition-transform duration-150 ${
+                    showAdvanced ? "rotate-180" : ""
+                  }`}
+                  fill="none"
+                >
+                  <path
+                    d="M1 1.5L6 6.5L11 1.5"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
 
-          <div className="flex justify-center">
-            <button type="button" className={actionButtonClass} onClick={journey.startJourney}>
-              Execute
-            </button>
-          </div>
-        </>
-      ) : (
-        <JourneyStatus
-          actionLabel="Execution"
-          activeStep={journey.activeStep}
-          phase={journey.phase}
-          steps={EXECUTE_STEPS}
-        />
-      )}
+            {showAdvanced ? (
+              <>
+                <label className={fieldClass}>
+                  <span className={labelClass}>Native value</span>
+                  <input
+                    className={inputClass}
+                    inputMode="numeric"
+                    value={form.value}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        value: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
 
-      {journey.phase === "success" ? (
-        <div className="flex justify-center">
-          <button
-            type="button"
-            className={actionButtonClass}
-            onClick={() => {
-              setForm(createInitialExecuteForm());
-              journey.resetJourney();
-            }}
-          >
-            Execute again
-          </button>
-        </div>
-      ) : null}
+                <label className={fieldClass}>
+                  <span className={labelClass}>Gas limit</span>
+                  <input
+                    className={inputClass}
+                    inputMode="numeric"
+                    value={form.gasLimit}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        gasLimit: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+
+                <label className={fieldClass}>
+                  <span className={labelClass}>Fallback ref time</span>
+                  <input
+                    className={inputClass}
+                    inputMode="numeric"
+                    value={form.fallbackRefTime}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        fallbackRefTime: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+
+                <label className={fieldClass}>
+                  <span className={labelClass}>Fallback proof size</span>
+                  <input
+                    className={inputClass}
+                    inputMode="numeric"
+                    value={form.fallbackProofSize}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        fallbackProofSize: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+              </>
+            ) : null}
+      </div>
+
+      <QuoteFooter quote={quote?.quote ?? null} />
 
       <PoweredBy />
     </div>

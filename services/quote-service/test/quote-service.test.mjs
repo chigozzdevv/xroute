@@ -68,7 +68,7 @@ test("quote service enforces moonbeam evm execution policy", async () => {
     policyPath,
     JSON.stringify({
       moonbeam: {
-        evmContractCall: {
+        call: {
           allowedContracts: [
             {
               address: "0x1111111111111111111111111111111111111111",
@@ -106,7 +106,7 @@ test("quote service enforces moonbeam evm execution policy", async () => {
           action: {
             type: "execute",
             params: {
-              executionType: "evm-contract-call",
+              executionType: "call",
               asset: "DOT",
               maxPaymentAmount: "110000000",
               contractAddress: "0x2222222222222222222222222222222222222222",
@@ -197,6 +197,22 @@ test("quote service applies live quote inputs from file overrides", async () => 
         dexFeeBps: 0,
       },
     ],
+    executeRoutes: [
+      {
+        destinationChain: "moonbeam",
+        asset: "DOT",
+        executionType: "mint-vdot",
+        executionBudget: "555",
+      },
+    ],
+    vdotOrders: [
+      {
+        poolAssetAmount: "100000000000",
+        poolVassetAmount: "50000000000",
+        mintFeeBps: 0,
+        redeemFeeBps: 10,
+      },
+    ],
   });
 
   const service = await spawnRustService({
@@ -273,6 +289,119 @@ test("quote service applies live quote inputs from file overrides", async () => 
     assert.equal(healthPayload.quoteInputs.mode, "file");
     assert.equal(healthPayload.quoteInputs.appliedTransferEdges, 1);
     assert.equal(healthPayload.quoteInputs.appliedSwapRoutes, 1);
+    assert.equal(healthPayload.quoteInputs.appliedExecuteRoutes, 1);
+    assert.equal(healthPayload.quoteInputs.appliedVdotOrders, 1);
+
+    const executeResponse = await fetch(`${service.url}/quote`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        intent: {
+          sourceChain: "hydration",
+          destinationChain: "moonbeam",
+          refundAddress,
+          deadline: 1_773_185_200,
+          action: {
+            type: "execute",
+            params: {
+              executionType: "mint-vdot",
+              amount: "10000000000",
+              maxPaymentAmount: "555",
+              recipient: "0x1111111111111111111111111111111111111111",
+              adapterAddress: "0x2222222222222222222222222222222222222222",
+              gasLimit: "500000",
+              fallbackWeight: {
+                refTime: 650000000,
+                proofSize: 12288,
+              },
+              remark: "xroute",
+              channelId: 0,
+            },
+          },
+        },
+      }),
+    });
+
+    assert.equal(executeResponse.status, 400);
+    const executePayload = await executeResponse.json();
+    assert.match(executePayload.error, /unsupported execute route/i);
+  } finally {
+    await service.close();
+    fixture.cleanup();
+  }
+});
+
+test("quote service applies live quote inputs from command overrides", async () => {
+  const fixture = createLiveInputsFixture({
+    generatedAt: "2026-03-11T12:00:00Z",
+    transferEdges: [
+      {
+        sourceChain: "polkadot-hub",
+        destinationChain: "hydration",
+        asset: "DOT",
+        transportFee: "999",
+        buyExecutionFee: "444",
+      },
+    ],
+    swapRoutes: [
+      {
+        destinationChain: "hydration",
+        assetIn: "DOT",
+        assetOut: "USDT",
+        priceNumerator: "25",
+        priceDenominator: "1",
+        dexFeeBps: 0,
+      },
+    ],
+  });
+
+  const service = await spawnRustService({
+    packageName: "quote-service",
+    cwd: workspaceRoot,
+    env: {
+      XROUTE_QUOTE_PORT: "0",
+      XROUTE_WORKSPACE_ROOT: workspaceRoot,
+      XROUTE_LIVE_QUOTE_INPUTS_COMMAND: `cat '${fixture.liveInputsPath}'`,
+    },
+  });
+
+  try {
+    const transferResponse = await fetch(`${service.url}/quote`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        intent: {
+          sourceChain: "polkadot-hub",
+          destinationChain: "hydration",
+          refundAddress,
+          deadline: 1_773_185_200,
+          action: {
+            type: "transfer",
+            params: {
+              asset: "DOT",
+              amount: "10",
+              recipient: "5Frecipient",
+            },
+          },
+        },
+      }),
+    });
+
+    assert.equal(transferResponse.status, 200);
+    const transferPayload = await transferResponse.json();
+    assert.equal(transferPayload.quote.fees.xcmFee.amount, "999");
+    assert.equal(transferPayload.quote.fees.destinationFee.amount, "444");
+    assert.equal(transferPayload.quoteInputs.mode, "command");
+
+    const healthResponse = await fetch(`${service.url}/healthz`);
+    assert.equal(healthResponse.status, 200);
+    const healthPayload = await healthResponse.json();
+    assert.equal(healthPayload.quoteInputs.mode, "command");
+    assert.equal(healthPayload.quoteInputs.status, "live");
   } finally {
     await service.close();
     fixture.cleanup();
@@ -361,5 +490,7 @@ function defaultLiveInputsDocument() {
         dexFeeBps: 30,
       },
     ],
+    executeRoutes: [],
+    vdotOrders: [],
   };
 }

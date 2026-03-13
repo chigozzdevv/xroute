@@ -10,6 +10,7 @@ import { actionTabs, type ActionKey } from "./action-config";
 import { ExecuteForm } from "./execute-form";
 import { SwapForm } from "./swap-form";
 import { TransferForm } from "./transfer-form";
+import { WorkflowForm } from "./workflow-form";
 
 export function LandingConsole() {
   const [activeAction, setActiveAction] = useState<ActionKey>("transfer");
@@ -34,6 +35,7 @@ export function LandingConsole() {
                 {activeAction === "transfer" ? <TransferForm /> : null}
                 {activeAction === "swap" ? <SwapForm /> : null}
                 {activeAction === "execute" ? <ExecuteForm /> : null}
+                {activeAction === "workflow" ? <WorkflowForm /> : null}
               </CardContent>
             </Card>
           </div>

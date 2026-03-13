@@ -7,15 +7,9 @@ export const ACTION_TYPES = Object.freeze({
 });
 
 export const EXECUTION_TYPES = Object.freeze({
-  RUNTIME_CALL: "runtime-call",
-  EVM_CONTRACT_CALL: "evm-contract-call",
-});
-
-export const RUNTIME_CALL_ORIGIN_KINDS = Object.freeze({
-  SOVEREIGN_ACCOUNT: "sovereign-account",
-  XCM: "xcm",
-  NATIVE: "native",
-  SUPERUSER: "superuser",
+  CALL: "call",
+  MINT_VDOT: "mint-vdot",
+  REDEEM_VDOT: "redeem-vdot",
 });
 
 export const DISPATCH_MODES = Object.freeze({

@@ -12,9 +12,14 @@ pub struct HubDeploymentArtifact {
     pub deployer: Option<String>,
     pub deployed_at: Option<String>,
     pub router_address: String,
+    pub moonbeam_slpx_adapter_address: Option<String>,
     pub xcm_address: Option<String>,
     pub executor_address: Option<String>,
     pub treasury_address: Option<String>,
+    pub moonbeam_slpx_address: Option<String>,
+    pub moonbeam_xcdot_asset_address: Option<String>,
+    pub moonbeam_vdot_asset_address: Option<String>,
+    pub moonbeam_slpx_destination_chain_id: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -33,6 +38,8 @@ struct DeploymentArtifactFile {
 struct DeploymentContracts {
     #[serde(rename = "XRouteHubRouter")]
     xroute_hub_router: String,
+    #[serde(rename = "XRouteMoonbeamSlpxAdapter")]
+    xroute_moonbeam_slpx_adapter: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -41,6 +48,10 @@ struct DeploymentSettings {
     xcm_address: Option<String>,
     executor_address: Option<String>,
     treasury_address: Option<String>,
+    moonbeam_slpx_address: Option<String>,
+    moonbeam_xc_dot_asset_address: Option<String>,
+    moonbeam_vdot_asset_address: Option<String>,
+    moonbeam_slpx_destination_chain_id: Option<u64>,
 }
 
 pub fn resolve_workspace_root(input: Option<&str>) -> PathBuf {
@@ -106,6 +117,7 @@ pub fn load_chain_deployment_artifact(
         deployer: file.deployer,
         deployed_at: file.deployed_at,
         router_address: file.contracts.xroute_hub_router,
+        moonbeam_slpx_adapter_address: file.contracts.xroute_moonbeam_slpx_adapter,
         xcm_address: file
             .settings
             .as_ref()
@@ -118,6 +130,22 @@ pub fn load_chain_deployment_artifact(
             .settings
             .as_ref()
             .and_then(|settings| settings.treasury_address.clone()),
+        moonbeam_slpx_address: file
+            .settings
+            .as_ref()
+            .and_then(|settings| settings.moonbeam_slpx_address.clone()),
+        moonbeam_xcdot_asset_address: file
+            .settings
+            .as_ref()
+            .and_then(|settings| settings.moonbeam_xc_dot_asset_address.clone()),
+        moonbeam_vdot_asset_address: file
+            .settings
+            .as_ref()
+            .and_then(|settings| settings.moonbeam_vdot_asset_address.clone()),
+        moonbeam_slpx_destination_chain_id: file
+            .settings
+            .as_ref()
+            .and_then(|settings| settings.moonbeam_slpx_destination_chain_id),
     })
 }
 

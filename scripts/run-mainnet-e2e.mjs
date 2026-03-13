@@ -108,7 +108,7 @@ function buildScenarios(profile) {
           refundAddress,
           deadline: 1_773_185_200,
           params: {
-            executionType: "evm-contract-call",
+            executionType: "call",
             asset: "DOT",
             maxPaymentAmount: "200000000",
             contractAddress: "0x1111111111111111111111111111111111111111",

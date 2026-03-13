@@ -1,5 +1,7 @@
 "use client";
 
+import type { CSSProperties } from "react";
+
 import { cn } from "@/lib/cn";
 
 export type TabsItem<T extends string> = {
@@ -20,9 +22,10 @@ export function Tabs<T extends string>({
 }: TabsProps<T>) {
   return (
     <div
-      className="grid grid-cols-1 gap-2 rounded-[24px] border border-line bg-white/55 p-1.5 sm:grid-cols-3"
+      className="grid grid-cols-1 gap-2 rounded-[24px] border border-line bg-white/55 p-1.5 sm:[grid-template-columns:repeat(var(--tab-count),minmax(0,1fr))]"
       role="tablist"
       aria-label="XROUTE actions"
+      style={{ "--tab-count": items.length } as CSSProperties}
     >
       {items.map((item) => {
         const isActive = item.value === value;

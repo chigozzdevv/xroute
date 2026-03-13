@@ -1,6 +1,6 @@
 import type { TabsItem } from "@/components/ui/tabs";
 
-export type ActionKey = "transfer" | "swap" | "execute";
+export type ActionKey = "transfer" | "swap" | "execute" | "workflow";
 
 export const actionTabs: readonly TabsItem<ActionKey>[] = [
   {
@@ -14,5 +14,9 @@ export const actionTabs: readonly TabsItem<ActionKey>[] = [
   {
     value: "execute",
     label: "Execute",
+  },
+  {
+    value: "workflow",
+    label: "Workflow",
   },
 ];

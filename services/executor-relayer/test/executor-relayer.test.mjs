@@ -29,8 +29,8 @@ test("executor relayer authenticates and dispatches a queued job", async () => {
     env: {
       XROUTE_RELAYER_PORT: "0",
       XROUTE_RELAYER_AUTH_TOKEN: "secret-token",
-      XROUTE_RPC_URL: anvil.rpcUrl,
-      XROUTE_PRIVATE_KEY: anvil.privateKey,
+      XROUTE_HUB_RPC_URL: anvil.rpcUrl,
+      XROUTE_HUB_PRIVATE_KEY: anvil.privateKey,
       XROUTE_ROUTER_ADDRESS: hubRouterAddress,
       XROUTE_RELAYER_JOB_STORE_PATH: join(tempDir, "jobs.json"),
       XROUTE_STATUS_EVENTS_PATH: join(tempDir, "events.ndjson"),
@@ -99,7 +99,7 @@ test("executor relayer enforces moonbeam evm execution policy before dispatch", 
     policyPath,
     JSON.stringify({
       moonbeam: {
-        evmContractCall: {
+        call: {
           allowedContracts: [
             {
               address: "0x2222222222222222222222222222222222222222",
@@ -121,8 +121,8 @@ test("executor relayer enforces moonbeam evm execution policy before dispatch", 
     env: {
       XROUTE_RELAYER_PORT: "0",
       XROUTE_RELAYER_AUTH_TOKEN: "secret-token",
-      XROUTE_RPC_URL: anvil.rpcUrl,
-      XROUTE_PRIVATE_KEY: anvil.privateKey,
+      XROUTE_HUB_RPC_URL: anvil.rpcUrl,
+      XROUTE_HUB_PRIVATE_KEY: anvil.privateKey,
       XROUTE_ROUTER_ADDRESS: hubRouterAddress,
       XROUTE_EVM_POLICY_PATH: policyPath,
       XROUTE_RELAYER_JOB_STORE_PATH: join(tempDir, "jobs.json"),
@@ -138,7 +138,7 @@ test("executor relayer enforces moonbeam evm execution policy before dispatch", 
       refundAddress,
       deadline: 1_773_185_200,
       params: {
-        executionType: "evm-contract-call",
+        executionType: "call",
         asset: "DOT",
         maxPaymentAmount: "110000000",
         contractAddress: "0x3333333333333333333333333333333333333333",
@@ -185,8 +185,8 @@ test("executor relayer rejects oversized request bodies", async () => {
     env: {
       XROUTE_RELAYER_PORT: "0",
       XROUTE_RELAYER_AUTH_TOKEN: "secret-token",
-      XROUTE_RPC_URL: anvil.rpcUrl,
-      XROUTE_PRIVATE_KEY: anvil.privateKey,
+      XROUTE_HUB_RPC_URL: anvil.rpcUrl,
+      XROUTE_HUB_PRIVATE_KEY: anvil.privateKey,
       XROUTE_ROUTER_ADDRESS: hubRouterAddress,
       XROUTE_RELAYER_MAX_BODY_BYTES: "64",
       XROUTE_RELAYER_JOB_STORE_PATH: join(tempDir, "jobs.json"),
@@ -230,8 +230,8 @@ test("executor relayer routes moonbeam-origin dispatch and failure jobs through 
     env: {
       XROUTE_RELAYER_PORT: "0",
       XROUTE_RELAYER_AUTH_TOKEN: "secret-token",
-      XROUTE_RPC_URL: hubAnvil.rpcUrl,
-      XROUTE_PRIVATE_KEY: hubAnvil.privateKey,
+      XROUTE_HUB_RPC_URL: hubAnvil.rpcUrl,
+      XROUTE_HUB_PRIVATE_KEY: hubAnvil.privateKey,
       XROUTE_ROUTER_ADDRESS: hubRouterAddress,
       XROUTE_MOONBEAM_RPC_URL: moonbeamAnvil.rpcUrl,
       XROUTE_MOONBEAM_PRIVATE_KEY: moonbeamAnvil.privateKey,
@@ -322,8 +322,8 @@ test("executor relayer fails moonbeam-origin jobs when no moonbeam execution con
     env: {
       XROUTE_RELAYER_PORT: "0",
       XROUTE_RELAYER_AUTH_TOKEN: "secret-token",
-      XROUTE_RPC_URL: anvil.rpcUrl,
-      XROUTE_PRIVATE_KEY: anvil.privateKey,
+      XROUTE_HUB_RPC_URL: anvil.rpcUrl,
+      XROUTE_HUB_PRIVATE_KEY: anvil.privateKey,
       XROUTE_ROUTER_ADDRESS: hubRouterAddress,
       XROUTE_RELAYER_JOB_STORE_PATH: join(tempDir, "jobs.json"),
       XROUTE_STATUS_EVENTS_PATH: join(tempDir, "events.ndjson"),
@@ -397,8 +397,8 @@ test("executor relayer dispatches hydration source intents and completes substra
     env: {
       XROUTE_RELAYER_PORT: "0",
       XROUTE_RELAYER_AUTH_TOKEN: "secret-token",
-      XROUTE_RPC_URL: anvil.rpcUrl,
-      XROUTE_PRIVATE_KEY: anvil.privateKey,
+      XROUTE_HUB_RPC_URL: anvil.rpcUrl,
+      XROUTE_HUB_PRIVATE_KEY: anvil.privateKey,
       XROUTE_ROUTER_ADDRESS: hubRouterAddress,
       XROUTE_HYDRATION_RPC_URL: "ws://127.0.0.1:9944",
       XROUTE_HYDRATION_PRIVATE_KEY:
@@ -428,7 +428,7 @@ test("executor relayer dispatches hydration source intents and completes substra
       refundAddress,
       deadline: 1_773_185_200,
       params: {
-        executionType: "evm-contract-call",
+        executionType: "call",
         asset: "DOT",
         maxPaymentAmount: "200000000",
         contractAddress: "0x1111111111111111111111111111111111111111",
@@ -560,8 +560,8 @@ test("executor relayer dispatches bifrost source intents on mainnet and records 
     env: {
       XROUTE_RELAYER_PORT: "0",
       XROUTE_RELAYER_AUTH_TOKEN: "secret-token",
-      XROUTE_RPC_URL: anvil.rpcUrl,
-      XROUTE_PRIVATE_KEY: anvil.privateKey,
+      XROUTE_HUB_RPC_URL: anvil.rpcUrl,
+      XROUTE_HUB_PRIVATE_KEY: anvil.privateKey,
       XROUTE_ROUTER_ADDRESS: hubRouterAddress,
       XROUTE_BIFROST_RPC_URL: "ws://127.0.0.1:9944",
       XROUTE_BIFROST_PRIVATE_KEY:

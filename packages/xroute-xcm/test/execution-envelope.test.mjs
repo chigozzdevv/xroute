@@ -197,72 +197,14 @@ test("buildExecutionEnvelope encodes a reserve-withdraw multihop swap with hub s
   assert.equal(destinationInstructions[2].value.xcm[1].type, "DepositAsset");
 });
 
-test("buildExecutionEnvelope encodes a runtime call via Transact", async () => {
-  const intent = createExecuteIntent({
-    sourceChain: "polkadot-hub",
-    destinationChain: "hydration",
-    refundAddress,
-    deadline: 1_773_185_200,
-    params: {
-      executionType: "runtime-call",
-      asset: "DOT",
-      maxPaymentAmount: "90000000",
-      callData: "0x01020304",
-      fallbackWeight: {
-        refTime: 250000000,
-        proofSize: 4096,
-      },
-    },
-  });
-  const quote = await mainnetQuoteProvider.quote(intent);
-
-  const envelope = buildExecutionEnvelope({ intent, quote });
-  const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
-  const remoteInstructions = finalRemoteInstructions(decoded);
-
-  assert.equal(remoteInstructions.length, 2);
-  assert.equal(remoteInstructions[1].type, "Transact");
-  assert.equal(remoteInstructions[1].value.origin_kind.type, "SovereignAccount");
-});
-
-test("buildExecutionEnvelope encodes a moonbeam runtime call via Transact", async () => {
+test("buildExecutionEnvelope encodes a moonbeam call via Transact", async () => {
   const intent = createExecuteIntent({
     sourceChain: "polkadot-hub",
     destinationChain: "moonbeam",
     refundAddress,
     deadline: 1_773_185_200,
     params: {
-      executionType: "runtime-call",
-      asset: "DOT",
-      maxPaymentAmount: "110000000",
-      callData: "0x05060708",
-      fallbackWeight: {
-        refTime: 500000000,
-        proofSize: 8192,
-      },
-    },
-  });
-  const quote = await mainnetQuoteProvider.quote(intent);
-
-  const envelope = buildExecutionEnvelope({ intent, quote });
-  const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(envelope.messageHex);
-  const outerTransfer = decoded.value[1];
-  const remoteInstructions = outerTransfer.value.xcm;
-
-  assert.equal(outerTransfer.type, "TransferReserveAsset");
-  assert.equal(remoteInstructions[0].type, "BuyExecution");
-  assert.equal(remoteInstructions[1].type, "Transact");
-  assert.equal(remoteInstructions[1].value.call.asHex(), "0x05060708");
-});
-
-test("buildExecutionEnvelope encodes a moonbeam evm contract call via Transact", async () => {
-  const intent = createExecuteIntent({
-    sourceChain: "polkadot-hub",
-    destinationChain: "moonbeam",
-    refundAddress,
-    deadline: 1_773_185_200,
-    params: {
-      executionType: "evm-contract-call",
+      executionType: "call",
       asset: "DOT",
       maxPaymentAmount: "110000000",
       contractAddress: "0x1111111111111111111111111111111111111111",
@@ -293,7 +235,7 @@ test("buildExecutionEnvelope encodes a reserve-withdraw multihop moonbeam contra
     refundAddress,
     deadline: 1_773_185_200,
     params: {
-      executionType: "evm-contract-call",
+      executionType: "call",
       asset: "DOT",
       maxPaymentAmount: "200000000",
       contractAddress: "0x1111111111111111111111111111111111111111",

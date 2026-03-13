@@ -86,7 +86,10 @@ const MAINNET_PROFILE = Object.freeze({
       label: "Bifrost",
       parachainId: 2030,
       transitEnabled: true,
-      supportedActions: Object.freeze([ACTION_TYPES.TRANSFER]),
+      supportedActions: Object.freeze([
+        ACTION_TYPES.TRANSFER,
+        ACTION_TYPES.EXECUTE,
+      ]),
     }),
   }),
   assets: Object.freeze({
@@ -173,6 +176,43 @@ const MAINNET_PROFILE = Object.freeze({
         }),
       }),
     }),
+    VDOT: Object.freeze({
+      symbol: "VDOT",
+      decimals: 10,
+      supportedChains: Object.freeze(["bifrost", "hydration", "moonbeam"]),
+      xcmLocations: Object.freeze({
+        bifrost: Object.freeze({
+          parents: 0,
+          interior: Object.freeze({
+            type: "x1",
+            value: Object.freeze({
+              type: "general-index",
+              value: 0x0900n,
+            }),
+          }),
+        }),
+        hydration: Object.freeze({
+          parents: 1,
+          interior: Object.freeze({
+            type: "x2",
+            value: Object.freeze([
+              Object.freeze({ type: "parachain", value: 2030 }),
+              Object.freeze({ type: "general-index", value: 0x0900n }),
+            ]),
+          }),
+        }),
+        moonbeam: Object.freeze({
+          parents: 1,
+          interior: Object.freeze({
+            type: "x2",
+            value: Object.freeze([
+              Object.freeze({ type: "parachain", value: 2030 }),
+              Object.freeze({ type: "general-index", value: 0x0900n }),
+            ]),
+          }),
+        }),
+      }),
+    }),
   }),
   routes: Object.freeze([
     route({
@@ -181,14 +221,13 @@ const MAINNET_PROFILE = Object.freeze({
       actions: [ACTION_TYPES.TRANSFER, ACTION_TYPES.EXECUTE],
       transferableAssets: ["DOT"],
       executeCapabilities: [
-        capability(EXECUTION_TYPES.RUNTIME_CALL, ["DOT"]),
-        capability(EXECUTION_TYPES.EVM_CONTRACT_CALL, ["DOT"]),
+        capability(EXECUTION_TYPES.CALL, ["DOT"]),
       ],
     }),
     route({
       sourceChain: "polkadot-hub",
       destinationChain: "hydration",
-      actions: [ACTION_TYPES.TRANSFER, ACTION_TYPES.SWAP, ACTION_TYPES.EXECUTE],
+      actions: [ACTION_TYPES.TRANSFER, ACTION_TYPES.SWAP],
       transferableAssets: ["DOT"],
       swapPairs: [
         {
@@ -199,16 +238,15 @@ const MAINNET_PROFILE = Object.freeze({
         {
           assetIn: "DOT",
           assetOut: "HDX",
-          settlementChains: ["hydration", "polkadot-hub"],
+          settlementChains: ["hydration"],
         },
       ],
-      executeCapabilities: [capability(EXECUTION_TYPES.RUNTIME_CALL, ["DOT"])],
     }),
     route({
       sourceChain: "hydration",
       destinationChain: "polkadot-hub",
       actions: [ACTION_TYPES.TRANSFER],
-      transferableAssets: ["DOT", "USDT", "HDX"],
+      transferableAssets: ["DOT", "USDT"],
     }),
     route({
       sourceChain: "moonbeam",
@@ -255,6 +293,10 @@ export function getChain(chainKey, deploymentProfile = DEFAULT_DEPLOYMENT_PROFIL
   return chain;
 }
 
+export function listChains(deploymentProfile = DEFAULT_DEPLOYMENT_PROFILE) {
+  return Object.values(getProfile(deploymentProfile).chains);
+}
+
 export function getAsset(assetKey, deploymentProfile = DEFAULT_DEPLOYMENT_PROFILE) {
   const normalized = assertNonEmptyString("assetKey", assetKey).toUpperCase();
   const profile = getProfile(deploymentProfile);
@@ -264,6 +306,10 @@ export function getAsset(assetKey, deploymentProfile = DEFAULT_DEPLOYMENT_PROFIL
   }
 
   return asset;
+}
+
+export function listAssets(deploymentProfile = DEFAULT_DEPLOYMENT_PROFILE) {
+  return Object.values(getProfile(deploymentProfile).assets);
 }
 
 export function getParachainId(chainKey, deploymentProfile = DEFAULT_DEPLOYMENT_PROFILE) {
@@ -406,7 +452,7 @@ export function assertExecuteRoute(
   sourceChain,
   destinationChain,
   assetKey,
-  executionType = EXECUTION_TYPES.RUNTIME_CALL,
+  executionType = EXECUTION_TYPES.CALL,
   deploymentProfile = DEFAULT_DEPLOYMENT_PROFILE,
 ) {
   const asset = getAsset(assetKey, deploymentProfile);

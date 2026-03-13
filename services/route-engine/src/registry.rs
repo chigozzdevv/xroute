@@ -41,11 +41,29 @@ pub struct SwapRoute {
     pub dex_fee_bps: u16,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecuteRoute {
+    pub destination: ChainKey,
+    pub asset: AssetKey,
+    pub execution_type: ExecutionType,
+    pub execution_budget: AssetAmount,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VdotOrderPricing {
+    pub pool_asset_amount: u128,
+    pub pool_vasset_amount: u128,
+    pub mint_fee_bps: u16,
+    pub redeem_fee_bps: u16,
+}
+
 #[derive(Debug, Clone)]
 pub struct RouteRegistry {
     transfer_edges: Vec<TransferEdge>,
     swap_routes: Vec<SwapRoute>,
+    execute_routes: Vec<ExecuteRoute>,
     execute_capabilities: Vec<ExecuteCapability>,
+    vdot_order_pricing: Option<VdotOrderPricing>,
 }
 
 impl Default for RouteRegistry {
@@ -82,13 +100,6 @@ impl RouteRegistry {
                     asset: AssetKey::Usdt,
                     transport_fee: AssetAmount::new(AssetKey::Usdt, 25_000),
                     buy_execution_fee: AssetAmount::new(AssetKey::Usdt, 10_000),
-                },
-                TransferEdge {
-                    source: ChainKey::Hydration,
-                    destination: ChainKey::PolkadotHub,
-                    asset: AssetKey::Hdx,
-                    transport_fee: AssetAmount::new(AssetKey::Hdx, 50_000_000_000),
-                    buy_execution_fee: AssetAmount::new(AssetKey::Hdx, 20_000_000_000),
                 },
                 TransferEdge {
                     source: ChainKey::PolkadotHub,
@@ -137,23 +148,16 @@ impl RouteRegistry {
                     dex_fee_bps: 25,
                 },
             ],
+            execute_routes: vec![
+            ],
             execute_capabilities: vec![
                 ExecuteCapability {
-                    destination: ChainKey::Hydration,
-                    asset: AssetKey::Dot,
-                    execution_type: ExecutionType::RuntimeCall,
-                },
-                ExecuteCapability {
                     destination: ChainKey::Moonbeam,
                     asset: AssetKey::Dot,
-                    execution_type: ExecutionType::RuntimeCall,
-                },
-                ExecuteCapability {
-                    destination: ChainKey::Moonbeam,
-                    asset: AssetKey::Dot,
-                    execution_type: ExecutionType::EvmContractCall,
+                    execution_type: ExecutionType::Call,
                 },
             ],
+            vdot_order_pricing: None,
         }
     }
 
@@ -237,6 +241,52 @@ impl RouteRegistry {
         })
     }
 
+    pub fn execute_budget(
+        &self,
+        destination: ChainKey,
+        asset: AssetKey,
+        execution_type: ExecutionType,
+    ) -> Option<AssetAmount> {
+        self.execute_routes
+            .iter()
+            .copied()
+            .find(|route| {
+                route.destination == destination
+                    && route.asset == asset
+                    && route.execution_type == execution_type
+            })
+            .map(|route| route.execution_budget)
+    }
+
+    pub fn quote_vdot_order(
+        &self,
+        execution_type: ExecutionType,
+        amount: u128,
+    ) -> Option<AssetAmount> {
+        let pricing = self.vdot_order_pricing?;
+        let fee_bps = match execution_type {
+            ExecutionType::MintVdot => pricing.mint_fee_bps as u128,
+            ExecutionType::RedeemVdot => pricing.redeem_fee_bps as u128,
+            _ => return None,
+        };
+        let net_amount = amount.saturating_sub(amount.saturating_mul(fee_bps) / 10_000);
+        let quoted_amount = match execution_type {
+            ExecutionType::MintVdot => net_amount
+                .saturating_mul(pricing.pool_vasset_amount)
+                / pricing.pool_asset_amount,
+            ExecutionType::RedeemVdot => net_amount
+                .saturating_mul(pricing.pool_asset_amount)
+                / pricing.pool_vasset_amount,
+            _ => unreachable!(),
+        };
+
+        Some(match execution_type {
+            ExecutionType::MintVdot => AssetAmount::new(AssetKey::Vdot, quoted_amount),
+            ExecutionType::RedeemVdot => AssetAmount::new(AssetKey::Dot, quoted_amount),
+            _ => unreachable!(),
+        })
+    }
+
     pub fn override_transfer_edge(
         &mut self,
         source: ChainKey,
@@ -287,6 +337,51 @@ impl RouteRegistry {
         existing.price_numerator = price_numerator;
         existing.price_denominator = price_denominator;
         existing.dex_fee_bps = dex_fee_bps;
+        Ok(())
+    }
+
+    pub fn override_execute_route(
+        &mut self,
+        destination: ChainKey,
+        asset: AssetKey,
+        execution_type: ExecutionType,
+        execution_budget: u128,
+    ) -> Result<(), String> {
+        if let Some(existing) = self.execute_routes.iter_mut().find(|route| {
+            route.destination == destination
+                && route.asset == asset
+                && route.execution_type == execution_type
+        }) {
+            existing.execution_budget = AssetAmount::new(asset, execution_budget);
+            return Ok(());
+        }
+
+        self.execute_routes.push(ExecuteRoute {
+            destination,
+            asset,
+            execution_type,
+            execution_budget: AssetAmount::new(asset, execution_budget),
+        });
+        Ok(())
+    }
+
+    pub fn override_vdot_order_pricing(
+        &mut self,
+        pool_asset_amount: u128,
+        pool_vasset_amount: u128,
+        mint_fee_bps: u16,
+        redeem_fee_bps: u16,
+    ) -> Result<(), String> {
+        if pool_asset_amount == 0 || pool_vasset_amount == 0 {
+            return Err("vdot order pricing pools must be greater than zero".to_owned());
+        }
+
+        self.vdot_order_pricing = Some(VdotOrderPricing {
+            pool_asset_amount,
+            pool_vasset_amount,
+            mint_fee_bps,
+            redeem_fee_bps,
+        });
         Ok(())
     }
 }

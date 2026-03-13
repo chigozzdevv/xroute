@@ -1,6 +1,9 @@
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
-use route_engine::{AssetKey, ChainKey, DeploymentProfile, EngineSettings, RouteEngine, RouteRegistry};
+use route_engine::{
+    AssetKey, ChainKey, DeploymentProfile, EngineSettings, ExecutionType, RouteEngine,
+    RouteRegistry,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::convert::Infallible;
@@ -23,6 +26,7 @@ use xroute_service_shared::{
 struct QuoteState {
     deployment_profile: DeploymentProfile,
     max_body_bytes: usize,
+    api_key: Option<String>,
     policy: Option<ExecutionPolicy>,
     deployment: Option<HubDeploymentArtifact>,
     live_inputs: Option<Arc<Mutex<LiveQuoteInputsCache>>>,
@@ -56,6 +60,8 @@ struct LoadedLiveQuoteInputs {
     loaded_at_ms: u64,
     applied_transfer_edges: usize,
     applied_swap_routes: usize,
+    applied_execute_routes: usize,
+    applied_vdot_orders: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -67,6 +73,10 @@ struct LiveQuoteInputsDocument {
     transfer_edges: Vec<TransferEdgeInput>,
     #[serde(default)]
     swap_routes: Vec<SwapRouteInput>,
+    #[serde(default)]
+    execute_routes: Vec<ExecuteRouteInput>,
+    #[serde(default)]
+    vdot_orders: Vec<VdotOrderInput>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -88,6 +98,24 @@ struct SwapRouteInput {
     price_numerator: String,
     price_denominator: String,
     dex_fee_bps: u16,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExecuteRouteInput {
+    destination_chain: String,
+    asset: String,
+    execution_type: String,
+    execution_budget: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VdotOrderInput {
+    pool_asset_amount: String,
+    pool_vasset_amount: String,
+    mint_fee_bps: u16,
+    redeem_fee_bps: u16,
 }
 
 #[tokio::main]
@@ -173,6 +201,10 @@ fn load_state() -> Result<QuoteState, String> {
     Ok(QuoteState {
         deployment_profile,
         max_body_bytes,
+        api_key: env::var("XROUTE_API_KEY")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty()),
         policy,
         deployment,
         live_inputs,
@@ -195,7 +227,7 @@ async fn route_request(
     request: Request<Body>,
     state: Arc<QuoteState>,
 ) -> Result<Response<Body>, HttpError> {
-    match (request.method(), request.uri().path()) {
+    match (request.method(), normalize_public_path(request.uri().path())) {
         (&Method::GET, "/healthz") => {
             let quote_inputs = live_inputs_metadata(state.live_inputs.as_ref()).await;
             Ok(json_response(
@@ -214,6 +246,7 @@ async fn route_request(
             ))
         }
         (&Method::POST, "/quote") => {
+            assert_api_key(&request, state.api_key.as_deref())?;
             let body = read_request_body(request, state.max_body_bytes).await?;
             let parsed = quote_request_from_slice(&body)?;
             assert_intent_allowed_by_execution_policy(&parsed.intent, state.policy.as_ref())
@@ -247,6 +280,37 @@ async fn route_request(
                 "error": "not-found",
             }),
         )),
+    }
+}
+
+fn normalize_public_path(path: &str) -> &str {
+    if let Some(stripped) = path.strip_prefix("/v1") {
+        if stripped.is_empty() {
+            "/"
+        } else {
+            stripped
+        }
+    } else {
+        path
+    }
+}
+
+fn assert_api_key(request: &Request<Body>, expected: Option<&str>) -> Result<(), HttpError> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+
+    let provided = request
+        .headers()
+        .get("x-api-key")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    if provided == Some(expected) {
+        Ok(())
+    } else {
+        Err(HttpError::new(StatusCode::UNAUTHORIZED, "invalid-api-key"))
     }
 }
 
@@ -390,6 +454,8 @@ impl LiveQuoteInputsCache {
                 "loadedAtMs": snapshot.loaded_at_ms,
                 "appliedTransferEdges": snapshot.applied_transfer_edges,
                 "appliedSwapRoutes": snapshot.applied_swap_routes,
+                "appliedExecuteRoutes": snapshot.applied_execute_routes,
+                "appliedVdotOrders": snapshot.applied_vdot_orders,
                 "lastAttemptAtMs": self.last_attempt_at_ms,
                 "lastError": self.last_error,
                 "usingStaticFallback": false,
@@ -408,6 +474,8 @@ impl LiveQuoteInputsCache {
                 "loadedAtMs": Value::Null,
                 "appliedTransferEdges": 0,
                 "appliedSwapRoutes": 0,
+                "appliedExecuteRoutes": 0,
+                "appliedVdotOrders": 0,
                 "lastAttemptAtMs": self.last_attempt_at_ms,
                 "lastError": self.last_error,
                 "usingStaticFallback": true,
@@ -469,13 +537,15 @@ async fn load_live_quote_inputs(
         loaded_at_ms: unix_timestamp_ms(),
         applied_transfer_edges: applied.0,
         applied_swap_routes: applied.1,
+        applied_execute_routes: applied.2,
+        applied_vdot_orders: applied.3,
     })
 }
 
 fn apply_live_quote_inputs(
     registry: &mut RouteRegistry,
     document: &LiveQuoteInputsDocument,
-) -> Result<(usize, usize), String> {
+) -> Result<(usize, usize, usize, usize), String> {
     let mut applied_transfer_edges = 0usize;
     for edge in &document.transfer_edges {
         registry.override_transfer_edge(
@@ -505,7 +575,34 @@ fn apply_live_quote_inputs(
         applied_swap_routes += 1;
     }
 
-    Ok((applied_transfer_edges, applied_swap_routes))
+    let mut applied_execute_routes = 0usize;
+    for route in &document.execute_routes {
+        registry.override_execute_route(
+            ChainKey::from_str(&route.destination_chain)?,
+            AssetKey::from_str(&route.asset)?,
+            ExecutionType::from_str(&route.execution_type)?,
+            parse_u128_value(&route.execution_budget, "executionBudget")?,
+        )?;
+        applied_execute_routes += 1;
+    }
+
+    let mut applied_vdot_orders = 0usize;
+    for order in &document.vdot_orders {
+        registry.override_vdot_order_pricing(
+            parse_u128_value(&order.pool_asset_amount, "poolAssetAmount")?,
+            parse_u128_value(&order.pool_vasset_amount, "poolVassetAmount")?,
+            order.mint_fee_bps,
+            order.redeem_fee_bps,
+        )?;
+        applied_vdot_orders += 1;
+    }
+
+    Ok((
+        applied_transfer_edges,
+        applied_swap_routes,
+        applied_execute_routes,
+        applied_vdot_orders,
+    ))
 }
 
 fn static_quote_inputs_json() -> Value {
@@ -519,6 +616,8 @@ fn static_quote_inputs_json() -> Value {
         "loadedAtMs": Value::Null,
         "appliedTransferEdges": 0,
         "appliedSwapRoutes": 0,
+        "appliedExecuteRoutes": 0,
+        "appliedVdotOrders": 0,
         "lastAttemptAtMs": Value::Null,
         "lastError": Value::Null,
         "usingStaticFallback": false,

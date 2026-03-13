@@ -1,7 +1,7 @@
 use route_engine::{
-    AssetKey, ChainKey, DeploymentProfile, EngineSettings, EvmContractCallExecuteIntent,
-    ExecuteIntent, Intent, IntentAction, RouteEngine, RouteRegistry, SwapIntent, TransferIntent,
-    XcmInstruction, XcmWeight,
+    AssetKey, CallExecuteIntent, ChainKey, DeploymentProfile, EngineSettings, ExecuteIntent,
+    Intent, IntentAction, RouteEngine, RouteRegistry, SwapIntent, TransferIntent,
+    VdotOrderExecuteIntent, XcmInstruction, XcmWeight,
 };
 
 const REFUND_ADDRESS: &str = "0x1111111111111111111111111111111111111111";
@@ -43,8 +43,8 @@ fn quotes_bifrost_as_a_hub_centered_source_spoke() {
     let intent = Intent {
         source_chain: ChainKey::Bifrost,
         destination_chain: ChainKey::Moonbeam,
-        action: IntentAction::Execute(ExecuteIntent::EvmContractCall(
-            EvmContractCallExecuteIntent {
+        action: IntentAction::Execute(ExecuteIntent::Call(
+            CallExecuteIntent {
                 asset: AssetKey::Dot,
                 max_payment_amount: 250_000_000,
                 contract_address: "0x1111111111111111111111111111111111111111".to_owned(),
@@ -128,8 +128,8 @@ fn quotes_multihop_execute_evm_contract_call_on_moonbeam() {
     let intent = Intent {
         source_chain: ChainKey::Hydration,
         destination_chain: ChainKey::Moonbeam,
-        action: IntentAction::Execute(ExecuteIntent::EvmContractCall(
-            EvmContractCallExecuteIntent {
+        action: IntentAction::Execute(ExecuteIntent::Call(
+            CallExecuteIntent {
                 asset: AssetKey::Dot,
                 max_payment_amount: 200_000_000,
                 contract_address: "0x1111111111111111111111111111111111111111".to_owned(),
@@ -158,4 +158,72 @@ fn quotes_multihop_execute_evm_contract_call_on_moonbeam() {
         }
         other => panic!("expected SendXcm step, got {other:?}"),
     }
+}
+
+#[test]
+fn rejects_mint_vdot_order_submission_without_live_pricing() {
+    let engine = mainnet_engine();
+    let intent = Intent {
+        source_chain: ChainKey::Hydration,
+        destination_chain: ChainKey::Moonbeam,
+        action: IntentAction::Execute(ExecuteIntent::MintVdot(
+            VdotOrderExecuteIntent {
+                amount: AssetKey::Dot.units(1),
+                max_payment_amount: 200_000_000,
+                recipient: "0x1111111111111111111111111111111111111111".to_owned(),
+                adapter_address: "0x2222222222222222222222222222222222222222".to_owned(),
+                gas_limit: 500_000,
+                fallback_weight: XcmWeight {
+                    ref_time: 650_000_000,
+                    proof_size: 12_288,
+                },
+                remark: "xroute".to_owned(),
+                channel_id: 0,
+            },
+        )),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let error = engine
+        .quote(intent)
+        .expect_err("mint-vdot should stay disabled until live pricing is loaded");
+    assert!(matches!(
+        error,
+        route_engine::RouteError::UnsupportedExecuteRoute { .. }
+    ));
+}
+
+#[test]
+fn rejects_redeem_vdot_without_a_supported_execution_budget_asset() {
+    let engine = mainnet_engine();
+    let intent = Intent {
+        source_chain: ChainKey::Bifrost,
+        destination_chain: ChainKey::Moonbeam,
+        action: IntentAction::Execute(ExecuteIntent::RedeemVdot(
+            VdotOrderExecuteIntent {
+                amount: AssetKey::Vdot.units(1),
+                max_payment_amount: 200_000_000,
+                recipient: "0x1111111111111111111111111111111111111111".to_owned(),
+                adapter_address: "0x2222222222222222222222222222222222222222".to_owned(),
+                gas_limit: 500_000,
+                fallback_weight: XcmWeight {
+                    ref_time: 650_000_000,
+                    proof_size: 12_288,
+                },
+                remark: "xroute".to_owned(),
+                channel_id: 0,
+            },
+        )),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let error = engine
+        .quote(intent)
+        .expect_err("redeem-vdot should be rejected until fee asset support is added");
+    assert!(matches!(
+        error,
+        route_engine::RouteError::UnsupportedExecuteRoute { .. }
+    ));
 }

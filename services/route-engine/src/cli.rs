@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use route_engine::{
-    AssetAmount, AssetKey, ChainKey, DeploymentProfile, EngineSettings,
-    EvmContractCallExecuteIntent, ExecuteIntent, ExecutionPlan, ExecutionType, FeeBreakdown,
+    AssetAmount, AssetKey, CallExecuteIntent, ChainKey, DeploymentProfile, EngineSettings,
+    ExecuteIntent, ExecutionPlan, ExecutionType, FeeBreakdown,
     FeeType, Intent, IntentAction, PlanStep, Quote, RouteEngine, RouteHop, RouteRegistry,
-    RouteSegment, RouteSegmentKind, RuntimeCallExecuteIntent, RuntimeCallOriginKind,
-    SubmissionAction, SwapIntent, TransferIntent, XcmInstruction, XcmWeight,
+    RouteSegment, RouteSegmentKind, SubmissionAction, SwapIntent, TransferIntent,
+    VdotOrderExecuteIntent, XcmInstruction, XcmWeight,
 };
 
 pub fn run() -> Result<(), String> {
@@ -128,6 +128,7 @@ fn parse_asset(value: &str) -> Result<AssetKey, String> {
         "DOT" => Ok(AssetKey::Dot),
         "USDT" => Ok(AssetKey::Usdt),
         "HDX" => Ok(AssetKey::Hdx),
+        "VDOT" => Ok(AssetKey::Vdot),
         other => Err(format!("unsupported asset: {other}")),
     }
 }
@@ -141,19 +142,10 @@ fn parse_deployment_profile(value: &str) -> Result<DeploymentProfile, String> {
 
 fn parse_execution_type(value: &str) -> Result<ExecutionType, String> {
     match value {
-        "runtime-call" => Ok(ExecutionType::RuntimeCall),
-        "evm-contract-call" => Ok(ExecutionType::EvmContractCall),
+        "call" => Ok(ExecutionType::Call),
+        "mint-vdot" => Ok(ExecutionType::MintVdot),
+        "redeem-vdot" => Ok(ExecutionType::RedeemVdot),
         other => Err(format!("unsupported execution type: {other}")),
-    }
-}
-
-fn parse_origin_kind(value: &str) -> Result<RuntimeCallOriginKind, String> {
-    match value {
-        "sovereign-account" => Ok(RuntimeCallOriginKind::SovereignAccount),
-        "xcm" => Ok(RuntimeCallOriginKind::Xcm),
-        "native" => Ok(RuntimeCallOriginKind::Native),
-        "superuser" => Ok(RuntimeCallOriginKind::Superuser),
-        other => Err(format!("unsupported origin kind: {other}")),
     }
 }
 
@@ -204,23 +196,8 @@ fn build_execute_intent(options: &HashMap<String, String>) -> Result<ExecuteInte
     };
 
     match execution_type {
-        ExecutionType::RuntimeCall => Ok(ExecuteIntent::RuntimeCall(RuntimeCallExecuteIntent {
-            asset: parse_asset(required(options, "asset")?)?,
-            max_payment_amount: parse_u128(
-                required(options, "max-payment-amount")?,
-                "max-payment-amount",
-            )?,
-            call_data: parse_hex_string(required(options, "call-data")?, "call-data")?,
-            origin_kind: options
-                .get("origin-kind")
-                .map(String::as_str)
-                .map(parse_origin_kind)
-                .transpose()?
-                .unwrap_or(RuntimeCallOriginKind::SovereignAccount),
-            fallback_weight,
-        })),
-        ExecutionType::EvmContractCall => Ok(ExecuteIntent::EvmContractCall(
-            EvmContractCallExecuteIntent {
+        ExecutionType::Call => Ok(ExecuteIntent::Call(
+            CallExecuteIntent {
                 asset: parse_asset(required(options, "asset")?)?,
                 max_payment_amount: parse_u128(
                     required(options, "max-payment-amount")?,
@@ -241,7 +218,42 @@ fn build_execute_intent(options: &HashMap<String, String>) -> Result<ExecuteInte
                 fallback_weight,
             },
         )),
+        ExecutionType::MintVdot | ExecutionType::RedeemVdot => {
+            let order = VdotOrderExecuteIntent {
+                amount: parse_u128(required(options, "amount")?, "amount")?,
+                max_payment_amount: parse_u128(
+                    required(options, "max-payment-amount")?,
+                    "max-payment-amount",
+                )?,
+                recipient: parse_h160_string(required(options, "recipient")?, "recipient")?,
+                adapter_address: parse_h160_string(
+                    required(options, "adapter-address")?,
+                    "adapter-address",
+                )?,
+                gas_limit: parse_u64(required(options, "gas-limit")?, "gas-limit")?,
+                fallback_weight,
+                remark: parse_remark(required(options, "remark")?, "remark")?,
+                channel_id: required(options, "channel-id")?
+                    .parse::<u32>()
+                    .map_err(|_| "channel-id must be an unsigned integer".to_owned())?,
+            };
+
+            Ok(match execution_type {
+                ExecutionType::MintVdot => ExecuteIntent::MintVdot(order),
+                ExecutionType::RedeemVdot => ExecuteIntent::RedeemVdot(order),
+                ExecutionType::Call => unreachable!(),
+            })
+        }
     }
+}
+
+fn parse_remark(value: &str, name: &str) -> Result<String, String> {
+    let normalized = value.trim().to_owned();
+    if normalized.is_empty() || normalized.len() > 32 {
+        return Err(format!("{name} must be between 1 and 32 characters"));
+    }
+
+    Ok(normalized)
 }
 
 fn quote_to_json(quote: &Quote) -> String {
@@ -584,8 +596,9 @@ fn usage() -> String {
         "action flags:",
         "  transfer: --asset <symbol> --amount <units> --recipient <address>",
         "  swap: --asset-in <symbol> --asset-out <symbol> --amount-in <units> --min-amount-out <units> --recipient <address> [--settlement-chain <chain>]",
-        "  execute/runtime-call: --execution-type runtime-call --asset <symbol> --max-payment-amount <units> --call-data <hex> --fallback-ref-time <u64> --fallback-proof-size <u64> [--origin-kind <sovereign-account|xcm|native|superuser>]",
-        "  execute/evm-contract-call: --execution-type evm-contract-call --asset <symbol> --max-payment-amount <units> --contract-address <0x...> --calldata <hex> --gas-limit <u64> [--value <u128>] --fallback-ref-time <u64> --fallback-proof-size <u64>",
+        "  execute/call: --execution-type call --asset <symbol> --max-payment-amount <units> --contract-address <0x...> --calldata <hex> --gas-limit <u64> [--value <u128>] --fallback-ref-time <u64> --fallback-proof-size <u64>",
+        "  execute/mint-vdot: --execution-type mint-vdot --amount <units> --max-payment-amount <units> --recipient <0x...> --adapter-address <0x...> --gas-limit <u64> --remark <text> --channel-id <u32> --fallback-ref-time <u64> --fallback-proof-size <u64>",
+        "  execute/redeem-vdot: --execution-type redeem-vdot --amount <units> --max-payment-amount <units> --recipient <0x...> --adapter-address <0x...> --gas-limit <u64> --remark <text> --channel-id <u32> --fallback-ref-time <u64> --fallback-proof-size <u64>",
     ]
     .join("\n")
 }

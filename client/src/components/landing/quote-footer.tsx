@@ -1,29 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+
+import type { QuoteResponse } from "@/lib/xroute/client";
 
 type AssetAmount = {
   asset: string;
   amount: bigint;
 };
 
-export type QuoteSnapshot = {
-  totalFee: AssetAmount;
-  breakdown: readonly {
-    label: string;
-    fee: AssetAmount;
-  }[];
-};
-
 type QuoteFooterProps = {
-  quotes: readonly QuoteSnapshot[];
-  windowSeconds?: number;
+  quote: QuoteResponse["quote"] | null;
 };
 
 const ASSET_DECIMALS: Record<string, number> = {
   DOT: 10,
   USDT: 6,
   HDX: 12,
+  VDOT: 10,
 };
 
 function formatAssetAmount({ asset, amount }: AssetAmount) {
@@ -41,76 +35,77 @@ function formatAssetAmount({ asset, amount }: AssetAmount) {
   return `${whole.toString()}.${paddedFraction} ${asset}`;
 }
 
-export function QuoteFooter({
-  quotes,
-  windowSeconds = 18,
-}: QuoteFooterProps) {
-  const [quoteIndex, setQuoteIndex] = useState(0);
-  const [secondsLeft, setSecondsLeft] = useState(windowSeconds);
-  const [isOpen, setIsOpen] = useState(false);
+function toAmount(input?: { asset: string; amount: string } | null): AssetAmount | null {
+  if (!input?.asset || input.amount === undefined) {
+    return null;
+  }
 
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setSecondsLeft((current) => {
-        if (current <= 1) {
-          setQuoteIndex((index) => (index + 1) % quotes.length);
-          return windowSeconds;
-        }
+  return {
+    asset: input.asset,
+    amount: BigInt(input.amount),
+  };
+}
 
-        return current - 1;
-      });
-    }, 1000);
+export function QuoteFooter({ quote }: QuoteFooterProps) {
+  const [showBreakdown, setShowBreakdown] = useState(false);
 
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [quotes.length, windowSeconds]);
+  if (!quote) {
+    return null;
+  }
 
-  const activeQuote = quotes[quoteIndex] ?? quotes[0];
+  const totalFee = toAmount(quote.fees.totalFee);
+  const xcmFee = toAmount(quote.fees.xcmFee);
+  const destinationFee = toAmount(quote.fees.destinationFee);
+  const platformFee = toAmount(quote.fees.platformFee);
+
+  if (!totalFee || !xcmFee || !destinationFee || !platformFee) {
+    return null;
+  }
+
+  const breakdown = [
+    { label: "XCM fee", fee: xcmFee },
+    { label: "Destination fee", fee: destinationFee },
+    { label: "Platform fee", fee: platformFee },
+  ];
 
   return (
     <div className="rounded-[18px] border border-line bg-white/62 px-4 py-3.5 sm:px-5">
       <button
         type="button"
-        className="flex w-full items-center justify-between gap-4 rounded-2xl bg-transparent px-0 py-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/30 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
-        onClick={() => setIsOpen((current) => !current)}
-        aria-expanded={isOpen}
+        className="flex w-full items-center justify-between gap-4 text-left"
+        onClick={() => setShowBreakdown((current) => !current)}
+        aria-expanded={showBreakdown}
       >
         <div className="min-w-0">
           <p className="text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-muted">
             Total fee
           </p>
           <p className="mt-1 text-lg font-extrabold tracking-[-0.04em] text-ink">
-            {formatAssetAmount(activeQuote.totalFee)}
+            {formatAssetAmount(totalFee)}
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          <span className="text-[0.68rem] font-medium uppercase tracking-[0.12em] text-muted">
-            refresh {secondsLeft}s
-          </span>
-          <svg
-            aria-hidden="true"
-            viewBox="0 0 12 8"
-            className={`h-3 w-3 shrink-0 text-muted transition-transform duration-150 ${
-              isOpen ? "rotate-180" : ""
-            }`}
-            fill="none"
-          >
-            <path
-              d="M1 1.5L6 6.5L11 1.5"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </div>
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 12 8"
+          className={`h-3.5 w-3.5 shrink-0 text-muted transition-transform duration-150 ${
+            showBreakdown ? "rotate-180" : ""
+          }`}
+          fill="none"
+        >
+          <path
+            d="M1 1.5L6 6.5L11 1.5"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
       </button>
 
-      {isOpen ? (
+      {showBreakdown ? (
         <div className="mt-3 space-y-2 border-t border-line/70 pt-3 text-sm">
-          {activeQuote.breakdown.map((entry) => (
+          {breakdown.map((entry) => (
             <div
               key={`${entry.label}-${entry.fee.asset}-${entry.fee.amount.toString()}`}
               className="flex items-center justify-between gap-4"

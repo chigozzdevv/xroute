@@ -32,21 +32,23 @@ Swaps:
 
 - `DOT -> USDT` on `hydration`
 - `DOT -> HDX` on `hydration`
-- settlement on `hydration` or `polkadot-hub`
+- `DOT -> USDT` settles on `hydration` or `polkadot-hub`
+- `DOT -> HDX` settles on `hydration`
 - multihop `moonbeam -> polkadot-hub -> hydration -> polkadot-hub`
 
 Execute:
 
-- `runtime-call` on `hydration`
-- `runtime-call` on `moonbeam`
-- `evm-contract-call` on `moonbeam`
+- `call` on `moonbeam`
+- `mint-vdot` on `moonbeam` via the Moonbeam SLPx adapter
 - multihop `hydration -> polkadot-hub -> moonbeam`
+- multihop `bifrost -> polkadot-hub -> moonbeam`
 
 Assets:
 
 - `DOT`
 - `USDT`
 - `HDX`
+- `VDOT`
 
 ## Architecture
 
@@ -109,6 +111,13 @@ npm run deploy:mainnet-hub
 npm run deploy:mainnet-moonbeam
 ```
 
+Moonbeam adapter deployment inputs:
+
+- `XROUTE_MOONBEAM_SLPX_ADDRESS`
+- `XROUTE_MOONBEAM_XCDOT_ASSET_ADDRESS`
+- `XROUTE_MOONBEAM_VDOT_ASSET_ADDRESS`
+- `XROUTE_MOONBEAM_SLPX_DEST_CHAIN_ID`
+
 Smoke and proof runs:
 
 ```bash
@@ -141,9 +150,9 @@ Hub router:
 ```bash
 XROUTE_ALLOW_LIVE_DEPLOY=true \
 XROUTE_DEPLOYMENT_CHAIN_KEY=polkadot-hub \
-XROUTE_RPC_URL="<POLKADOT_HUB_RPC>" \
+XROUTE_HUB_RPC_URL="<POLKADOT_HUB_RPC>" \
 XROUTE_DEPLOYER_PRIVATE_KEY="<HUB_ADMIN_DEPLOYER_KEY>" \
-XROUTE_ROUTER_EXECUTOR="<HUB_EXECUTOR_ADDRESS>" \
+XROUTE_HUB_PRIVATE_KEY="<HUB_EXECUTOR_KEY>" \
 XROUTE_ROUTER_TREASURY="<TREASURY_ADDRESS>" \
 node scripts/deploy-stack.mjs
 ```
@@ -153,14 +162,14 @@ Moonbeam router:
 ```bash
 XROUTE_ALLOW_LIVE_DEPLOY=true \
 XROUTE_DEPLOYMENT_CHAIN_KEY=moonbeam \
-XROUTE_RPC_URL="<MOONBEAM_RPC>" \
+XROUTE_MOONBEAM_RPC_URL="<MOONBEAM_RPC>" \
 XROUTE_DEPLOYER_PRIVATE_KEY="<MOONBEAM_ADMIN_DEPLOYER_KEY>" \
-XROUTE_ROUTER_EXECUTOR="<MOONBEAM_EXECUTOR_ADDRESS>" \
+XROUTE_MOONBEAM_PRIVATE_KEY="<MOONBEAM_EXECUTOR_KEY>" \
 XROUTE_ROUTER_TREASURY="<TREASURY_ADDRESS>" \
 node scripts/deploy-stack.mjs
 ```
 
-The deployer/admin key is not the executor. Deployments require explicit executor and treasury addresses, and the deploy script rejects overlapping admin, executor, and treasury roles.
+The deployer/admin key is not the executor. Deployments derive the router executor address from the chain executor key and reject overlapping admin, executor, and treasury roles.
 
 ## Service Configuration
 
@@ -180,8 +189,8 @@ The quote service is fail-closed. `XROUTE_LIVE_QUOTE_INPUTS_FAIL_OPEN=true` is r
 - `XROUTE_WORKSPACE_ROOT`
 - `XROUTE_RELAYER_AUTH_TOKEN`
 - Hub execution context:
-  - `XROUTE_RPC_URL`
-  - `XROUTE_PRIVATE_KEY` (`HUB_EXECUTOR_KEY`)
+  - `XROUTE_HUB_RPC_URL`
+  - `XROUTE_HUB_PRIVATE_KEY` (`HUB_EXECUTOR_KEY`)
 - Moonbeam execution context:
   - `XROUTE_MOONBEAM_RPC_URL`
   - `XROUTE_MOONBEAM_PRIVATE_KEY` (`MOONBEAM_EXECUTOR_KEY`)
@@ -201,7 +210,7 @@ Quote service:
 
 ```bash
 XROUTE_WORKSPACE_ROOT="$(pwd)" \
-XROUTE_LIVE_QUOTE_INPUTS_COMMAND="<YOUR_LIVE_INPUT_GENERATOR>" \
+XROUTE_LIVE_QUOTE_INPUTS_COMMAND="node $(pwd)/scripts/fetch-live-quote-inputs.mjs" \
 cargo run -q -p quote-service --
 ```
 
@@ -210,8 +219,8 @@ Executor relayer:
 ```bash
 XROUTE_WORKSPACE_ROOT="$(pwd)" \
 XROUTE_RELAYER_AUTH_TOKEN="<RELAYER_TOKEN>" \
-XROUTE_RPC_URL="<POLKADOT_HUB_RPC>" \
-XROUTE_PRIVATE_KEY="<HUB_OPERATOR_KEY>" \
+XROUTE_HUB_RPC_URL="<POLKADOT_HUB_RPC>" \
+XROUTE_HUB_PRIVATE_KEY="<HUB_OPERATOR_KEY>" \
 XROUTE_MOONBEAM_RPC_URL="<MOONBEAM_RPC>" \
 XROUTE_MOONBEAM_PRIVATE_KEY="<MOONBEAM_OPERATOR_KEY>" \
 XROUTE_HYDRATION_RPC_URL="<HYDRATION_RPC>" \
@@ -225,6 +234,12 @@ cargo run -q -p executor-relayer --
 
 - Refunds are full-refund only for failed intents.
 - Mainnet quote inputs must be live; static fallback is not allowed.
-- `execute/evm-contract-call` should be protected with a Moonbeam execution allowlist policy.
+- `scripts/fetch-live-quote-inputs.mjs` pulls live inputs from:
+  - Polkadot Hub `XcmPaymentApi`
+  - Hydration Omnipool oracle precompiles
+  - Moonbeam XCM payment APIs
+  - Bifrost vDOT pricing via the official Moonbeam XCM oracle mirror
+- `execute/call` should be protected with a Moonbeam execution allowlist policy.
+- `execute/mint-vdot` submits a Moonbeam SLPx order; it is an async asset-order flow, not immediate final asset settlement.
 - The relayer should stay behind auth, rate limits, and your own control plane.
 - Keep the deployer/admin key cold and separate from the relayer executor keys.

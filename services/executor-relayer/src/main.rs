@@ -52,6 +52,7 @@ struct RelayerState {
     deployment_profile: DeploymentProfile,
     max_body_bytes: usize,
     auth_token: String,
+    api_key: Option<String>,
     primary_chain_key: String,
     primary_execution_context: ExecutionContext,
     execution_contexts: BTreeMap<String, ExecutionContext>,
@@ -135,8 +136,12 @@ fn load_state() -> Result<RelayerState, String> {
         "XROUTE_RELAYER_MAX_BODY_BYTES",
     )?;
     let auth_token = required_env("XROUTE_RELAYER_AUTH_TOKEN")?;
-    let rpc_url = required_env("XROUTE_RPC_URL")?;
-    let private_key = required_env("XROUTE_PRIVATE_KEY")?;
+    let api_key = env::var("XROUTE_API_KEY")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    let rpc_url = required_env("XROUTE_HUB_RPC_URL")?;
+    let private_key = required_env("XROUTE_HUB_PRIVATE_KEY")?;
     let workspace_root = resolve_workspace_root(env::var("XROUTE_WORKSPACE_ROOT").ok().as_deref());
     let deployment = load_hub_deployment_artifact(&workspace_root, deployment_profile).ok();
     let primary_chain_key = env::var("XROUTE_DEFAULT_SOURCE_CHAIN")
@@ -225,6 +230,7 @@ fn load_state() -> Result<RelayerState, String> {
         deployment_profile,
         max_body_bytes,
         auth_token,
+        api_key,
         primary_chain_key,
         primary_execution_context,
         execution_contexts,
@@ -278,7 +284,8 @@ async fn route_request(
     request: Request<Body>,
     state: Arc<RelayerState>,
 ) -> Result<Response<Body>, HttpError> {
-    match (request.method(), request.uri().path()) {
+    let normalized_path = normalize_public_path(request.uri().path()).to_owned();
+    match (request.method(), normalized_path.as_str()) {
         (&Method::GET, "/healthz") => {
             let jobs = state.job_store.list().await;
             let summary = summarize_jobs(&jobs);
@@ -296,9 +303,25 @@ async fn route_request(
                 ),
             ))
         }
+        (&Method::GET, path) if path.starts_with("/intents/") && path.ends_with("/status") => {
+            assert_request_read_auth(&request, state.api_key.as_deref())?;
+            let intent_id = path
+                .strip_prefix("/intents/")
+                .and_then(|rest| rest.strip_suffix("/status"))
+                .unwrap_or("");
+            handle_intent_status(intent_id, &state).await
+        }
+        (&Method::GET, path) if path.starts_with("/intents/") && path.ends_with("/timeline") => {
+            assert_request_read_auth(&request, state.api_key.as_deref())?;
+            let intent_id = path
+                .strip_prefix("/intents/")
+                .and_then(|rest| rest.strip_suffix("/timeline"))
+                .unwrap_or("");
+            handle_intent_timeline(intent_id, &state).await
+        }
         _ => {
-            assert_bearer_token(&request, &state.auth_token)?;
-            route_authenticated_request(request, state).await
+            assert_request_auth(&request, &state.auth_token, state.api_key.as_deref())?;
+            route_authenticated_request(request, state, normalized_path).await
         }
     }
 }
@@ -306,8 +329,9 @@ async fn route_request(
 async fn route_authenticated_request(
     request: Request<Body>,
     state: Arc<RelayerState>,
+    normalized_path: String,
 ) -> Result<Response<Body>, HttpError> {
-    match (request.method(), request.uri().path()) {
+    match (request.method(), normalized_path.as_str()) {
         (&Method::GET, "/jobs") => {
             let mut jobs = state.job_store.list().await;
             jobs.sort_by(compare_jobs);
@@ -436,6 +460,183 @@ async fn route_authenticated_request(
             }),
         )),
     }
+}
+
+fn normalize_public_path(path: &str) -> &str {
+    if let Some(stripped) = path.strip_prefix("/v1") {
+        if stripped.is_empty() {
+            "/"
+        } else {
+            stripped
+        }
+    } else {
+        path
+    }
+}
+
+fn assert_request_auth(
+    request: &Request<Body>,
+    auth_token: &str,
+    api_key: Option<&str>,
+) -> Result<(), HttpError> {
+    if assert_bearer_token(request, auth_token).is_ok() {
+        return Ok(());
+    }
+
+    if let Some(expected_api_key) = api_key {
+        let provided = request
+            .headers()
+            .get("x-api-key")
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if provided == Some(expected_api_key) {
+            return Ok(());
+        }
+    }
+
+    Err(HttpError::new(StatusCode::UNAUTHORIZED, "unauthorized"))
+}
+
+fn assert_request_read_auth(
+    request: &Request<Body>,
+    api_key: Option<&str>,
+) -> Result<(), HttpError> {
+    if let Some(expected_api_key) = api_key {
+        let provided = request
+            .headers()
+            .get("x-api-key")
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if provided == Some(expected_api_key) {
+            return Ok(());
+        }
+
+        return Err(HttpError::new(StatusCode::UNAUTHORIZED, "unauthorized"));
+    }
+
+    Ok(())
+}
+
+async fn handle_intent_status(
+    intent_id: &str,
+    state: &RelayerState,
+) -> Result<Response<Body>, HttpError> {
+    if intent_id.is_empty() {
+        return Err(HttpError::bad_request("intentId is required"));
+    }
+
+    let events = read_intent_events_from_log(&state.event_log_path, intent_id);
+    let source_intent = state.job_store.source_intent(intent_id).await;
+
+    if events.is_empty() && source_intent.is_none() {
+        return Err(HttpError::new(StatusCode::NOT_FOUND, "intent-not-found"));
+    }
+
+    let status = build_intent_status(intent_id, &events, source_intent.as_ref());
+    Ok(json_response(StatusCode::OK, &status))
+}
+
+async fn handle_intent_timeline(
+    intent_id: &str,
+    state: &RelayerState,
+) -> Result<Response<Body>, HttpError> {
+    if intent_id.is_empty() {
+        return Err(HttpError::bad_request("intentId is required"));
+    }
+
+    let events = read_intent_events_from_log(&state.event_log_path, intent_id);
+    let source_intent = state.job_store.source_intent(intent_id).await;
+
+    if events.is_empty() && source_intent.is_none() {
+        return Err(HttpError::new(StatusCode::NOT_FOUND, "intent-not-found"));
+    }
+
+    Ok(json_response(StatusCode::OK, &json!({ "timeline": events })))
+}
+
+fn read_intent_events_from_log(event_log_path: &Path, intent_id: &str) -> Vec<Value> {
+    let raw = match std::fs::read_to_string(event_log_path) {
+        Ok(content) => content,
+        Err(_) => return Vec::new(),
+    };
+
+    raw.lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|event| {
+            event
+                .get("intentId")
+                .and_then(Value::as_str)
+                .map(|id| id == intent_id)
+                .unwrap_or(false)
+        })
+        .collect()
+}
+
+fn build_intent_status(
+    intent_id: &str,
+    events: &[Value],
+    source_intent: Option<&SourceIntentRecord>,
+) -> Value {
+    let mut status = "unknown";
+    let mut result: Option<Value> = None;
+    let mut failure_reason: Option<String> = None;
+    let mut refund: Option<Value> = None;
+
+    for event in events {
+        let event_type = event
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        match event_type {
+            "intent-submitted" => status = "submitted",
+            "intent-dispatched" => status = "dispatched",
+            "destination-execution-started" => status = "executing",
+            "destination-execution-succeeded" => {
+                status = "settled";
+                result = event.get("result").cloned().or_else(|| {
+                    Some(json!({
+                        "asset": event.get("resultAsset").or_else(|| event.get("result").and_then(|r| r.get("resultAssetId"))),
+                        "amount": event.get("resultAmount").or_else(|| event.get("result").and_then(|r| r.get("resultAmount"))),
+                    }))
+                });
+                failure_reason = None;
+            }
+            "destination-execution-failed" => {
+                status = "failed";
+                failure_reason = event
+                    .get("reason")
+                    .or_else(|| event.get("result").and_then(|r| r.get("failureReasonHash")))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+            }
+            "intent-cancelled" => status = "cancelled",
+            "refund-issued" => {
+                status = "refunded";
+                refund = Some(json!({
+                    "asset": event.get("refundAsset").or_else(|| event.get("result").and_then(|r| r.get("refundAsset"))),
+                    "amount": event.get("refundAmount").or_else(|| event.get("result").and_then(|r| r.get("refundAmount"))),
+                }));
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(record) = source_intent {
+        if status == "unknown" {
+            status = source_intent_status_label(&record.status);
+        }
+    }
+
+    json!({
+        "intentId": intent_id,
+        "status": status,
+        "result": result,
+        "failureReason": failure_reason,
+        "refund": refund,
+    })
 }
 
 async fn enqueue_job(
@@ -1152,27 +1353,6 @@ fn should_use_external_settlement(
         .map_err(|error| format!("invalid status in getIntent tuple: {error}"))?;
 
     Ok(status == 1 && asset == "0x0000000000000000000000000000000000000000")
-}
-
-fn intent_payment_asset(wire_intent: &WireIntent) -> Option<&str> {
-    match wire_intent.action.action_type.as_str() {
-        "transfer" => wire_intent
-            .action
-            .params
-            .get("asset")
-            .and_then(Value::as_str),
-        "swap" => wire_intent
-            .action
-            .params
-            .get("assetIn")
-            .and_then(Value::as_str),
-        "execute" => wire_intent
-            .action
-            .params
-            .get("asset")
-            .and_then(Value::as_str),
-        _ => None,
-    }
 }
 
 impl RelayerState {

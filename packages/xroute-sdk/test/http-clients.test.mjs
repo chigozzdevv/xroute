@@ -4,13 +4,79 @@ import assert from "node:assert/strict";
 import {
   createHttpExecutorRelayerClient,
   createHttpQuoteProvider,
+  createXRouteClient,
 } from "../index.mjs";
+
+test("createXRouteClient uses the hosted base url for quote requests", async () => {
+  const seen = [];
+  const client = createXRouteClient({
+    apiKey: "public-test-key",
+    baseUrl: "https://example.test/v1",
+    fetchImpl: async (url, request) => {
+      seen.push([url, request]);
+      return {
+        ok: true,
+        async json() {
+          return {
+            quote: {
+              quoteId: "ignored",
+              deploymentProfile: "mainnet",
+              route: ["polkadot-hub", "hydration"],
+              segments: [],
+              fees: {
+                xcmFee: { asset: "DOT", amount: "1" },
+                destinationFee: { asset: "DOT", amount: "2" },
+                platformFee: { asset: "DOT", amount: "3" },
+                totalFee: { asset: "DOT", amount: "6" },
+              },
+              expectedOutput: { asset: "DOT", amount: "10" },
+              minOutput: { asset: "DOT", amount: "10" },
+              submission: {
+                action: "transfer",
+                asset: "DOT",
+                amount: "10",
+                xcmFee: "1",
+                destinationFee: "2",
+                minOutputAmount: "10",
+              },
+              executionPlan: {
+                route: ["polkadot-hub", "hydration"],
+                steps: [],
+              },
+            },
+          };
+        },
+      };
+    },
+  });
+
+  const quoted = await client.quote({
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    refundAddress: "0x1111111111111111111111111111111111111111",
+    deadline: 1_773_185_200,
+    action: {
+      type: "transfer",
+      params: {
+        asset: "DOT",
+        amount: "10",
+        recipient: "5Frecipient",
+      },
+    },
+  });
+
+  assert.equal(quoted.quote.submission.action, "transfer");
+  assert.equal(seen[0][0], "https://example.test/v1/quote");
+  assert.equal(seen[0][1].headers["x-api-key"], "public-test-key");
+});
 
 test("createHttpQuoteProvider returns the nested quote payload", async () => {
   const provider = createHttpQuoteProvider({
     endpoint: "https://example.test/quote",
+    apiKey: "public-test-key",
     fetchImpl: async (_url, request) => {
       assert.equal(request.method, "POST");
+      assert.equal(request.headers["x-api-key"], "public-test-key");
       return {
         ok: true,
         async json() {
@@ -74,6 +140,7 @@ test("createHttpExecutorRelayerClient sends relayer job requests", async () => {
   const seen = [];
   const client = createHttpExecutorRelayerClient({
     endpoint: "https://example.test",
+    apiKey: "public-test-key",
     authToken: "secret-token",
     fetchImpl: async (url, request) => {
       seen.push([url, request]);
@@ -100,6 +167,7 @@ test("createHttpExecutorRelayerClient sends relayer job requests", async () => {
   assert.equal(response.job.id, "job-1");
   assert.equal(seen.length, 1);
   assert.equal(seen[0][0], "https://example.test/jobs/refund");
+  assert.equal(seen[0][1].headers["x-api-key"], "public-test-key");
   assert.equal(seen[0][1].headers.authorization, "Bearer secret-token");
 });
 
@@ -260,7 +328,7 @@ test("createHttpExecutorRelayerClient registers pre-broadcast hydration dispatch
       action: {
         type: "execute",
         params: {
-          executionType: "evm-contract-call",
+          executionType: "call",
           asset: "DOT",
           maxPaymentAmount: "200000000",
           contractAddress: "0x1111111111111111111111111111111111111111",
@@ -352,7 +420,7 @@ test("createHttpExecutorRelayerClient sends hydration source metadata without so
       action: {
         type: "execute",
         params: {
-          executionType: "evm-contract-call",
+          executionType: "call",
           asset: "DOT",
           maxPaymentAmount: "200000000",
           contractAddress: "0x1111111111111111111111111111111111111111",

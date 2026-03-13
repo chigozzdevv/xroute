@@ -64,6 +64,7 @@ pub enum AssetKey {
     Dot,
     Usdt,
     Hdx,
+    Vdot,
 }
 
 impl AssetKey {
@@ -72,6 +73,7 @@ impl AssetKey {
             Self::Dot => "DOT",
             Self::Usdt => "USDT",
             Self::Hdx => "HDX",
+            Self::Vdot => "VDOT",
         }
     }
 
@@ -80,6 +82,7 @@ impl AssetKey {
             Self::Dot => 10,
             Self::Usdt => 6,
             Self::Hdx => 12,
+            Self::Vdot => 10,
         }
     }
 
@@ -88,6 +91,7 @@ impl AssetKey {
             Self::Dot => ChainKey::PolkadotHub,
             Self::Usdt => ChainKey::PolkadotHub,
             Self::Hdx => ChainKey::Hydration,
+            Self::Vdot => ChainKey::Bifrost,
         }
     }
 
@@ -108,6 +112,7 @@ impl FromStr for AssetKey {
             "DOT" => Ok(Self::Dot),
             "USDT" => Ok(Self::Usdt),
             "HDX" => Ok(Self::Hdx),
+            "VDOT" => Ok(Self::Vdot),
             other => Err(format!("unsupported asset: {other}")),
         }
     }
@@ -209,92 +214,92 @@ pub struct SwapIntent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExecuteIntent {
-    RuntimeCall(RuntimeCallExecuteIntent),
-    EvmContractCall(EvmContractCallExecuteIntent),
+    Call(CallExecuteIntent),
+    MintVdot(VdotOrderExecuteIntent),
+    RedeemVdot(VdotOrderExecuteIntent),
 }
 
 impl ExecuteIntent {
     pub fn execution_type(&self) -> ExecutionType {
         match self {
-            Self::RuntimeCall(_) => ExecutionType::RuntimeCall,
-            Self::EvmContractCall(_) => ExecutionType::EvmContractCall,
+            Self::Call(_) => ExecutionType::Call,
+            Self::MintVdot(_) => ExecutionType::MintVdot,
+            Self::RedeemVdot(_) => ExecutionType::RedeemVdot,
         }
     }
 
     pub fn asset(&self) -> AssetKey {
         match self {
-            Self::RuntimeCall(intent) => intent.asset,
-            Self::EvmContractCall(intent) => intent.asset,
+            Self::Call(intent) => intent.asset,
+            Self::MintVdot(_) => AssetKey::Dot,
+            Self::RedeemVdot(_) => AssetKey::Vdot,
         }
     }
 
     pub fn max_payment_amount(&self) -> u128 {
         match self {
-            Self::RuntimeCall(intent) => intent.max_payment_amount,
-            Self::EvmContractCall(intent) => intent.max_payment_amount,
-        }
-    }
-
-    pub fn origin_kind(&self) -> RuntimeCallOriginKind {
-        match self {
-            Self::RuntimeCall(intent) => intent.origin_kind,
-            Self::EvmContractCall(_) => {
-                RuntimeCallOriginKind::SovereignAccount
-            }
+            Self::Call(intent) => intent.max_payment_amount,
+            Self::MintVdot(intent) | Self::RedeemVdot(intent) => intent.max_payment_amount,
         }
     }
 
     pub fn fallback_weight(&self) -> XcmWeight {
         match self {
-            Self::RuntimeCall(intent) => intent.fallback_weight,
-            Self::EvmContractCall(intent) => intent.fallback_weight,
+            Self::Call(intent) => intent.fallback_weight,
+            Self::MintVdot(intent) | Self::RedeemVdot(intent) => intent.fallback_weight,
+        }
+    }
+
+    pub fn gas_limit(&self) -> u64 {
+        match self {
+            Self::Call(intent) => intent.gas_limit,
+            Self::MintVdot(intent) | Self::RedeemVdot(intent) => intent.gas_limit,
         }
     }
 
     pub fn principal_amount(&self) -> AssetAmount {
         match self {
-            Self::RuntimeCall(intent) => AssetAmount::new(intent.asset, 0),
-            Self::EvmContractCall(intent) => AssetAmount::new(intent.asset, 0),
+            Self::Call(intent) => AssetAmount::new(intent.asset, 0),
+            Self::MintVdot(intent) => AssetAmount::new(AssetKey::Dot, intent.amount),
+            Self::RedeemVdot(intent) => AssetAmount::new(AssetKey::Vdot, intent.amount),
         }
     }
 
     pub fn submission_amount(&self, execution_budget: u128) -> u128 {
         match self {
-            Self::RuntimeCall(_) | Self::EvmContractCall(_) => execution_budget,
+            Self::Call(_) => execution_budget,
+            Self::MintVdot(intent) | Self::RedeemVdot(intent) => {
+                intent.amount.saturating_add(execution_budget)
+            }
         }
     }
 
     pub fn destination_fee_amount(&self, _execution_budget: u128) -> u128 {
         match self {
-            Self::RuntimeCall(_) | Self::EvmContractCall(_) => 0,
+            Self::Call(_) | Self::MintVdot(_) | Self::RedeemVdot(_) => 0,
         }
     }
 
     pub fn transfer_amount(&self, execution_budget: u128) -> u128 {
         match self {
-            Self::RuntimeCall(_) | Self::EvmContractCall(_) => execution_budget,
+            Self::Call(_) => execution_budget,
+            Self::MintVdot(intent) | Self::RedeemVdot(intent) => {
+                intent.amount.saturating_add(execution_budget)
+            }
         }
     }
 
     pub fn expected_output(&self) -> AssetAmount {
         match self {
-            Self::RuntimeCall(intent) => AssetAmount::new(intent.asset, 0),
-            Self::EvmContractCall(intent) => AssetAmount::new(intent.asset, 0),
+            Self::Call(intent) => AssetAmount::new(intent.asset, 0),
+            Self::MintVdot(_) => AssetAmount::new(AssetKey::Vdot, 0),
+            Self::RedeemVdot(_) => AssetAmount::new(AssetKey::Dot, 0),
         }
     }
 
     fn canonical_fields(&self) -> String {
         match self {
-            Self::RuntimeCall(intent) => format!(
-                "{}|{}|{}|{}|{}|{}",
-                intent.asset.symbol(),
-                intent.max_payment_amount,
-                intent.call_data,
-                intent.origin_kind.as_str(),
-                intent.fallback_weight.ref_time,
-                intent.fallback_weight.proof_size
-            ),
-            Self::EvmContractCall(intent) => format!(
+            Self::Call(intent) => format!(
                 "{}|{}|{}|{}|{}|{}|{}|{}",
                 intent.asset.symbol(),
                 intent.max_payment_amount,
@@ -305,21 +310,24 @@ impl ExecuteIntent {
                 intent.fallback_weight.ref_time,
                 intent.fallback_weight.proof_size
             ),
+            Self::MintVdot(intent) | Self::RedeemVdot(intent) => format!(
+                "{}|{}|{}|{}|{}|{}|{}|{}|{}",
+                intent.amount,
+                intent.max_payment_amount,
+                intent.recipient,
+                intent.adapter_address,
+                intent.gas_limit,
+                intent.fallback_weight.ref_time,
+                intent.fallback_weight.proof_size,
+                intent.remark,
+                intent.channel_id
+            ),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuntimeCallExecuteIntent {
-    pub asset: AssetKey,
-    pub max_payment_amount: u128,
-    pub call_data: String,
-    pub origin_kind: RuntimeCallOriginKind,
-    pub fallback_weight: XcmWeight,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EvmContractCallExecuteIntent {
+pub struct CallExecuteIntent {
     pub asset: AssetKey,
     pub max_payment_amount: u128,
     pub contract_address: String,
@@ -329,17 +337,44 @@ pub struct EvmContractCallExecuteIntent {
     pub fallback_weight: XcmWeight,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VdotOrderExecuteIntent {
+    pub amount: u128,
+    pub max_payment_amount: u128,
+    pub recipient: String,
+    pub adapter_address: String,
+    pub gas_limit: u64,
+    pub fallback_weight: XcmWeight,
+    pub remark: String,
+    pub channel_id: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionType {
-    RuntimeCall,
-    EvmContractCall,
+    Call,
+    MintVdot,
+    RedeemVdot,
 }
 
 impl ExecutionType {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::RuntimeCall => "runtime-call",
-            Self::EvmContractCall => "evm-contract-call",
+            Self::Call => "call",
+            Self::MintVdot => "mint-vdot",
+            Self::RedeemVdot => "redeem-vdot",
+        }
+    }
+}
+
+impl FromStr for ExecutionType {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim() {
+            "call" => Ok(Self::Call),
+            "mint-vdot" => Ok(Self::MintVdot),
+            "redeem-vdot" => Ok(Self::RedeemVdot),
+            other => Err(format!("unsupported execution type: {other}")),
         }
     }
 }

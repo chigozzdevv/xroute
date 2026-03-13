@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 
-import { createSwapIntent } from "../../xroute-intents/index.mjs";
+import { createExecuteIntent, createSwapIntent } from "../../xroute-intents/index.mjs";
 import { createDispatchEnvelope } from "../../xroute-xcm/index.mjs";
 import { createXRouteClient } from "../index.mjs";
 import {
@@ -205,6 +205,210 @@ test("sdk coordinates quote, submit, dispatch, and status tracking", async () =>
   );
   assert.equal(status.result.amount, 493515000n);
   assert.equal(timeline.length, 4);
+});
+
+test("sdk runFlow sequences swap then execute as separate settled intents", async () => {
+  const indexer = new InMemoryStatusIndexer();
+  let nextAt = 1;
+  let nextSequence = 0;
+  let nextNonce = 0;
+  const records = new Map();
+
+  const quoteProvider = {
+    async quote(intent) {
+      if (intent.action.type === "swap") {
+        return {
+          quoteId: intent.quoteId,
+          deploymentProfile: "mainnet",
+          route: ["moonbeam", "polkadot-hub", "hydration"],
+          fees: {
+            xcmFee: { asset: "DOT", amount: 150000000n },
+            destinationFee: { asset: "DOT", amount: 100000000n },
+            platformFee: { asset: "DOT", amount: 1000000000n },
+            totalFee: { asset: "DOT", amount: 1250000000n },
+          },
+          expectedOutput: { asset: "USDT", amount: 493515000n },
+          minOutput: { asset: "USDT", amount: 490000000n },
+          submission: {
+            action: "swap",
+            asset: "DOT",
+            amount: 1000000000000n,
+            xcmFee: 150000000n,
+            destinationFee: 100000000n,
+            minOutputAmount: 490000000n,
+          },
+          executionPlan: {
+            route: ["moonbeam", "polkadot-hub", "hydration"],
+            steps: [],
+          },
+        };
+      }
+
+      return {
+        quoteId: intent.quoteId,
+        deploymentProfile: "mainnet",
+        route: ["hydration", "polkadot-hub", "moonbeam"],
+        fees: {
+          xcmFee: { asset: "DOT", amount: 150000000n },
+          destinationFee: { asset: "DOT", amount: 200000000n },
+          platformFee: { asset: "DOT", amount: 0n },
+          totalFee: { asset: "DOT", amount: 350000000n },
+        },
+        expectedOutput: { asset: "DOT", amount: 0n },
+        minOutput: null,
+        submission: {
+          action: "execute",
+          asset: "DOT",
+          amount: 200000000n,
+          xcmFee: 150000000n,
+          destinationFee: 200000000n,
+          minOutputAmount: 0n,
+        },
+        executionPlan: {
+          route: ["hydration", "polkadot-hub", "moonbeam"],
+          steps: [],
+        },
+      };
+    },
+  };
+
+  const routerAdapter = {
+    async submitIntent({ owner, intent, quote, request }) {
+      const intentId = `0x${createHash("sha256")
+        .update(`${owner}|${quote.quoteId}|${nextNonce++}|${request.executionHash}`)
+        .digest("hex")}`;
+      records.set(intentId, { owner, intent, quote, request });
+      indexer.ingest(
+        createIntentSubmittedEvent({
+          at: nextAt++,
+          sequence: nextSequence++,
+          intentId,
+          quoteId: quote.quoteId,
+          owner,
+          sourceChain: intent.sourceChain,
+          destinationChain: intent.destinationChain,
+          actionType: intent.action.type,
+          asset: quote.submission.asset,
+          amount: quote.submission.amount,
+        }),
+      );
+      return { intentId, request };
+    },
+
+    async dispatchIntent({ intentId, request }) {
+      const stored = records.get(intentId);
+      assert.ok(stored, "intent must exist before dispatch");
+
+      indexer.ingest(
+        createIntentDispatchedEvent({
+          at: nextAt++,
+          sequence: nextSequence++,
+          intentId,
+          dispatchMode: request.mode === 0 ? "execute" : "send",
+          executionHash: stored.request.executionHash,
+        }),
+      );
+      indexer.ingest(
+        createDestinationExecutionStartedEvent({
+          at: nextAt++,
+          sequence: nextSequence++,
+          intentId,
+        }),
+      );
+
+      queueMicrotask(() => {
+        indexer.ingest(
+          createDestinationExecutionSucceededEvent({
+            at: nextAt++,
+            sequence: nextSequence++,
+            intentId,
+            resultAsset: stored.quote.expectedOutput.asset,
+            resultAmount: stored.quote.expectedOutput.amount,
+            destinationTxHash: `0x${"ab".repeat(32)}`,
+          }),
+        );
+      });
+
+      return { intentId };
+    },
+  };
+
+  const client = createXRouteClient({
+    quoteProvider,
+    routerAdapter,
+    statusProvider: indexer,
+    assetAddressResolver: async () => "0x0000000000000000000000000000000000000000",
+  });
+
+  const owner = "0x1111111111111111111111111111111111111111";
+  const flow = await client.runFlow({
+    owner,
+    timeoutMs: 5_000,
+    pollIntervalMs: 10,
+    steps: [
+      {
+        name: "swap",
+        intent: createSwapIntent({
+          sourceChain: "moonbeam",
+          destinationChain: "hydration",
+          refundAddress: owner,
+          deadline: 1_773_185_200,
+          params: {
+            assetIn: "DOT",
+            assetOut: "USDT",
+            amountIn: "1000000000000",
+            minAmountOut: "490000000",
+            settlementChain: "hydration",
+            recipient: "5Frecipient",
+          },
+        }),
+        envelope: createDispatchEnvelope({
+          mode: "execute",
+          message: "0x1234",
+        }),
+      },
+      {
+        name: "record",
+        intent: ({ previousStep }) => {
+          const amountHex = previousStep.finalStatus.result.amount
+            .toString(16)
+            .padStart(64, "0");
+          return createExecuteIntent({
+            sourceChain: "hydration",
+            destinationChain: "moonbeam",
+            refundAddress: owner,
+            deadline: 1_773_185_200,
+            params: {
+              executionType: "call",
+              asset: "DOT",
+              maxPaymentAmount: "200000000",
+              contractAddress: owner,
+              calldata: `0xdeadbeef${amountHex}`,
+              value: "0",
+              gasLimit: "250000",
+              fallbackWeight: {
+                refTime: 650000000,
+                proofSize: 12288,
+              },
+            },
+          });
+        },
+        envelope: createDispatchEnvelope({
+          mode: "execute",
+          message: "0x5678",
+        }),
+      },
+    ],
+  });
+
+  assert.equal(flow.steps.length, 2);
+  assert.equal(flow.steps[0].name, "swap");
+  assert.equal(flow.steps[0].finalStatus.status, "settled");
+  assert.equal(flow.steps[0].finalStatus.result.amount, 493515000n);
+  assert.equal(flow.steps[1].name, "record");
+  assert.equal(flow.steps[1].intent.action.type, "execute");
+  assert.match(flow.steps[1].intent.action.params.calldata, /^0xdeadbeef[0-9a-f]{64}$/);
+  assert.equal(flow.steps[1].finalStatus.status, "settled");
 });
 
 test("sdk coordinates fail and refund helpers", async () => {

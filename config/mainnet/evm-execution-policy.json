@@ -1,0 +1,7 @@
+{
+  "moonbeam": {
+    "call": {
+      "allowedContracts": []
+    }
+  }
+}

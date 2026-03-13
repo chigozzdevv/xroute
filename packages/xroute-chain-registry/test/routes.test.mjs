@@ -7,6 +7,8 @@ import {
   findTransferPath,
   getAsset,
   getChain,
+  listAssets,
+  listChains,
   listRoutes,
 } from "../index.mjs";
 
@@ -16,6 +18,9 @@ test("mainnet exposes hub, hydration, moonbeam, and bifrost", () => {
   assert.equal(getChain("moonbeam").key, "moonbeam");
   assert.equal(getChain("bifrost").key, "bifrost");
   assert.equal(getAsset("DOT").symbol, "DOT");
+  assert.equal(getAsset("VDOT").symbol, "VDOT");
+  assert.equal(listChains().length, 4);
+  assert.equal(listAssets().length, 4);
   assert.equal(listRoutes().length, 6);
 });
 
@@ -30,6 +35,7 @@ test("findTransferPath composes the supported mainnet multihop spokes", () => {
     "polkadot-hub",
     "moonbeam",
   ]);
+  assert.equal(findTransferPath("hydration", "moonbeam", "VDOT"), null);
 });
 
 test("assertSwapRoute accepts hydration swaps with local or hub settlement", () => {
@@ -51,19 +57,47 @@ test("assertSwapRoute accepts hydration swaps with local or hub settlement", () 
       action: "swap",
     },
   );
+
+  assert.deepEqual(
+    assertSwapRoute("polkadot-hub", "hydration", "DOT", "HDX"),
+    {
+      sourceChain: "polkadot-hub",
+      destinationChain: "hydration",
+      settlementChain: "hydration",
+      executionPath: ["polkadot-hub", "hydration"],
+      action: "swap",
+    },
+  );
+
+  assert.throws(() =>
+    assertSwapRoute("moonbeam", "hydration", "DOT", "HDX", "polkadot-hub"),
+  );
 });
 
 test("assertExecuteRoute accepts mainnet execute targets and rejects unsupported ones", () => {
   assert.deepEqual(
-    assertExecuteRoute("hydration", "moonbeam", "DOT", "evm-contract-call"),
+    assertExecuteRoute("hydration", "moonbeam", "DOT", "call"),
     {
       sourceChain: "hydration",
       destinationChain: "moonbeam",
       path: ["hydration", "polkadot-hub", "moonbeam"],
-      executionType: "evm-contract-call",
+      executionType: "call",
       action: "execute",
     },
   );
 
-  assert.throws(() => assertExecuteRoute("bifrost", "hydration", "DOT", "evm-contract-call"));
+  assert.deepEqual(
+    assertExecuteRoute("bifrost", "moonbeam", "DOT", "call"),
+    {
+      sourceChain: "bifrost",
+      destinationChain: "moonbeam",
+      path: ["bifrost", "polkadot-hub", "moonbeam"],
+      executionType: "call",
+      action: "execute",
+    },
+  );
+
+  assert.throws(() => assertExecuteRoute("bifrost", "hydration", "DOT", "call"));
+  assert.throws(() => assertExecuteRoute("hydration", "moonbeam", "DOT", "mint-vdot"));
+  assert.throws(() => assertExecuteRoute("bifrost", "moonbeam", "VDOT", "redeem-vdot"));
 });

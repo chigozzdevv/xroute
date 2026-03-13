@@ -1,75 +1,88 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import {
-  actionButtonClass,
   fieldClass,
+  fieldFullClass,
   formClass,
   gridClass,
   inputClass,
   labelClass,
 } from "./form-classes";
-import { JourneyStatus } from "./journey-status";
 import { PoweredBy } from "./powered-by";
-import { QuoteFooter, type QuoteSnapshot } from "./quote-footer";
-import { useJourneyProgress } from "./use-journey-progress";
+import { QuoteFooter } from "./quote-footer";
+import {
+  EXAMPLE_EVM_ADDRESS,
+  type ChainKey,
+  chainLabel,
+  coerceOptionValue,
+  exampleRecipientForChain,
+  getSwapSettlementChainOptions,
+  recipientLabelForChain,
+  swapAssetInOptions,
+  swapAssetOutOptions,
+  swapDestinationChain,
+  swapSourceChainOptions,
+} from "./xroute-form-options";
 import { Select } from "@/components/ui/select";
+import type { QuoteRequest } from "@/lib/xroute/client";
+import { useXRouteQuote } from "@/lib/xroute/use-xroute-quote";
 
-const SWAP_QUOTES: readonly QuoteSnapshot[] = [
-  {
-    totalFee: { asset: "DOT", amount: BigInt("1250000000") },
-    breakdown: [
-      { label: "XCM fee", fee: { asset: "DOT", amount: BigInt("150000000") } },
-      { label: "Destination fee", fee: { asset: "DOT", amount: BigInt("100000000") } },
-      { label: "Platform fee", fee: { asset: "DOT", amount: BigInt("1000000000") } },
-    ],
-  },
-  {
-    totalFee: { asset: "DOT", amount: BigInt("1180000000") },
-    breakdown: [
-      { label: "XCM fee", fee: { asset: "DOT", amount: BigInt("140000000") } },
-      { label: "Destination fee", fee: { asset: "DOT", amount: BigInt("90000000") } },
-      { label: "Platform fee", fee: { asset: "DOT", amount: BigInt("950000000") } },
-    ],
-  },
-  {
-    totalFee: { asset: "DOT", amount: BigInt("1295000000") },
-    breakdown: [
-      { label: "XCM fee", fee: { asset: "DOT", amount: BigInt("155000000") } },
-      { label: "Destination fee", fee: { asset: "DOT", amount: BigInt("110000000") } },
-      { label: "Platform fee", fee: { asset: "DOT", amount: BigInt("1030000000") } },
-    ],
-  },
-];
+type SwapFormState = {
+  sourceChain: ChainKey;
+  destinationChain: "hydration";
+  assetIn: "DOT";
+  assetOut: "USDT" | "HDX";
+  amountIn: string;
+  minAmountOut: string;
+  settlementChain: "hydration" | "polkadot-hub";
+  recipient: string;
+};
 
-const SWAP_STEPS = [
-  "Validating route",
-  "Locking quote",
-  "Executing swap",
-  "Settling asset",
-] as const;
-
-function createInitialSwapForm() {
+function createInitialSwapForm(): SwapFormState {
   return {
-    sourceChain: "Base",
-    destinationChain: "Ethereum",
-    sellAsset: "ETH",
-    buyAsset: "USDC",
-    sellAmount: "3.2",
-    slippage: "0.50",
+    sourceChain: "moonbeam",
+    destinationChain: "hydration",
+    assetIn: "DOT",
+    assetOut: "USDT",
+    amountIn: "10",
+    minAmountOut: "49",
+    settlementChain: "polkadot-hub",
+    recipient: EXAMPLE_EVM_ADDRESS,
+  };
+}
+
+function buildQuoteRequest(form: SwapFormState): QuoteRequest | null {
+  if (!form.amountIn.trim() || !form.minAmountOut.trim() || !form.recipient.trim()) {
+    return null;
+  }
+
+  return {
+    kind: "swap",
+    sourceChain: form.sourceChain as "polkadot-hub" | "moonbeam",
+    destinationChain: form.destinationChain,
+    assetIn: form.assetIn,
+    assetOut: form.assetOut,
+    amountIn: form.amountIn,
+    minAmountOut: form.minAmountOut,
+    settlementChain: form.settlementChain,
+    recipient: form.recipient,
   };
 }
 
 export function SwapForm() {
-  const [form, setForm] = useState(createInitialSwapForm);
-  const journey = useJourneyProgress({ stepCount: SWAP_STEPS.length });
+  const [form, setForm] = useState<SwapFormState>(createInitialSwapForm);
+  const settlementChainOptions = useMemo(
+    () => getSwapSettlementChainOptions(form.assetOut),
+    [form.assetOut],
+  );
+  const quoteRequest = useMemo(() => buildQuoteRequest(form), [form]);
+  const { quote } = useXRouteQuote(quoteRequest);
 
   return (
     <div className={formClass}>
-      {journey.phase === "idle" ? (
-        <>
-          <div className={gridClass}>
+      <div className={gridClass}>
             <label className={fieldClass}>
               <span className={labelClass}>Source chain</span>
               <Select
@@ -77,133 +90,153 @@ export function SwapForm() {
                 onChange={(event) =>
                   setForm((current) => ({
                     ...current,
-                    sourceChain: event.target.value,
+                    sourceChain: event.target.value as ChainKey,
                   }))
                 }
               >
-                <option>Base</option>
-                <option>Ethereum</option>
-                <option>Arbitrum</option>
-                <option>Moonbeam</option>
+                {swapSourceChainOptions.map((option) => (
+                  <option
+                    key={option.value}
+                    value={option.value}
+                    disabled={option.disabled}
+                  >
+                    {option.label}
+                  </option>
+                ))}
               </Select>
             </label>
 
             <label className={fieldClass}>
               <span className={labelClass}>Destination chain</span>
-              <Select
-                value={form.destinationChain}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    destinationChain: event.target.value,
-                  }))
-                }
-              >
-                <option>Ethereum</option>
-                <option>Base</option>
-                <option>Arbitrum</option>
-                <option>Moonbeam</option>
+              <Select value={form.destinationChain} disabled>
+                <option value={swapDestinationChain}>
+                  {chainLabel(swapDestinationChain)}
+                </option>
               </Select>
             </label>
 
             <label className={fieldClass}>
-              <span className={labelClass}>Sell asset</span>
-              <Select
-                value={form.sellAsset}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    sellAsset: event.target.value,
-                  }))
-                }
-              >
-                <option>ETH</option>
-                <option>USDC</option>
-                <option>WETH</option>
-                <option>DOT</option>
+              <span className={labelClass}>Asset in</span>
+              <Select value={form.assetIn} disabled>
+                {swapAssetInOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </Select>
             </label>
 
             <label className={fieldClass}>
-              <span className={labelClass}>Buy asset</span>
+              <span className={labelClass}>Asset out</span>
               <Select
-                value={form.buyAsset}
+                value={form.assetOut}
                 onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    buyAsset: event.target.value,
-                  }))
+                  setForm((current) => {
+                    const assetOut = event.target.value as SwapFormState["assetOut"];
+                    const nextSettlementChain = coerceOptionValue(
+                      current.settlementChain,
+                      getSwapSettlementChainOptions(assetOut),
+                    );
+
+                    return {
+                      ...current,
+                      assetOut,
+                      settlementChain: nextSettlementChain,
+                      recipient:
+                        nextSettlementChain === "hydration"
+                          ? exampleRecipientForChain("hydration")
+                          : EXAMPLE_EVM_ADDRESS,
+                    };
+                  })
                 }
               >
-                <option>USDC</option>
-                <option>ETH</option>
-                <option>DAI</option>
-                <option>DOT</option>
+                {swapAssetOutOptions.map((option) => (
+                  <option
+                    key={option.value}
+                    value={option.value}
+                    disabled={option.disabled}
+                  >
+                    {option.label}
+                  </option>
+                ))}
               </Select>
             </label>
 
             <label className={fieldClass}>
-              <span className={labelClass}>Sell amount</span>
+              <span className={labelClass}>Amount in</span>
               <input
                 className={inputClass}
                 inputMode="decimal"
-                value={form.sellAmount}
+                value={form.amountIn}
                 onChange={(event) =>
                   setForm((current) => ({
                     ...current,
-                    sellAmount: event.target.value,
+                    amountIn: event.target.value,
                   }))
                 }
               />
             </label>
 
             <label className={fieldClass}>
-              <span className={labelClass}>Max slippage (%)</span>
+              <span className={labelClass}>Minimum received</span>
               <input
                 className={inputClass}
                 inputMode="decimal"
-                value={form.slippage}
+                value={form.minAmountOut}
                 onChange={(event) =>
                   setForm((current) => ({
                     ...current,
-                    slippage: event.target.value,
+                    minAmountOut: event.target.value,
                   }))
                 }
               />
             </label>
-          </div>
 
-          <QuoteFooter quotes={SWAP_QUOTES} />
+            <label className={fieldClass}>
+              <span className={labelClass}>Settlement chain</span>
+              <Select
+                value={form.settlementChain}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    settlementChain: event.target.value as SwapFormState["settlementChain"],
+                    recipient:
+                      event.target.value === "hydration"
+                        ? exampleRecipientForChain("hydration")
+                        : EXAMPLE_EVM_ADDRESS,
+                  }))
+                }
+              >
+                {settlementChainOptions.map((option) => (
+                  <option
+                    key={option.value}
+                    value={option.value}
+                    disabled={option.disabled}
+                  >
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+            </label>
 
-          <div className="flex justify-center">
-            <button type="button" className={actionButtonClass} onClick={journey.startJourney}>
-              Swap
-            </button>
-          </div>
-        </>
-      ) : (
-        <JourneyStatus
-          actionLabel="Swap"
-          activeStep={journey.activeStep}
-          phase={journey.phase}
-          steps={SWAP_STEPS}
-        />
-      )}
+            <label className={fieldFullClass}>
+              <span className={labelClass}>
+                {recipientLabelForChain(form.settlementChain)}
+              </span>
+              <input
+                className={inputClass}
+                value={form.recipient}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    recipient: event.target.value,
+                  }))
+                }
+              />
+            </label>
+      </div>
 
-      {journey.phase === "success" ? (
-        <div className="flex justify-center">
-          <button
-            type="button"
-            className={actionButtonClass}
-            onClick={() => {
-              setForm(createInitialSwapForm());
-              journey.resetJourney();
-            }}
-          >
-            Swap again
-          </button>
-        </div>
-      ) : null}
+      <QuoteFooter quote={quote?.quote ?? null} />
 
       <PoweredBy />
     </div>

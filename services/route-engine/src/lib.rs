@@ -7,10 +7,10 @@ mod registry;
 pub use engine::{EngineSettings, RouteEngine};
 pub use error::RouteError;
 pub use model::{
-    AssetAmount, AssetKey, ChainKey, DeploymentProfile, EvmContractCallExecuteIntent,
-    ExecuteIntent, ExecutionPlan, ExecutionType, FeeBreakdown, FeeType, Intent, IntentAction,
-    PlanStep, Quote, RouteHop, RouteSegment, RouteSegmentKind, RuntimeCallExecuteIntent,
-    RuntimeCallOriginKind, SubmissionAction, SubmissionTerms, SwapIntent, TransferIntent,
-    XcmInstruction, XcmWeight,
+    AssetAmount, AssetKey, CallExecuteIntent, ChainKey, DeploymentProfile, ExecuteIntent,
+    ExecutionPlan, ExecutionType, FeeBreakdown, FeeType, Intent, IntentAction, PlanStep, Quote,
+    RouteHop, RouteSegment, RouteSegmentKind, RuntimeCallOriginKind, SubmissionAction,
+    SubmissionTerms, SwapIntent, TransferIntent, VdotOrderExecuteIntent, XcmInstruction,
+    XcmWeight,
 };
 pub use registry::{RouteRegistry, SwapRoute, TransferEdge, TransferPath};

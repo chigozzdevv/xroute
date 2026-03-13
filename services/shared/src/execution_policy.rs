@@ -28,12 +28,12 @@ struct ExecutionPolicyFile {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MoonbeamPolicyFile {
-    evm_contract_call: Option<EvmContractCallPolicyFile>,
+    call: Option<CallPolicyFile>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct EvmContractCallPolicyFile {
+struct CallPolicyFile {
     allowed_contracts: Vec<AllowedContractFile>,
 }
 
@@ -61,7 +61,7 @@ pub fn load_execution_policy_from_file(path: &Path) -> Result<ExecutionPolicy, S
     let mut allowed_contracts = HashMap::new();
     for contract in file
         .moonbeam
-        .and_then(|moonbeam| moonbeam.evm_contract_call)
+        .and_then(|moonbeam| moonbeam.call)
         .map(|policy| policy.allowed_contracts)
         .unwrap_or_default()
     {
@@ -123,21 +123,21 @@ pub fn assert_intent_allowed_by_execution_policy(
         return Ok(());
     };
 
-    if execute_intent.execution_type() != ExecutionType::EvmContractCall {
+    if execute_intent.execution_type() != ExecutionType::Call {
         return Ok(());
     }
 
-    let route_engine::ExecuteIntent::EvmContractCall(evm_call) = execute_intent else {
-        return Ok(());
+    let route_engine::ExecuteIntent::Call(call) = execute_intent else {
+        unreachable!();
     };
 
-    let address = normalize_address(&evm_call.contract_address, "action.params.contractAddress")?;
+    let address = normalize_address(&call.contract_address, "action.params.contractAddress")?;
     let entry = policy
         .moonbeam_allowed_contracts
         .get(&address)
         .ok_or_else(|| format!("moonbeam contract {address} is not allowlisted"))?;
     let selector = normalize_selector(
-        evm_call
+        call
             .calldata
             .get(..10)
             .ok_or_else(|| "action.params.calldata must contain a selector".to_owned())?,
@@ -152,26 +152,26 @@ pub fn assert_intent_allowed_by_execution_policy(
         ));
     }
     if let Some(max_value) = entry.max_value {
-        if evm_call.value > max_value {
+        if call.value > max_value {
             return Err(format!(
                 "value {} exceeds the configured maxValue for moonbeam contract {address}",
-                evm_call.value
+                call.value
             ));
         }
     }
     if let Some(max_gas_limit) = entry.max_gas_limit {
-        if evm_call.gas_limit > max_gas_limit {
+        if call.gas_limit > max_gas_limit {
             return Err(format!(
                 "gasLimit {} exceeds the configured maxGasLimit for moonbeam contract {address}",
-                evm_call.gas_limit
+                call.gas_limit
             ));
         }
     }
     if let Some(max_payment_amount) = entry.max_payment_amount {
-        if evm_call.max_payment_amount > max_payment_amount {
+        if call.max_payment_amount > max_payment_amount {
             return Err(format!(
                 "maxPaymentAmount {} exceeds the configured maxPaymentAmount for moonbeam contract {address}",
-                evm_call.max_payment_amount
+                call.max_payment_amount
             ));
         }
     }
@@ -213,7 +213,7 @@ fn parse_u128(value: &str, name: &str) -> Result<u128, String> {
 mod tests {
     use super::*;
     use route_engine::{
-        ChainKey, EvmContractCallExecuteIntent, ExecuteIntent, Intent, IntentAction, XcmWeight,
+        CallExecuteIntent, ChainKey, ExecuteIntent, Intent, IntentAction, XcmWeight,
     };
     use std::fs::{remove_file, write};
 
@@ -224,7 +224,7 @@ mod tests {
             &path,
             r#"{
   "moonbeam": {
-    "evmContractCall": {
+    "call": {
       "allowedContracts": [
         {
           "address": "0x2222222222222222222222222222222222222222",
@@ -245,8 +245,8 @@ mod tests {
             destination_chain: ChainKey::Moonbeam,
             refund_address: "0x1111111111111111111111111111111111111111".to_owned(),
             deadline: 1_773_185_200,
-            action: IntentAction::Execute(ExecuteIntent::EvmContractCall(
-                EvmContractCallExecuteIntent {
+            action: IntentAction::Execute(ExecuteIntent::Call(
+                CallExecuteIntent {
                     asset: route_engine::AssetKey::Dot,
                     max_payment_amount: 100_000_000,
                     contract_address: "0x2222222222222222222222222222222222222222".to_owned(),

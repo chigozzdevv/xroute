@@ -1,10 +1,9 @@
 use crate::http::HttpError;
 use route_engine::{
-    AssetAmount, AssetKey, ChainKey, DeploymentProfile, EvmContractCallExecuteIntent,
+    AssetAmount, AssetKey, CallExecuteIntent, ChainKey, DeploymentProfile,
     ExecuteIntent, ExecutionPlan, ExecutionType, FeeBreakdown, FeeType, Intent, IntentAction,
-    PlanStep, Quote, RouteHop, RouteSegment, RouteSegmentKind, RuntimeCallExecuteIntent,
-    RuntimeCallOriginKind, SubmissionAction, SwapIntent, TransferIntent, XcmInstruction,
-    XcmWeight,
+    PlanStep, Quote, RouteHop, RouteSegment, RouteSegmentKind, SubmissionAction, SwapIntent,
+    TransferIntent, VdotOrderExecuteIntent, XcmInstruction, XcmWeight,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -159,19 +158,7 @@ struct FallbackWeight {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct RuntimeCallParams {
-    #[serde(rename = "executionType")]
-    _execution_type: String,
-    asset: String,
-    max_payment_amount: String,
-    call_data: String,
-    origin_kind: String,
-    fallback_weight: FallbackWeight,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct EvmContractCallParams {
+struct CallParams {
     #[serde(rename = "executionType")]
     _execution_type: String,
     asset: String,
@@ -181,6 +168,21 @@ struct EvmContractCallParams {
     value: String,
     gas_limit: String,
     fallback_weight: FallbackWeight,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VdotOrderParams {
+    #[serde(rename = "executionType")]
+    _execution_type: String,
+    amount: String,
+    max_payment_amount: String,
+    recipient: String,
+    adapter_address: String,
+    gas_limit: String,
+    fallback_weight: FallbackWeight,
+    remark: String,
+    channel_id: u32,
 }
 
 pub fn quote_request_from_slice(body: &[u8]) -> Result<QuoteRequest, HttpError> {
@@ -401,33 +403,15 @@ fn parse_execute_intent(
 ) -> Result<ExecuteIntent, String> {
     let execution_type = require_field(params, "executionType")?;
     match execution_type.as_str() {
-        "runtime-call" => {
-            let params: RuntimeCallParams = serde_json::from_value(params.clone())
-                .map_err(|error| format!("invalid runtime-call params: {error}"))?;
-            ensure_supported_execute_destination(destination_chain, ExecutionType::RuntimeCall)?;
-            Ok(ExecuteIntent::RuntimeCall(RuntimeCallExecuteIntent {
-                asset: parse_asset(&params.asset)?,
-                max_payment_amount: parse_u128(
-                    &params.max_payment_amount,
-                    "action.params.maxPaymentAmount",
-                )?,
-                call_data: normalize_hex(&params.call_data, "action.params.callData")?,
-                origin_kind: parse_origin_kind(&params.origin_kind)?,
-                fallback_weight: XcmWeight {
-                    ref_time: params.fallback_weight.ref_time,
-                    proof_size: params.fallback_weight.proof_size,
-                },
-            }))
-        }
-        "evm-contract-call" => {
-            let params: EvmContractCallParams = serde_json::from_value(params.clone())
-                .map_err(|error| format!("invalid evm-contract-call params: {error}"))?;
+        "call" => {
+            let params: CallParams = serde_json::from_value(params.clone())
+                .map_err(|error| format!("invalid call params: {error}"))?;
             ensure_supported_execute_destination(
                 destination_chain,
-                ExecutionType::EvmContractCall,
+                ExecutionType::Call,
             )?;
-            Ok(ExecuteIntent::EvmContractCall(
-                EvmContractCallExecuteIntent {
+            Ok(ExecuteIntent::Call(
+                CallExecuteIntent {
                     asset: parse_asset(&params.asset)?,
                     max_payment_amount: parse_u128(
                         &params.max_payment_amount,
@@ -447,8 +431,54 @@ fn parse_execute_intent(
                 },
             ))
         }
+        "mint-vdot" => parse_vdot_order_intent(
+            params,
+            destination_chain,
+            ExecutionType::MintVdot,
+        ),
+        "redeem-vdot" => parse_vdot_order_intent(
+            params,
+            destination_chain,
+            ExecutionType::RedeemVdot,
+        ),
         other => Err(format!("unsupported execution type: {other}")),
     }
+}
+
+fn parse_vdot_order_intent(
+    params: &Value,
+    destination_chain: ChainKey,
+    execution_type: ExecutionType,
+) -> Result<ExecuteIntent, String> {
+    let params: VdotOrderParams = serde_json::from_value(params.clone())
+        .map_err(|error| format!("invalid {} params: {error}", execution_type.as_str()))?;
+    ensure_supported_execute_destination(destination_chain, execution_type)?;
+
+    let intent = VdotOrderExecuteIntent {
+        amount: parse_u128(&params.amount, "action.params.amount")?,
+        max_payment_amount: parse_u128(
+            &params.max_payment_amount,
+            "action.params.maxPaymentAmount",
+        )?,
+        recipient: normalize_address(&params.recipient, "action.params.recipient")?,
+        adapter_address: normalize_address(
+            &params.adapter_address,
+            "action.params.adapterAddress",
+        )?,
+        gas_limit: parse_u64(&params.gas_limit, "action.params.gasLimit")?,
+        fallback_weight: XcmWeight {
+            ref_time: params.fallback_weight.ref_time,
+            proof_size: params.fallback_weight.proof_size,
+        },
+        remark: normalize_remark(&params.remark, "action.params.remark")?,
+        channel_id: params.channel_id,
+    };
+
+    Ok(match execution_type {
+        ExecutionType::MintVdot => ExecuteIntent::MintVdot(intent),
+        ExecutionType::RedeemVdot => ExecuteIntent::RedeemVdot(intent),
+        ExecutionType::Call => unreachable!(),
+    })
 }
 
 fn ensure_supported_execute_destination(
@@ -456,8 +486,9 @@ fn ensure_supported_execute_destination(
     execution_type: ExecutionType,
 ) -> Result<(), String> {
     match (destination, execution_type) {
-        (_, ExecutionType::RuntimeCall) => Ok(()),
-        (ChainKey::Moonbeam, ExecutionType::EvmContractCall) => Ok(()),
+        (ChainKey::Moonbeam, ExecutionType::Call)
+        | (ChainKey::Moonbeam, ExecutionType::MintVdot)
+        | (ChainKey::Moonbeam, ExecutionType::RedeemVdot) => Ok(()),
         _ => Err(format!(
             "{} is not supported on {}",
             execution_type.as_str(),
@@ -496,31 +527,39 @@ fn action_to_json_value(action: &IntentAction) -> Value {
 
 fn execute_to_json_value(execute: &ExecuteIntent) -> Value {
     match execute {
-        ExecuteIntent::RuntimeCall(runtime_call) => json!({
-            "executionType": "runtime-call",
-            "asset": runtime_call.asset.symbol(),
-            "maxPaymentAmount": runtime_call.max_payment_amount.to_string(),
-            "callData": runtime_call.call_data,
-            "originKind": runtime_call.origin_kind.as_str(),
+        ExecuteIntent::Call(call) => json!({
+            "executionType": "call",
+            "asset": call.asset.symbol(),
+            "maxPaymentAmount": call.max_payment_amount.to_string(),
+            "contractAddress": call.contract_address,
+            "calldata": call.calldata,
+            "value": call.value.to_string(),
+            "gasLimit": call.gas_limit.to_string(),
             "fallbackWeight": {
-                "refTime": runtime_call.fallback_weight.ref_time,
-                "proofSize": runtime_call.fallback_weight.proof_size,
+                "refTime": call.fallback_weight.ref_time,
+                "proofSize": call.fallback_weight.proof_size,
             },
         }),
-        ExecuteIntent::EvmContractCall(evm_call) => json!({
-            "executionType": "evm-contract-call",
-            "asset": evm_call.asset.symbol(),
-            "maxPaymentAmount": evm_call.max_payment_amount.to_string(),
-            "contractAddress": evm_call.contract_address,
-            "calldata": evm_call.calldata,
-            "value": evm_call.value.to_string(),
-            "gasLimit": evm_call.gas_limit.to_string(),
-            "fallbackWeight": {
-                "refTime": evm_call.fallback_weight.ref_time,
-                "proofSize": evm_call.fallback_weight.proof_size,
-            },
-        }),
+        ExecuteIntent::MintVdot(order) => vdot_order_to_json_value("mint-vdot", order),
+        ExecuteIntent::RedeemVdot(order) => vdot_order_to_json_value("redeem-vdot", order),
     }
+}
+
+fn vdot_order_to_json_value(execution_type: &str, order: &VdotOrderExecuteIntent) -> Value {
+    json!({
+        "executionType": execution_type,
+        "amount": order.amount.to_string(),
+        "maxPaymentAmount": order.max_payment_amount.to_string(),
+        "recipient": order.recipient,
+        "adapterAddress": order.adapter_address,
+        "gasLimit": order.gas_limit.to_string(),
+        "fallbackWeight": {
+            "refTime": order.fallback_weight.ref_time,
+            "proofSize": order.fallback_weight.proof_size,
+        },
+        "remark": order.remark,
+        "channelId": order.channel_id,
+    })
 }
 
 fn route_segment_to_json_value(segment: &RouteSegment) -> Value {
@@ -745,17 +784,8 @@ fn parse_asset(value: &str) -> Result<AssetKey, String> {
         "DOT" => Ok(AssetKey::Dot),
         "USDT" => Ok(AssetKey::Usdt),
         "HDX" => Ok(AssetKey::Hdx),
+        "VDOT" => Ok(AssetKey::Vdot),
         other => Err(format!("unsupported asset: {other}")),
-    }
-}
-
-fn parse_origin_kind(value: &str) -> Result<RuntimeCallOriginKind, String> {
-    match value {
-        "sovereign-account" => Ok(RuntimeCallOriginKind::SovereignAccount),
-        "xcm" => Ok(RuntimeCallOriginKind::Xcm),
-        "native" => Ok(RuntimeCallOriginKind::Native),
-        "superuser" => Ok(RuntimeCallOriginKind::Superuser),
-        other => Err(format!("unsupported origin kind: {other}")),
     }
 }
 
@@ -855,6 +885,15 @@ fn require_non_empty(value: &str, name: &str) -> Result<String, String> {
     }
 
     Ok(normalized.to_owned())
+}
+
+fn normalize_remark(value: &str, name: &str) -> Result<String, String> {
+    let normalized = require_non_empty(value, name)?;
+    if normalized.len() > 32 {
+        return Err(format!("{name} must be 32 characters or fewer"));
+    }
+
+    Ok(normalized)
 }
 
 fn require_field(value: &Value, name: &str) -> Result<String, String> {

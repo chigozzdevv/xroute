@@ -75,7 +75,7 @@ test("route engine quote provider builds a moonbeam execute quote", async () => 
     refundAddress: walletAddress,
     deadline: 1_773_185_200,
     params: {
-      executionType: "evm-contract-call",
+      executionType: "call",
       asset: "DOT",
       maxPaymentAmount: "200000000",
       contractAddress: walletAddress,
@@ -93,4 +93,25 @@ test("route engine quote provider builds a moonbeam execute quote", async () => 
   assert.equal(quote.deploymentProfile, DEPLOYMENT_PROFILES.MAINNET);
   assert.deepEqual(quote.route, ["hydration", "polkadot-hub", "moonbeam"]);
   assert.equal(quote.submission.action, "execute");
+});
+
+test("route engine quote provider rejects mint-vdot until live support is re-enabled", async () => {
+  assert.throws(
+    () =>
+      createExecuteIntent({
+        deploymentProfile: "mainnet",
+        sourceChain: "hydration",
+        destinationChain: "moonbeam",
+        refundAddress: walletAddress,
+        deadline: 1_773_185_200,
+        params: {
+          executionType: "mint-vdot",
+          amount: "10000000000",
+          maxPaymentAmount: "200000000",
+          recipient: walletAddress,
+          adapterAddress: "0x2222222222222222222222222222222222222222",
+        },
+      }),
+    /execution type mint-vdot is not supported on destination moonbeam/,
+  );
 });

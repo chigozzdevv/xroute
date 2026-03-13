@@ -1,7 +1,6 @@
 import {
   ACTION_TYPES,
   EXECUTION_TYPES,
-  RUNTIME_CALL_ORIGIN_KINDS,
   assertAddress,
   assertInteger,
   assertIncluded,
@@ -22,6 +21,16 @@ import {
   DEFAULT_DEPLOYMENT_PROFILE,
   normalizeDeploymentProfile,
 } from "../xroute-precompile-interfaces/index.mjs";
+
+const DEFAULT_CALL_VALUE = 0n;
+const DEFAULT_CALL_GAS_LIMIT = 250000n;
+const DEFAULT_CALL_FALLBACK_WEIGHT = Object.freeze({
+  refTime: 650000000,
+  proofSize: 12288,
+});
+const DEFAULT_VDOT_ORDER_GAS_LIMIT = 500000n;
+const DEFAULT_VDOT_ORDER_REMARK = "xroute";
+const DEFAULT_VDOT_ORDER_CHANNEL_ID = 0;
 
 export function createTransferIntent(input) {
   return createIntent({
@@ -59,7 +68,7 @@ export function createIntent(input) {
   );
   const sourceChain = getChain(input.sourceChain, deploymentProfile).key;
   const destinationChain = getChain(input.destinationChain, deploymentProfile).key;
-  const refundAddress = assertAddress("refundAddress", input.refundAddress);
+  const refundAddress = resolveRefundAddress(input);
   const deadline = assertInteger("deadline", input.deadline);
   const actionType = assertIncluded(
     "action.type",
@@ -178,72 +187,43 @@ function normalizeExecute(sourceChain, destinationChain, params, deploymentProfi
   );
 
   switch (executionType) {
-    case EXECUTION_TYPES.RUNTIME_CALL:
-      return normalizeRuntimeCall(sourceChain, destinationChain, params, deploymentProfile);
-    case EXECUTION_TYPES.EVM_CONTRACT_CALL:
-      return normalizeEvmContractCall(sourceChain, destinationChain, params, deploymentProfile);
+    case EXECUTION_TYPES.CALL:
+      return normalizeCall(sourceChain, destinationChain, params, deploymentProfile);
+    case EXECUTION_TYPES.MINT_VDOT:
+      return normalizeVdotOrder(
+        sourceChain,
+        destinationChain,
+        params,
+        deploymentProfile,
+        EXECUTION_TYPES.MINT_VDOT,
+      );
+    case EXECUTION_TYPES.REDEEM_VDOT:
+      return normalizeVdotOrder(
+        sourceChain,
+        destinationChain,
+        params,
+        deploymentProfile,
+        EXECUTION_TYPES.REDEEM_VDOT,
+      );
     default:
       throw new Error(`unsupported execution type: ${executionType}`);
   }
 }
 
-function normalizeRuntimeCall(sourceChain, destinationChain, params, deploymentProfile) {
+function normalizeCall(sourceChain, destinationChain, params, deploymentProfile) {
   const asset = assertNonEmptyString("action.params.asset", params.asset).toUpperCase();
   assertExecuteRoute(
     sourceChain,
     destinationChain,
     asset,
-    EXECUTION_TYPES.RUNTIME_CALL,
-    deploymentProfile,
-  );
-
-  const originKind = params.originKind
-    ? assertIncluded(
-        "action.params.originKind",
-        params.originKind,
-        Object.values(RUNTIME_CALL_ORIGIN_KINDS),
-      )
-    : RUNTIME_CALL_ORIGIN_KINDS.SOVEREIGN_ACCOUNT;
-
-  return Object.freeze({
-    type: ACTION_TYPES.EXECUTE,
-    params: Object.freeze({
-      executionType: EXECUTION_TYPES.RUNTIME_CALL,
-      asset,
-      maxPaymentAmount: assertPositiveBigInt(
-        "action.params.maxPaymentAmount",
-        params.maxPaymentAmount,
-      ),
-      callData: assertHexString("action.params.callData", params.callData),
-      originKind,
-      fallbackWeight: Object.freeze({
-        refTime: assertInteger(
-          "action.params.fallbackWeight.refTime",
-          params.fallbackWeight?.refTime,
-        ),
-        proofSize: assertInteger(
-          "action.params.fallbackWeight.proofSize",
-          params.fallbackWeight?.proofSize,
-        ),
-      }),
-    }),
-  });
-}
-
-function normalizeEvmContractCall(sourceChain, destinationChain, params, deploymentProfile) {
-  const asset = assertNonEmptyString("action.params.asset", params.asset).toUpperCase();
-  assertExecuteRoute(
-    sourceChain,
-    destinationChain,
-    asset,
-    EXECUTION_TYPES.EVM_CONTRACT_CALL,
+    EXECUTION_TYPES.CALL,
     deploymentProfile,
   );
 
   return Object.freeze({
     type: ACTION_TYPES.EXECUTE,
     params: Object.freeze({
-      executionType: EXECUTION_TYPES.EVM_CONTRACT_CALL,
+      executionType: EXECUTION_TYPES.CALL,
       asset,
       maxPaymentAmount: assertPositiveBigInt(
         "action.params.maxPaymentAmount",
@@ -254,18 +234,93 @@ function normalizeEvmContractCall(sourceChain, destinationChain, params, deploym
         params.contractAddress,
       ),
       calldata: assertHexString("action.params.calldata", params.calldata),
-      value: params.value === undefined ? 0n : assertPositiveOrZeroBigInt("action.params.value", params.value),
-      gasLimit: assertPositiveBigInt("action.params.gasLimit", params.gasLimit),
+      value:
+        params.value === undefined
+          ? DEFAULT_CALL_VALUE
+          : assertPositiveOrZeroBigInt("action.params.value", params.value),
+      gasLimit:
+        params.gasLimit === undefined
+          ? DEFAULT_CALL_GAS_LIMIT
+          : assertPositiveBigInt("action.params.gasLimit", params.gasLimit),
       fallbackWeight: Object.freeze({
-        refTime: assertInteger(
-          "action.params.fallbackWeight.refTime",
-          params.fallbackWeight?.refTime,
-        ),
-        proofSize: assertInteger(
-          "action.params.fallbackWeight.proofSize",
-          params.fallbackWeight?.proofSize,
-        ),
+        refTime:
+          params.fallbackWeight?.refTime === undefined
+            ? DEFAULT_CALL_FALLBACK_WEIGHT.refTime
+            : assertInteger(
+                "action.params.fallbackWeight.refTime",
+                params.fallbackWeight?.refTime,
+              ),
+        proofSize:
+          params.fallbackWeight?.proofSize === undefined
+            ? DEFAULT_CALL_FALLBACK_WEIGHT.proofSize
+            : assertInteger(
+                "action.params.fallbackWeight.proofSize",
+                params.fallbackWeight?.proofSize,
+              ),
       }),
+    }),
+  });
+}
+
+function normalizeVdotOrder(
+  sourceChain,
+  destinationChain,
+  params,
+  deploymentProfile,
+  executionType,
+) {
+  const inputAsset =
+    executionType === EXECUTION_TYPES.MINT_VDOT ? "DOT" : "VDOT";
+  assertExecuteRoute(
+    sourceChain,
+    destinationChain,
+    inputAsset,
+    executionType,
+    deploymentProfile,
+  );
+
+  return Object.freeze({
+    type: ACTION_TYPES.EXECUTE,
+    params: Object.freeze({
+      executionType,
+      amount: assertPositiveBigInt("action.params.amount", params.amount),
+      maxPaymentAmount: assertPositiveBigInt(
+        "action.params.maxPaymentAmount",
+        params.maxPaymentAmount,
+      ),
+      recipient: assertAddress("action.params.recipient", params.recipient),
+      adapterAddress: assertAddress(
+        "action.params.adapterAddress",
+        params.adapterAddress,
+      ),
+      gasLimit:
+        params.gasLimit === undefined
+          ? DEFAULT_VDOT_ORDER_GAS_LIMIT
+          : assertPositiveBigInt("action.params.gasLimit", params.gasLimit),
+      fallbackWeight: Object.freeze({
+        refTime:
+          params.fallbackWeight?.refTime === undefined
+            ? DEFAULT_CALL_FALLBACK_WEIGHT.refTime
+            : assertInteger(
+                "action.params.fallbackWeight.refTime",
+                params.fallbackWeight?.refTime,
+              ),
+        proofSize:
+          params.fallbackWeight?.proofSize === undefined
+            ? DEFAULT_CALL_FALLBACK_WEIGHT.proofSize
+            : assertInteger(
+                "action.params.fallbackWeight.proofSize",
+                params.fallbackWeight?.proofSize,
+              ),
+      }),
+      remark:
+        params.remark === undefined
+          ? DEFAULT_VDOT_ORDER_REMARK
+          : assertRemark("action.params.remark", params.remark),
+      channelId:
+        params.channelId === undefined
+          ? DEFAULT_VDOT_ORDER_CHANNEL_ID
+          : assertPositiveOrZeroInteger("action.params.channelId", params.channelId),
     }),
   });
 }
@@ -277,4 +332,29 @@ function assertPositiveOrZeroBigInt(name, value) {
   }
 
   return normalized;
+}
+
+function assertPositiveOrZeroInteger(name, value) {
+  const normalized = assertInteger(name, value);
+  if (normalized < 0) {
+    throw new Error(`${name} must be zero or greater`);
+  }
+
+  return normalized;
+}
+
+function assertRemark(name, value) {
+  const normalized = assertNonEmptyString(name, value);
+  if (normalized.length > 32) {
+    throw new Error(`${name} must be 32 characters or fewer`);
+  }
+
+  return normalized;
+}
+
+function resolveRefundAddress(input) {
+  return assertAddress(
+    "refundAddress",
+    input.refundAddress ?? input.senderAddress ?? input.ownerAddress,
+  );
 }

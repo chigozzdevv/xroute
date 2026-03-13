@@ -1,12 +1,20 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-import { createIntent, toPlainIntent } from "../xroute-intents/index.mjs";
+import {
+  createExecuteIntent,
+  createIntent,
+  createSwapIntent,
+  createTransferIntent,
+  toPlainIntent,
+} from "../xroute-intents/index.mjs";
 import {
   ACTION_TYPES,
   EXECUTION_TYPES,
+  INTENT_STATUSES,
   toBigInt,
   assertIncluded,
+  assertNonEmptyString,
   toPlainObject,
 } from "../xroute-types/index.mjs";
 import {
@@ -25,8 +33,24 @@ export { NATIVE_ASSET_ADDRESS } from "./router-adapters.mjs";
 const execFileAsync = promisify(execFile);
 let serializedCommandQueue = Promise.resolve();
 const SUBSTRATE_SOURCE_CHAINS = new Set(["hydration", "bifrost"]);
+const TERMINAL_INTENT_STATUSES = new Set([
+  INTENT_STATUSES.SETTLED,
+  INTENT_STATUSES.FAILED,
+  INTENT_STATUSES.REFUNDED,
+  INTENT_STATUSES.CANCELLED,
+]);
+const DEFAULT_INTENT_DEADLINE_SECONDS = 60 * 60;
+export const DEFAULT_XROUTE_API_BASE_URL = "https://xroute-api.onrender.com/v1";
 
-export function createXRouteClient({
+export function createXRouteClient(options = {}) {
+  if (isHostedClientOptions(options)) {
+    return createHostedXRouteClient(options);
+  }
+
+  return createConfiguredXRouteClient(options);
+}
+
+function createConfiguredXRouteClient({
   quoteProvider,
   routerAdapter,
   statusProvider,
@@ -179,11 +203,155 @@ export function createXRouteClient({
     });
   }
 
+  async function waitForCompletion(
+    intentId,
+    {
+      timeoutMs = 300_000,
+      pollIntervalMs = 1_000,
+    } = {},
+  ) {
+    const normalizedIntentId = assertNonEmptyString("intentId", intentId);
+    const existing = statusProvider.getStatus(normalizedIntentId);
+    if (isTerminalIntentStatus(existing?.status)) {
+      return existing;
+    }
+
+    return new Promise((resolve, reject) => {
+      let timeoutId = null;
+      let pollId = null;
+      let unsubscribe = null;
+
+      const cleanup = () => {
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId);
+        }
+        if (pollId !== null) {
+          clearInterval(pollId);
+        }
+        if (typeof unsubscribe === "function") {
+          unsubscribe();
+        }
+      };
+
+      const finish = (handler, value) => {
+        cleanup();
+        handler(value);
+      };
+
+      const inspect = (record) => {
+        if (!record || record.intentId !== normalizedIntentId) {
+          return;
+        }
+        if (isTerminalIntentStatus(record.status)) {
+          finish(resolve, record);
+        }
+      };
+
+      if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+        timeoutId = setTimeout(() => {
+          finish(
+            reject,
+            new Error(
+              `timed out waiting for terminal status on intent ${normalizedIntentId}`,
+            ),
+          );
+        }, timeoutMs);
+      }
+
+      if (typeof statusProvider.subscribe === "function") {
+        unsubscribe = statusProvider.subscribe((record) => {
+          inspect(record);
+        });
+      }
+
+      if (Number.isFinite(pollIntervalMs) && pollIntervalMs > 0) {
+        pollId = setInterval(() => {
+          inspect(statusProvider.getStatus(normalizedIntentId));
+        }, pollIntervalMs);
+      }
+
+      inspect(statusProvider.getStatus(normalizedIntentId));
+    });
+  }
+
+  async function runFlow({
+    steps,
+    owner,
+    timeoutMs = 300_000,
+    pollIntervalMs = 1_000,
+  } = {}) {
+    if (!Array.isArray(steps) || steps.length === 0) {
+      throw new Error("steps must contain at least one flow step");
+    }
+
+    const results = [];
+
+    for (const [stepIndex, step] of steps.entries()) {
+      const context = Object.freeze({
+        stepIndex,
+        previousStep: results.at(-1) ?? null,
+        previousSteps: Object.freeze(results.slice()),
+      });
+      const resolvedIntent = await resolveFlowValue(
+        step?.intent ?? step?.buildIntent,
+        context,
+        `steps[${stepIndex}].intent`,
+      );
+      const resolvedQuote = await resolveOptionalFlowValue(step?.quote, context);
+      const resolvedEnvelope = await resolveOptionalFlowValue(step?.envelope, context);
+      const resolvedOwner = await resolveOptionalFlowValue(
+        step?.owner ?? owner,
+        context,
+      );
+      const execution = await executeIntent({
+        intent: resolvedIntent,
+        quote: resolvedQuote ?? undefined,
+        envelope: resolvedEnvelope ?? undefined,
+        owner: resolvedOwner ?? undefined,
+      });
+      const finalStatus = await waitForCompletion(execution.submitted.intentId, {
+        timeoutMs,
+        pollIntervalMs,
+      });
+      const stepResult = Object.freeze({
+        name:
+          typeof step?.name === "string" && step.name.trim() !== ""
+            ? step.name.trim()
+            : `step-${stepIndex + 1}`,
+        stepIndex,
+        intent: execution.intent,
+        quote: execution.quote,
+        submitted: execution.submitted,
+        dispatched: execution.dispatched,
+        initialStatus: execution.status,
+        finalStatus,
+      });
+
+      results.push(stepResult);
+
+      if (finalStatus.status !== INTENT_STATUSES.SETTLED) {
+        const error = new Error(
+          `flow step ${stepIndex + 1} (${stepResult.name}) ended with status ${finalStatus.status}`,
+        );
+        error.step = stepResult;
+        error.steps = results.slice();
+        throw error;
+      }
+    }
+
+    return Object.freeze({
+      steps: Object.freeze(results),
+      finalStep: results.at(-1) ?? null,
+    });
+  }
+
   return {
     quote: quoteIntent,
     submit: submitIntent,
     dispatch: dispatchIntent,
     execute: executeIntent,
+    runFlow,
+    waitForCompletion,
     settle: settleIntent,
     fail: failIntent,
     refund: refundIntent,
@@ -200,6 +368,275 @@ export function createXRouteClient({
       return statusProvider.subscribe(listener);
     },
   };
+}
+
+function createHostedXRouteClient({
+  apiKey,
+  baseUrl = DEFAULT_XROUTE_API_BASE_URL,
+  authToken,
+  deploymentProfile = DEFAULT_DEPLOYMENT_PROFILE,
+  environment,
+  fetchImpl = globalThis.fetch,
+  wallet = null,
+} = {}) {
+  const normalizedApiKey = assertNonEmptyString("apiKey", apiKey);
+  const normalizedDeploymentProfile = normalizeDeploymentProfile(
+    environment ?? deploymentProfile,
+  );
+  const normalizedBaseUrl = normalizeHostedBaseUrl(baseUrl);
+  const quoteProvider = createHttpQuoteProvider({
+    endpoint: `${normalizedBaseUrl}/quote`,
+    apiKey: normalizedApiKey,
+    fetchImpl,
+    headers: {
+      "x-xroute-deployment-profile": normalizedDeploymentProfile,
+    },
+  });
+  const relayer = createHttpExecutorRelayerClient({
+    endpoint: normalizedBaseUrl,
+    apiKey: normalizedApiKey,
+    authToken,
+    fetchImpl,
+  });
+
+  let walletConnector = null;
+  let connectedClient = null;
+
+  const api = {
+    connectWallet(nextWallet) {
+      walletConnector = normalizeHostedWalletConnector(nextWallet);
+      connectedClient = createConfiguredXRouteClient({
+        quoteProvider,
+        routerAdapter: walletConnector.routerAdapter,
+        statusProvider: walletConnector.statusProvider,
+        assetAddressResolver: walletConnector.assetAddressResolver,
+        xcmEnvelopeBuilder:
+          walletConnector.xcmEnvelopeBuilder ?? buildExecutionEnvelope,
+        castBin: walletConnector.castBin ?? "cast",
+      });
+      return api;
+    },
+
+    disconnectWallet() {
+      walletConnector = null;
+      connectedClient = null;
+      return api;
+    },
+
+    async quote(intentInput) {
+      const intent = intentInput.quoteId
+        ? intentInput
+        : createIntent({
+            ...intentInput,
+            deploymentProfile:
+              intentInput.deploymentProfile ?? normalizedDeploymentProfile,
+          });
+      const quote = normalizeQuote(await quoteProvider.quote(intent));
+
+      if (quote.quoteId !== intent.quoteId) {
+        throw new Error("quote id must match the normalized intent quote id");
+      }
+
+      return { intent, quote };
+    },
+
+    async transfer(input) {
+      const owner = await resolveConnectedWalletOwner(requireHostedWallet(walletConnector));
+      const intent = createTransferIntent({
+        deploymentProfile: input.deploymentProfile ?? normalizedDeploymentProfile,
+        sourceChain: input.sourceChain,
+        destinationChain: input.destinationChain,
+        senderAddress: input.senderAddress ?? input.ownerAddress ?? owner,
+        deadline: input.deadline ?? defaultIntentDeadline(),
+        params: input.action?.params ?? input.params ?? {
+          asset: input.asset,
+          amount: input.amount,
+          recipient: input.recipient,
+        },
+      });
+
+      return requireHostedConnectedClient(connectedClient).execute({
+        intent,
+        owner,
+      });
+    },
+
+    async swap(input) {
+      const owner = await resolveConnectedWalletOwner(requireHostedWallet(walletConnector));
+      const intent = createSwapIntent({
+        deploymentProfile: input.deploymentProfile ?? normalizedDeploymentProfile,
+        sourceChain: input.sourceChain,
+        destinationChain: input.destinationChain,
+        senderAddress: input.senderAddress ?? input.ownerAddress ?? owner,
+        deadline: input.deadline ?? defaultIntentDeadline(),
+        params: input.action?.params ?? input.params ?? {
+          assetIn: input.assetIn,
+          assetOut: input.assetOut,
+          amountIn: input.amountIn,
+          minAmountOut: input.minAmountOut,
+          settlementChain: input.settlementChain,
+          recipient: input.recipient,
+        },
+      });
+
+      return requireHostedConnectedClient(connectedClient).execute({
+        intent,
+        owner,
+      });
+    },
+
+    async call(input) {
+      const owner = await resolveConnectedWalletOwner(requireHostedWallet(walletConnector));
+      const intent = createExecuteIntent({
+        deploymentProfile: input.deploymentProfile ?? normalizedDeploymentProfile,
+        sourceChain: input.sourceChain,
+        destinationChain: input.destinationChain ?? "moonbeam",
+        senderAddress: input.senderAddress ?? input.ownerAddress ?? owner,
+        deadline: input.deadline ?? defaultIntentDeadline(),
+        params: input.action?.params ?? input.params ?? {
+          executionType: EXECUTION_TYPES.CALL,
+          asset: input.asset ?? "DOT",
+          maxPaymentAmount: input.maxPaymentAmount,
+          contractAddress: input.contractAddress,
+          calldata: input.calldata,
+          value: input.value,
+          gasLimit: input.gasLimit,
+          fallbackWeight:
+            input.fallbackWeight ??
+            ((input.fallbackRefTime !== undefined || input.fallbackProofSize !== undefined)
+              ? {
+                  refTime: input.fallbackRefTime,
+                  proofSize: input.fallbackProofSize,
+                }
+              : undefined),
+        },
+      });
+
+      return requireHostedConnectedClient(connectedClient).execute({
+        intent,
+        owner,
+      });
+    },
+
+    async runFlow(options = {}) {
+      const owner =
+        options.owner ??
+        await resolveConnectedWalletOwner(requireHostedWallet(walletConnector));
+      return requireHostedConnectedClient(connectedClient).runFlow({
+        ...options,
+        owner,
+      });
+    },
+
+    getStatus(intentId) {
+      return requireHostedConnectedClient(connectedClient).getStatus(intentId);
+    },
+
+    getTimeline(intentId) {
+      return requireHostedConnectedClient(connectedClient).getTimeline(intentId);
+    },
+
+    subscribe(listener) {
+      return requireHostedConnectedClient(connectedClient).subscribe(listener);
+    },
+
+    jobs: relayer,
+    relayer,
+    quoteProvider,
+  };
+
+  if (wallet) {
+    api.connectWallet(wallet);
+  }
+
+  return api;
+}
+
+function isHostedClientOptions(options) {
+  return (
+    !options.quoteProvider &&
+    (options.apiKey !== undefined ||
+      options.baseUrl !== undefined ||
+      options.wallet !== undefined ||
+      options.authToken !== undefined ||
+      options.fetchImpl !== undefined)
+  );
+}
+
+function normalizeHostedBaseUrl(baseUrl) {
+  const normalized = String(baseUrl ?? DEFAULT_XROUTE_API_BASE_URL)
+    .trim()
+    .replace(/\/+$/, "");
+  if (normalized === "") {
+    throw new Error("baseUrl is required");
+  }
+  return normalized;
+}
+
+function normalizeHostedWalletConnector(wallet) {
+  if (!wallet || typeof wallet !== "object") {
+    throw new Error("connectWallet(wallet) requires a wallet connector object");
+  }
+  if (!wallet.routerAdapter?.submitIntent || !wallet.routerAdapter?.dispatchIntent) {
+    throw new Error("wallet.routerAdapter submitIntent and dispatchIntent are required");
+  }
+  if (
+    !wallet.statusProvider?.getStatus ||
+    !wallet.statusProvider?.getTimeline ||
+    !wallet.statusProvider?.subscribe
+  ) {
+    throw new Error("wallet.statusProvider is required");
+  }
+  if (typeof wallet.assetAddressResolver !== "function") {
+    throw new Error("wallet.assetAddressResolver is required");
+  }
+
+  return wallet;
+}
+
+function requireHostedWallet(wallet) {
+  if (!wallet) {
+    throw new Error("connectWallet(wallet) is required for source-chain execution");
+  }
+  return wallet;
+}
+
+function requireHostedConnectedClient(client) {
+  if (!client) {
+    throw new Error("connectWallet(wallet) is required for source-chain execution");
+  }
+  return client;
+}
+
+async function resolveConnectedWalletOwner(wallet) {
+  if (typeof wallet.getAddress === "function") {
+    return assertNonEmptyString("wallet.getAddress()", await wallet.getAddress());
+  }
+  return assertNonEmptyString("wallet.address", wallet.owner ?? wallet.address);
+}
+
+function defaultIntentDeadline() {
+  return Math.floor(Date.now() / 1000) + DEFAULT_INTENT_DEADLINE_SECONDS;
+}
+
+function isTerminalIntentStatus(status) {
+  return TERMINAL_INTENT_STATUSES.has(status);
+}
+
+async function resolveFlowValue(value, context, name) {
+  const resolved =
+    typeof value === "function" ? await value(context) : value;
+  if (resolved === undefined || resolved === null) {
+    throw new Error(`${name} is required`);
+  }
+  return resolved;
+}
+
+async function resolveOptionalFlowValue(value, context) {
+  if (value === undefined) {
+    return undefined;
+  }
+  return typeof value === "function" ? value(context) : value;
 }
 
 export function createRouteEngineQuoteProvider({
@@ -248,6 +685,7 @@ export function createRouteEngineQuoteProvider({
 
 export function createHttpQuoteProvider({
   endpoint,
+  apiKey,
   fetchImpl = globalThis.fetch,
   headers = {},
 } = {}) {
@@ -261,6 +699,13 @@ export function createHttpQuoteProvider({
 
   const normalizedDeploymentProfile =
     headers["x-xroute-deployment-profile"] ?? headers["X-XRoute-Deployment-Profile"] ?? null;
+
+  const requestHeaders = {
+    ...headers,
+  };
+  if (apiKey) {
+    requestHeaders["x-api-key"] = apiKey;
+  }
 
   return {
     deploymentProfile: normalizedDeploymentProfile ?? undefined,
@@ -276,7 +721,7 @@ export function createHttpQuoteProvider({
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...headers,
+          ...requestHeaders,
         },
         body: JSON.stringify({
           intent: toPlainIntent(intent),
@@ -304,6 +749,7 @@ export function createHttpQuoteProvider({
 export function createHttpExecutorRelayerClient({
   endpoint,
   authToken,
+  apiKey,
   fetchImpl = globalThis.fetch,
   headers = {},
 } = {}) {
@@ -318,6 +764,9 @@ export function createHttpExecutorRelayerClient({
   const requestHeaders = {
     ...headers,
   };
+  if (apiKey) {
+    requestHeaders["x-api-key"] = apiKey;
+  }
   if (authToken) {
     requestHeaders.authorization = `Bearer ${authToken}`;
   }
@@ -617,24 +1066,7 @@ function buildRouteEngineQuoteArgs(
 
 function buildExecuteQuoteArgs(shared, params) {
   switch (params.executionType) {
-    case EXECUTION_TYPES.RUNTIME_CALL:
-      return shared.concat([
-        "--execution-type",
-        params.executionType,
-        "--asset",
-        params.asset,
-        "--max-payment-amount",
-        params.maxPaymentAmount.toString(),
-        "--call-data",
-        params.callData,
-        "--origin-kind",
-        params.originKind,
-        "--fallback-ref-time",
-        String(params.fallbackWeight.refTime),
-        "--fallback-proof-size",
-        String(params.fallbackWeight.proofSize),
-      ]);
-    case EXECUTION_TYPES.EVM_CONTRACT_CALL:
+    case EXECUTION_TYPES.CALL:
       return shared.concat([
         "--execution-type",
         params.executionType,
@@ -654,6 +1086,30 @@ function buildExecuteQuoteArgs(shared, params) {
         String(params.fallbackWeight.refTime),
         "--fallback-proof-size",
         String(params.fallbackWeight.proofSize),
+      ]);
+    case EXECUTION_TYPES.MINT_VDOT:
+    case EXECUTION_TYPES.REDEEM_VDOT:
+      return shared.concat([
+        "--execution-type",
+        params.executionType,
+        "--amount",
+        params.amount.toString(),
+        "--max-payment-amount",
+        params.maxPaymentAmount.toString(),
+        "--recipient",
+        params.recipient,
+        "--adapter-address",
+        params.adapterAddress,
+        "--gas-limit",
+        params.gasLimit.toString(),
+        "--fallback-ref-time",
+        String(params.fallbackWeight.refTime),
+        "--fallback-proof-size",
+        String(params.fallbackWeight.proofSize),
+        "--remark",
+        params.remark,
+        "--channel-id",
+        String(params.channelId),
       ]);
     default:
       throw new Error(`unsupported execution type: ${params.executionType}`);

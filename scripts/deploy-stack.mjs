@@ -12,13 +12,18 @@ const contractRoot = resolve(workspaceRoot, "contracts/polkadot-hub-router");
 
 export function deployStack(overrides = {}) {
   const deploymentProfile = DEPLOYMENT_PROFILES.MAINNET;
+  const chainKey = resolveDeploymentChainKey(
+    deploymentProfile,
+    overrides.chainKey ?? process.env.XROUTE_DEPLOYMENT_CHAIN_KEY,
+  );
+  const rpcUrlEnvName = resolveRpcUrlEnvName(chainKey);
 
   assertLiveDeploymentConfirmed(
     overrides.allowLiveDeployment ?? process.env.XROUTE_ALLOW_LIVE_DEPLOY,
     deploymentProfile,
   );
 
-  const rpcUrl = requiredSetting("XROUTE_RPC_URL", overrides.rpcUrl ?? process.env.XROUTE_RPC_URL);
+  const rpcUrl = requiredSetting(rpcUrlEnvName, overrides.rpcUrl ?? process.env[rpcUrlEnvName]);
   const deployerPrivateKey = requiredSetting(
     "XROUTE_DEPLOYER_PRIVATE_KEY",
     overrides.deployerPrivateKey ?? process.env.XROUTE_DEPLOYER_PRIVATE_KEY,
@@ -27,10 +32,6 @@ export function deployStack(overrides = {}) {
     overrides.platformFeeBps ?? process.env.XROUTE_PLATFORM_FEE_BPS ?? "10";
   const xcmAddress =
     overrides.xcmAddress ?? process.env.XROUTE_XCM_ADDRESS ?? XCM_PRECOMPILE_ADDRESS;
-  const chainKey = resolveDeploymentChainKey(
-    deploymentProfile,
-    overrides.chainKey ?? process.env.XROUTE_DEPLOYMENT_CHAIN_KEY,
-  );
   const stackOutputPath =
     overrides.stackOutputPath ??
     process.env.XROUTE_STACK_OUTPUT_PATH ??
@@ -48,12 +49,16 @@ export function deployStack(overrides = {}) {
       rpcUrl,
     }),
   );
+  const executorPrivateKeyEnvName = resolveExecutorPrivateKeyEnvName(chainKey);
+  const executorPrivateKey = requiredSetting(
+    executorPrivateKeyEnvName,
+    overrides.executorPrivateKey ?? process.env[executorPrivateKeyEnvName],
+  );
   const executorAddress = normalizeAddress(
-    requiredSetting(
-      "XROUTE_ROUTER_EXECUTOR",
-      overrides.executorAddress ?? process.env.XROUTE_ROUTER_EXECUTOR,
-    ),
-    "XROUTE_ROUTER_EXECUTOR",
+    runCast(["wallet", "address", "--private-key", executorPrivateKey], {
+      rpcUrl,
+    }),
+    executorPrivateKeyEnvName,
   );
   const treasuryAddress = normalizeAddress(
     requiredSetting(
@@ -76,6 +81,25 @@ export function deployStack(overrides = {}) {
     rpcUrl,
     privateKey: deployerPrivateKey,
   });
+  const slpxAdapter = chainKey === "moonbeam"
+    ? deployMoonbeamSlpxAdapter({
+        rpcUrl,
+        deployerPrivateKey,
+        moonbeamXcDotAssetAddress:
+          overrides.moonbeamXcDotAssetAddress ??
+          process.env.XROUTE_MOONBEAM_XCDOT_ASSET_ADDRESS,
+        moonbeamVdotAssetAddress:
+          overrides.moonbeamVdotAssetAddress ??
+          process.env.XROUTE_MOONBEAM_VDOT_ASSET_ADDRESS,
+        moonbeamSlpxAddress:
+          overrides.moonbeamSlpxAddress ??
+          process.env.XROUTE_MOONBEAM_SLPX_ADDRESS,
+        destinationChainId:
+          overrides.destinationChainId ??
+          process.env.XROUTE_MOONBEAM_SLPX_DEST_CHAIN_ID ??
+          "1284",
+      })
+    : null;
 
   const deploymentArtifact = {
     deploymentProfile,
@@ -85,6 +109,7 @@ export function deployStack(overrides = {}) {
     deployedAt: new Date().toISOString(),
     contracts: {
       XRouteHubRouter: routerAddress,
+      ...(slpxAdapter ? { XRouteMoonbeamSlpxAdapter: slpxAdapter.adapterAddress } : {}),
     },
     settings: {
       adminAddress: deployer,
@@ -92,6 +117,14 @@ export function deployStack(overrides = {}) {
       executorAddress,
       treasuryAddress,
       platformFeeBps: String(platformFeeBps),
+      ...(slpxAdapter
+        ? {
+            moonbeamSlpxAddress: slpxAdapter.slpxAddress,
+            moonbeamXcDotAssetAddress: slpxAdapter.dotAssetAddress,
+            moonbeamVdotAssetAddress: slpxAdapter.vdotAssetAddress,
+            moonbeamSlpxDestinationChainId: String(slpxAdapter.destinationChainId),
+          }
+        : {}),
     },
   };
 
@@ -104,6 +137,7 @@ export function deployStack(overrides = {}) {
     adminAddress: deployer,
     executorAddress,
     treasuryAddress,
+    slpxAdapterAddress: slpxAdapter?.adapterAddress ?? null,
     artifactPath: stackOutputPath,
   };
 
@@ -145,10 +179,7 @@ function runCast(args, { rpcUrl }) {
   return execFileSync("cast", args, {
     cwd: workspaceRoot,
     encoding: "utf8",
-    env: {
-      ...process.env,
-      XROUTE_RPC_URL: rpcUrl,
-    },
+    env: process.env,
   }).trim();
 }
 
@@ -166,6 +197,17 @@ function resolveDeploymentChainKey(deploymentProfile, requestedChainKey) {
   switch (deploymentProfile) {
     default:
       return "polkadot-hub";
+  }
+}
+
+function resolveRpcUrlEnvName(chainKey) {
+  switch (chainKey) {
+    case "polkadot-hub":
+      return "XROUTE_HUB_RPC_URL";
+    case "moonbeam":
+      return "XROUTE_MOONBEAM_RPC_URL";
+    default:
+      throw new Error(`unsupported deployment chain key: ${chainKey}`);
   }
 }
 
@@ -195,9 +237,73 @@ function normalizeAddress(value, name) {
   return normalized;
 }
 
-function assertSeparatedOperationalAddresses({ deployer, executorAddress, treasuryAddress }) {
+function resolveExecutorPrivateKeyEnvName(chainKey) {
+  switch (chainKey) {
+    case "polkadot-hub":
+      return "XROUTE_HUB_PRIVATE_KEY";
+    case "moonbeam":
+      return "XROUTE_MOONBEAM_PRIVATE_KEY";
+    default:
+      throw new Error(`unsupported deployment chain key: ${chainKey}`);
+  }
+}
+
+function deployMoonbeamSlpxAdapter({
+  rpcUrl,
+  deployerPrivateKey,
+  moonbeamXcDotAssetAddress,
+  moonbeamVdotAssetAddress,
+  moonbeamSlpxAddress,
+  destinationChainId,
+}) {
+  const slpxAddress = normalizeAddress(
+    requiredSetting("XROUTE_MOONBEAM_SLPX_ADDRESS", moonbeamSlpxAddress),
+    "XROUTE_MOONBEAM_SLPX_ADDRESS",
+  );
+  const dotAssetAddress = normalizeAddress(
+    requiredSetting("XROUTE_MOONBEAM_XCDOT_ASSET_ADDRESS", moonbeamXcDotAssetAddress),
+    "XROUTE_MOONBEAM_XCDOT_ASSET_ADDRESS",
+  );
+  const vdotAssetAddress = normalizeAddress(
+    requiredSetting("XROUTE_MOONBEAM_VDOT_ASSET_ADDRESS", moonbeamVdotAssetAddress),
+    "XROUTE_MOONBEAM_VDOT_ASSET_ADDRESS",
+  );
+  const normalizedDestinationChainId = Number.parseInt(
+    requiredSetting("XROUTE_MOONBEAM_SLPX_DEST_CHAIN_ID", String(destinationChainId)),
+    10,
+  );
+  if (!Number.isInteger(normalizedDestinationChainId) || normalizedDestinationChainId <= 0) {
+    throw new Error("invalid XROUTE_MOONBEAM_SLPX_DEST_CHAIN_ID");
+  }
+
+  return {
+    adapterAddress: deployContract(
+      "src/XRouteMoonbeamSlpxAdapter.sol:XRouteMoonbeamSlpxAdapter",
+      [
+        slpxAddress,
+        dotAssetAddress,
+        vdotAssetAddress,
+        String(normalizedDestinationChainId),
+      ],
+      {
+        rpcUrl,
+        privateKey: deployerPrivateKey,
+      },
+    ),
+    slpxAddress,
+    dotAssetAddress,
+    vdotAssetAddress,
+    destinationChainId: normalizedDestinationChainId,
+  };
+}
+
+function assertSeparatedOperationalAddresses({
+  deployer,
+  executorAddress,
+  treasuryAddress,
+}) {
   if (executorAddress === deployer) {
-    throw new Error("XROUTE_ROUTER_EXECUTOR must not match the deployer/admin address");
+    throw new Error("router executor must not match the deployer/admin address");
   }
 
   if (treasuryAddress === deployer) {
@@ -205,7 +311,7 @@ function assertSeparatedOperationalAddresses({ deployer, executorAddress, treasu
   }
 
   if (treasuryAddress === executorAddress) {
-    throw new Error("XROUTE_ROUTER_TREASURY must not match XROUTE_ROUTER_EXECUTOR");
+    throw new Error("XROUTE_ROUTER_TREASURY must not match the router executor address");
   }
 }
 

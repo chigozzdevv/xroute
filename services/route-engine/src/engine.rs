@@ -1,9 +1,10 @@
 use crate::destination_calls::build_execute_call_data;
 use crate::error::RouteError;
 use crate::model::{
-    AssetAmount, AssetKey, ChainKey, DeploymentProfile, ExecuteIntent, FeeBreakdown, FeeType,
-    Intent, IntentAction, PlanStep, Quote, RouteSegment, RouteSegmentKind, SubmissionAction,
-    SubmissionTerms, XcmInstruction,
+    AssetAmount, AssetKey, ChainKey, DeploymentProfile, ExecuteIntent, ExecutionType,
+    FeeBreakdown, FeeType,
+    Intent, IntentAction, PlanStep, Quote, RouteSegment, RouteSegmentKind,
+    RuntimeCallOriginKind, SubmissionAction, SubmissionTerms, XcmInstruction,
 };
 use crate::registry::{RouteRegistry, SwapRoute, TransferPath};
 
@@ -173,7 +174,15 @@ impl RouteEngine {
                         asset: execute.asset(),
                         execution_type: execute.execution_type(),
                     })?;
-                let execution_budget = path.destination_fee.amount;
+                let execution_budget = self
+                    .registry
+                    .execute_budget(
+                        intent.destination_chain,
+                        execute.asset(),
+                        execute.execution_type(),
+                    )
+                    .unwrap_or(path.destination_fee)
+                    .amount;
                 if execution_budget > execute.max_payment_amount() {
                     return Err(RouteError::ExecutionBudgetExceeded {
                         requested_max: execute.max_payment_amount(),
@@ -195,6 +204,27 @@ impl RouteEngine {
                     &fees,
                     self.settings.deployment_profile,
                 )?;
+                let expected_output = match execute {
+                    ExecuteIntent::MintVdot(order) => self
+                        .registry
+                        .quote_vdot_order(ExecutionType::MintVdot, order.amount)
+                        .ok_or(RouteError::UnsupportedExecuteRoute {
+                            source: intent.source_chain,
+                            destination: intent.destination_chain,
+                            asset: execute.asset(),
+                            execution_type: execute.execution_type(),
+                        })?,
+                    ExecuteIntent::RedeemVdot(order) => self
+                        .registry
+                        .quote_vdot_order(ExecutionType::RedeemVdot, order.amount)
+                        .ok_or(RouteError::UnsupportedExecuteRoute {
+                            source: intent.source_chain,
+                            destination: intent.destination_chain,
+                            asset: execute.asset(),
+                            execution_type: execute.execution_type(),
+                        })?,
+                    ExecuteIntent::Call(_) => execute.expected_output(),
+                };
 
                 Ok(Quote {
                     quote_id,
@@ -203,7 +233,7 @@ impl RouteEngine {
                     segments: vec![route_segment(RouteSegmentKind::Execution, &path)],
                     fees,
                     estimated_settlement_fee: None,
-                    expected_output: execute.expected_output(),
+                    expected_output,
                     min_output: None,
                     submission: SubmissionTerms {
                         action: SubmissionAction::Execute,
@@ -452,11 +482,8 @@ fn build_execute_plan(
     let locked = submission_amount
         .checked_add(fees.total_fee.amount)
         .ok_or(RouteError::ArithmeticOverflow)?;
-    let final_remote_instructions = vec![XcmInstruction::Transact {
-        origin_kind: execute.origin_kind(),
-        fallback_weight: execute.fallback_weight(),
-        call_data: build_execute_call_data(execute, intent.destination_chain, deployment_profile)?,
-    }];
+    let final_remote_instructions =
+        build_execute_remote_instructions(execute, intent.destination_chain, deployment_profile)?;
     let send_instructions = build_multihop_transfer_instructions(
         intent.source_chain,
         path,
@@ -492,6 +519,30 @@ fn build_execute_plan(
                 destination: *path.route.get(1).ok_or(RouteError::ArithmeticOverflow)?,
                 instructions: send_instructions,
             },
+        ],
+    })
+}
+
+fn build_execute_remote_instructions(
+    execute: &ExecuteIntent,
+    destination_chain: ChainKey,
+    deployment_profile: DeploymentProfile,
+) -> Result<Vec<XcmInstruction>, RouteError> {
+    let transact = XcmInstruction::Transact {
+        origin_kind: RuntimeCallOriginKind::SovereignAccount,
+        fallback_weight: execute.fallback_weight(),
+        call_data: build_execute_call_data(execute, destination_chain, deployment_profile)?,
+    };
+
+    Ok(match execute {
+        ExecuteIntent::Call(_) => vec![transact],
+        ExecuteIntent::MintVdot(intent) | ExecuteIntent::RedeemVdot(intent) => vec![
+            XcmInstruction::DepositAsset {
+                asset: execute.asset(),
+                recipient: intent.adapter_address.clone(),
+                asset_count: 1,
+            },
+            transact,
         ],
     })
 }
