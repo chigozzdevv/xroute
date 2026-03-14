@@ -17,7 +17,7 @@ import {
   deterministicId,
   toBigInt,
   toPlainObject,
-} from "../xroute-types/index.mjs";
+} from "../../xroute-types/index.mjs";
 
 export class InMemoryStatusIndexer {
   #eventStores = new Map();

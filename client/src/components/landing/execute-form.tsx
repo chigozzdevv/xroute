@@ -23,6 +23,7 @@ import {
   getExecuteSourceChainOptions,
 } from "./xroute-form-options";
 import { Select } from "@/components/ui/select";
+import { useWallet } from "@/hooks/use-wallet";
 import type { QuoteRequest } from "@/lib/xroute/client";
 import { useXRouteQuote } from "@/lib/xroute/use-xroute-quote";
 
@@ -55,12 +56,15 @@ function createInitialExecuteForm(): ExecuteFormState {
   };
 }
 
-function buildQuoteRequest(form: ExecuteFormState): QuoteRequest | null {
+function buildQuoteRequest(
+  form: ExecuteFormState,
+  ownerAddress?: string,
+): QuoteRequest | null {
   if (form.executionType !== "call") {
     return null;
   }
 
-  if (!form.maxPaymentAmount.trim()) {
+  if (!form.maxPaymentAmount.trim() || !ownerAddress?.trim()) {
     return null;
   }
 
@@ -80,18 +84,23 @@ function buildQuoteRequest(form: ExecuteFormState): QuoteRequest | null {
     gasLimit: form.gasLimit,
     fallbackRefTime: form.fallbackRefTime,
     fallbackProofSize: form.fallbackProofSize,
+    ownerAddress: ownerAddress.trim(),
   };
 }
 
 export function ExecuteForm() {
   const [form, setForm] = useState<ExecuteFormState>(createInitialExecuteForm);
+  const { account } = useWallet();
   const [showAdvanced, setShowAdvanced] = useState(false);
   const sourceChainOptions = useMemo(
     () => getExecuteSourceChainOptions(form.executionType),
     [form.executionType],
   );
   const executionAsset = executeAssetForType(form.executionType);
-  const quoteRequest = useMemo(() => buildQuoteRequest(form), [form]);
+  const quoteRequest = useMemo(
+    () => buildQuoteRequest(form, account ?? undefined),
+    [account, form],
+  );
   const { quote } = useXRouteQuote(quoteRequest);
 
   return (

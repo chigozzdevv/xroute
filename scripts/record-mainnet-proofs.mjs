@@ -27,8 +27,8 @@ import {
   createCastRouterAdapter,
   createSourceAwareRouterAdapter,
   createSubstrateXcmAdapter,
-} from "../packages/xroute-sdk/router-adapters.mjs";
-import { FileBackedStatusIndexer } from "../packages/xroute-sdk/status-indexer.mjs";
+} from "../packages/xroute-sdk/routers/router-adapters.mjs";
+import { FileBackedStatusIndexer } from "../packages/xroute-sdk/indexers/status-indexer.mjs";
 import { resolveRouterAddressFromArtifact } from "./lib/deployment-artifacts.mjs";
 import { spawnRustService } from "./lib/spawn-rust-service.mjs";
 

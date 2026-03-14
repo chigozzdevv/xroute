@@ -7,8 +7,10 @@
   "main": "./dist/index.mjs",
   "exports": {
     ".": "./dist/index.mjs",
-    "./router-adapters": "./dist/router-adapters.mjs",
-    "./status-indexer": "./dist/status-indexer.mjs",
+    "./browser-quote-client": "./dist/browser-quote-client.mjs",
+    "./wallet-adapters": "./dist/wallets/wallet-adapters.mjs",
+    "./router-adapters": "./dist/routers/router-adapters.mjs",
+    "./status-indexer": "./dist/indexers/status-indexer.mjs",
     "./package.json": "./package.json"
   },
   "files": [

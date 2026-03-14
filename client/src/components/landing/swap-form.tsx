@@ -26,6 +26,7 @@ import {
   swapSourceChainOptions,
 } from "./xroute-form-options";
 import { Select } from "@/components/ui/select";
+import { useWallet } from "@/hooks/use-wallet";
 import type { QuoteRequest } from "@/lib/xroute/client";
 import { useXRouteQuote } from "@/lib/xroute/use-xroute-quote";
 
@@ -53,8 +54,13 @@ function createInitialSwapForm(): SwapFormState {
   };
 }
 
-function buildQuoteRequest(form: SwapFormState): QuoteRequest | null {
-  if (!form.amountIn.trim() || !form.minAmountOut.trim() || !form.recipient.trim()) {
+function buildQuoteRequest(form: SwapFormState, ownerAddress?: string): QuoteRequest | null {
+  if (
+    !form.amountIn.trim() ||
+    !form.minAmountOut.trim() ||
+    !form.recipient.trim() ||
+    !ownerAddress?.trim()
+  ) {
     return null;
   }
 
@@ -68,16 +74,21 @@ function buildQuoteRequest(form: SwapFormState): QuoteRequest | null {
     minAmountOut: form.minAmountOut,
     settlementChain: form.settlementChain,
     recipient: form.recipient,
+    ownerAddress: ownerAddress.trim(),
   };
 }
 
 export function SwapForm() {
   const [form, setForm] = useState<SwapFormState>(createInitialSwapForm);
+  const { account } = useWallet();
   const settlementChainOptions = useMemo(
     () => getSwapSettlementChainOptions(form.assetOut),
     [form.assetOut],
   );
-  const quoteRequest = useMemo(() => buildQuoteRequest(form), [form]);
+  const quoteRequest = useMemo(
+    () => buildQuoteRequest(form, account ?? undefined),
+    [account, form],
+  );
   const { quote } = useXRouteQuote(quoteRequest);
 
   return (

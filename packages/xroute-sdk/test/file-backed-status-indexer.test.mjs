@@ -8,7 +8,7 @@ import {
   FileBackedStatusIndexer,
   createDestinationExecutionSucceededEvent,
   createIntentSubmittedEvent,
-} from "../status-indexer.mjs";
+} from "../indexers/status-indexer.mjs";
 
 test("file-backed status indexer reloads persisted events", () => {
   const directory = mkdtempSync(join(tmpdir(), "xroute-status-"));

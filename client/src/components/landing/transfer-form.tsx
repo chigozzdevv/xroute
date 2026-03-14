@@ -23,6 +23,7 @@ import {
   recipientLabelForChain,
 } from "./xroute-form-options";
 import { Select } from "@/components/ui/select";
+import { useWallet } from "@/hooks/use-wallet";
 import type { QuoteRequest } from "@/lib/xroute/client";
 import { useXRouteQuote } from "@/lib/xroute/use-xroute-quote";
 
@@ -44,8 +45,11 @@ function createInitialTransferForm(): TransferFormState {
   };
 }
 
-function buildQuoteRequest(form: TransferFormState): QuoteRequest | null {
-  if (!form.amount.trim() || !form.recipient.trim()) {
+function buildQuoteRequest(
+  form: TransferFormState,
+  ownerAddress?: string,
+): QuoteRequest | null {
+  if (!form.amount.trim() || !form.recipient.trim() || !ownerAddress?.trim()) {
     return null;
   }
 
@@ -56,14 +60,19 @@ function buildQuoteRequest(form: TransferFormState): QuoteRequest | null {
     asset: form.asset,
     amount: form.amount,
     recipient: form.recipient,
+    ownerAddress: ownerAddress.trim(),
   };
 }
 
 export function TransferForm() {
   const [form, setForm] = useState(createInitialTransferForm);
+  const { account } = useWallet();
   const destinationOptions = getTransferDestinationOptions(form.sourceChain);
   const assetOptions = getTransferAssetOptions(form.sourceChain, form.destinationChain);
-  const quoteRequest = useMemo(() => buildQuoteRequest(form), [form]);
+  const quoteRequest = useMemo(
+    () => buildQuoteRequest(form, account ?? undefined),
+    [account, form],
+  );
   const { quote } = useXRouteQuote(quoteRequest);
 
   return (

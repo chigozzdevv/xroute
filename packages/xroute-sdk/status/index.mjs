@@ -1,0 +1,80 @@
+import { assertNonEmptyString } from "../../xroute-types/index.mjs";
+import {
+  DEFAULT_DEPLOYMENT_PROFILE,
+} from "../../xroute-precompile-interfaces/index.mjs";
+
+export const DEFAULT_XROUTE_API_BASE_URL = "https://xroute-api.onrender.com/v1";
+
+export {
+  InMemoryStatusIndexer,
+  FileBackedStatusIndexer,
+  createIntentSubmittedEvent,
+  createIntentDispatchedEvent,
+  createDestinationExecutionStartedEvent,
+  createDestinationExecutionSucceededEvent,
+  createDestinationExecutionFailedEvent,
+  createIntentCancelledEvent,
+  createRefundIssuedEvent,
+} from "../indexers/status-indexer.mjs";
+
+export function trackStatus({
+  baseUrl = DEFAULT_XROUTE_API_BASE_URL,
+  apiKey,
+  fetchImpl = globalThis.fetch,
+} = {}) {
+  const normalizedEndpoint = String(baseUrl ?? DEFAULT_XROUTE_API_BASE_URL)
+    .trim()
+    .replace(/\/+$/, "");
+  if (normalizedEndpoint === "") {
+    throw new Error("baseUrl is required");
+  }
+  if (typeof fetchImpl !== "function") {
+    throw new Error("fetchImpl is required");
+  }
+
+  const requestHeaders = {};
+  if (apiKey) {
+    requestHeaders["x-api-key"] = apiKey;
+  }
+
+  return {
+    async getStatus(intentId) {
+      const normalizedIntentId = assertNonEmptyString("intentId", intentId);
+      const response = await fetchImpl(
+        `${normalizedEndpoint}/intents/${encodeURIComponent(normalizedIntentId)}/status`,
+        { method: "GET", headers: requestHeaders },
+      );
+
+      if (response.status === 404) {
+        return null;
+      }
+      if (!response.ok) {
+        throw new Error(`status request failed with status ${response.status}`);
+      }
+
+      return response.json();
+    },
+
+    async getTimeline(intentId) {
+      const normalizedIntentId = assertNonEmptyString("intentId", intentId);
+      const response = await fetchImpl(
+        `${normalizedEndpoint}/intents/${encodeURIComponent(normalizedIntentId)}/timeline`,
+        { method: "GET", headers: requestHeaders },
+      );
+
+      if (response.status === 404) {
+        return [];
+      }
+      if (!response.ok) {
+        throw new Error(`timeline request failed with status ${response.status}`);
+      }
+
+      const payload = await response.json();
+      return payload?.timeline ?? payload ?? [];
+    },
+
+    subscribe(_listener) {
+      return () => {};
+    },
+  };
+}

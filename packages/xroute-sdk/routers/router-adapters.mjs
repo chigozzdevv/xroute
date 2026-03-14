@@ -16,8 +16,8 @@ import {
   assertInteger,
   assertNonEmptyString,
   toBigInt,
-} from "../xroute-types/index.mjs";
-import { createDispatchEnvelope, getDefaultXcmCodecContext } from "../xroute-xcm/index.mjs";
+} from "../../xroute-types/index.mjs";
+import { createDispatchEnvelope, getDefaultXcmCodecContext } from "../../xroute-xcm/index.mjs";
 import {
   createDestinationExecutionFailedEvent,
   createDestinationExecutionStartedEvent,
@@ -25,7 +25,7 @@ import {
   createIntentDispatchedEvent,
   createIntentSubmittedEvent,
   createRefundIssuedEvent,
-} from "./status-indexer.mjs";
+} from "../indexers/status-indexer.mjs";
 
 const execFileAsync = promisify(execFile);
 const SUBMIT_INTENT_SIGNATURE =

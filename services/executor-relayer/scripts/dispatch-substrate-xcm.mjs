@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 
-import { createSubstrateXcmAdapter } from "../../../packages/xroute-sdk/router-adapters.mjs";
+import { createSubstrateXcmAdapter } from "../../../packages/xroute-sdk/routers/router-adapters.mjs";
 
 const input = JSON.parse(readFileSync(0, "utf8"));
 const request = input?.request;

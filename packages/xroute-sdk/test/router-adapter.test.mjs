@@ -10,8 +10,8 @@ import {
   NATIVE_ASSET_ADDRESS,
   createSourceAwareRouterAdapter,
   createStaticAssetAddressResolver,
-} from "../router-adapters.mjs";
-import { InMemoryStatusIndexer } from "../status-indexer.mjs";
+} from "../routers/router-adapters.mjs";
+import { InMemoryStatusIndexer } from "../indexers/status-indexer.mjs";
 
 const signerAddress = "0x1111111111111111111111111111111111111111";
 const recipientAccount = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";

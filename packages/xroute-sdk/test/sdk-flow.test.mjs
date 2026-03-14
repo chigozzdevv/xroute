@@ -13,7 +13,7 @@ import {
   createIntentDispatchedEvent,
   createIntentSubmittedEvent,
   createRefundIssuedEvent,
-} from "../status-indexer.mjs";
+} from "../indexers/status-indexer.mjs";
 
 test("sdk coordinates quote, submit, dispatch, and status tracking", async () => {
   const indexer = new InMemoryStatusIndexer();

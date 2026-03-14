@@ -2,10 +2,296 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  createEvmWalletAdapter,
   createHttpExecutorRelayerClient,
   createHttpQuoteProvider,
+  createHttpStatusProvider,
   createXRouteClient,
 } from "../index.mjs";
+
+test("createHttpStatusProvider fetches hosted status and timeline", async () => {
+  const seen = [];
+  const provider = createHttpStatusProvider({
+    endpoint: "https://example.test/v1",
+    apiKey: "public-test-key",
+    fetchImpl: async (url, request) => {
+      seen.push([url, request]);
+      if (url.endsWith("/status")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              intentId:
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              status: "settled",
+            };
+          },
+        };
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            timeline: [
+              {
+                type: "intent-dispatched",
+                at: 123,
+              },
+            ],
+          };
+        },
+      };
+    },
+  });
+
+  const status = await provider.getStatus(
+    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  );
+  const timeline = await provider.getTimeline(
+    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  );
+
+  assert.equal(status.status, "settled");
+  assert.equal(timeline.length, 1);
+  assert.equal(
+    seen[0][0],
+    "https://example.test/v1/intents/0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/status",
+  );
+  assert.equal(
+    seen[1][0],
+    "https://example.test/v1/intents/0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/timeline",
+  );
+  assert.equal(seen[0][1].headers["x-api-key"], "public-test-key");
+});
+
+test("hosted createXRouteClient resolves status without wallet connection", async () => {
+  const seen = [];
+  const client = createXRouteClient({
+    apiKey: "public-test-key",
+    baseUrl: "https://example.test/v1",
+    fetchImpl: async (url, request) => {
+      seen.push([url, request]);
+      if (url.endsWith("/status")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              intentId:
+                "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              status: "executing",
+            };
+          },
+        };
+      }
+
+      if (url.endsWith("/timeline")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              timeline: [
+                {
+                  type: "intent-dispatched",
+                  at: 123,
+                },
+              ],
+            };
+          },
+        };
+      }
+
+      throw new Error(`unexpected request to ${url}`);
+    },
+  });
+
+  const status = await client.getStatus(
+    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  );
+  const timeline = await client.getTimeline(
+    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  );
+
+  assert.equal(status.status, "executing");
+  assert.equal(timeline.length, 1);
+  assert.equal(
+    seen[0][0],
+    "https://example.test/v1/intents/0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/status",
+  );
+  assert.equal(
+    seen[1][0],
+    "https://example.test/v1/intents/0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/timeline",
+  );
+});
+
+test("hosted createXRouteClient works without apiKey", async () => {
+  const seen = [];
+  const client = createXRouteClient({
+    baseUrl: "https://example.test/v1",
+    fetchImpl: async (url, request) => {
+      seen.push([url, request]);
+      if (url.endsWith("/status")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              intentId:
+                "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              status: "settled",
+            };
+          },
+        };
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            timeline: [],
+          };
+        },
+      };
+    },
+  });
+
+  const status = await client.getStatus(
+    "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  );
+
+  assert.equal(status.status, "settled");
+  assert.equal(seen[0][1].headers["x-api-key"], undefined);
+});
+
+test("createEvmWalletAdapter submits intents with approval and extracts intent id from receipt", async () => {
+  const calls = [];
+  const routerAddress = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const tokenAddress = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const ownerAddress = "0x1111111111111111111111111111111111111111";
+  const intentId = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+  const txHashes = {
+    approve: "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    submit: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    dispatch: "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  };
+
+  const provider = {
+    async request({ method, params }) {
+      calls.push({ method, params });
+      switch (method) {
+        case "eth_requestAccounts":
+          return [ownerAddress];
+        case "eth_call": {
+          const data = params?.[0]?.data ?? "";
+          if (data.startsWith("0x12747753")) {
+            return "0x01f4";
+          }
+          if (data.startsWith("0xdd62ed3e")) {
+            return "0x0";
+          }
+          throw new Error(`unexpected eth_call payload: ${data}`);
+        }
+        case "eth_sendTransaction": {
+          const tx = params?.[0];
+          if (tx.data.startsWith("0x095ea7b3")) {
+            return txHashes.approve;
+          }
+          if (tx.data.startsWith("0xdf260bc0")) {
+            return txHashes.submit;
+          }
+          if (tx.data.startsWith("0xa65e5b7d")) {
+            return txHashes.dispatch;
+          }
+          throw new Error(`unexpected tx payload: ${tx.data}`);
+        }
+        case "eth_getTransactionReceipt": {
+          const txHash = params?.[0];
+          if (txHash === txHashes.approve) {
+            return { status: "0x1", logs: [] };
+          }
+          if (txHash === txHashes.submit) {
+            return {
+              status: "0x1",
+              logs: [
+                {
+                  address: routerAddress,
+                  topics: [
+                    "0x958ded10bf7c27600499d19f87c591832d502b52c7439827fabc5c4fe5d7d028",
+                    intentId,
+                  ],
+                },
+              ],
+            };
+          }
+          if (txHash === txHashes.dispatch) {
+            return {
+              status: "0x1",
+              logs: [],
+            };
+          }
+          return null;
+        }
+        default:
+          throw new Error(`unexpected rpc method: ${method}`);
+      }
+    },
+  };
+
+  const wallet = createEvmWalletAdapter({
+    provider,
+    chainKey: "polkadot-hub",
+    routerAddress,
+    assetAddresses: {
+      "polkadot-hub": {
+        DOT: tokenAddress,
+      },
+    },
+  });
+
+  const submitted = await wallet.routerAdapter.submitIntent({
+    owner: ownerAddress,
+    request: {
+      actionType: 0,
+      asset: tokenAddress,
+      refundAddress: ownerAddress,
+      amount: 100n,
+      xcmFee: 20n,
+      destinationFee: 5n,
+      minOutputAmount: 100n,
+      deadline: 1_773_185_200,
+      executionHash: "0x1111111111111111111111111111111111111111111111111111111111111111",
+    },
+  });
+
+  assert.equal(submitted.intentId, intentId);
+  assert.equal(submitted.lockedAmount, 500n);
+
+  const dispatch = await wallet.routerAdapter.dispatchIntent({
+    intentId,
+    request: {
+      mode: 0,
+      destination: "0x1234",
+      message: "0xabcd",
+    },
+  });
+  assert.equal(dispatch.intentId, intentId);
+
+  const sentTxs = calls
+    .filter((call) => call.method === "eth_sendTransaction")
+    .map((call) => call.params[0]);
+  assert.equal(sentTxs.length, 3);
+  assert.equal(sentTxs[0].to.toLowerCase(), tokenAddress);
+  assert.ok(sentTxs[0].data.startsWith("0x095ea7b3"));
+  assert.equal(sentTxs[1].to.toLowerCase(), routerAddress);
+  assert.ok(sentTxs[1].data.startsWith("0xdf260bc0"));
+  assert.equal(sentTxs[2].to.toLowerCase(), routerAddress);
+  assert.ok(sentTxs[2].data.startsWith("0xa65e5b7d"));
+});
 
 test("createXRouteClient uses the hosted base url for quote requests", async () => {
   const seen = [];

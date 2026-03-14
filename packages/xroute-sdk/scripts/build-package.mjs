@@ -27,18 +27,34 @@ const textCopies = [
     ],
   },
   {
-    from: resolve(packageRoot, "router-adapters.mjs"),
-    to: resolve(distRoot, "router-adapters.mjs"),
+    from: resolve(packageRoot, "browser-quote-client.mjs"),
+    to: resolve(distRoot, "browser-quote-client.mjs"),
     replacements: [
+      ["../xroute-intents/index.mjs", "./vendor/xroute-intents/index.mjs"],
       ["../xroute-types/index.mjs", "./vendor/xroute-types/index.mjs"],
-      ["../xroute-xcm/index.mjs", "./vendor/xroute-xcm/index.mjs"],
+      ["../xroute-precompile-interfaces/index.mjs", "./vendor/xroute-precompile-interfaces/index.mjs"],
     ],
   },
   {
-    from: resolve(packageRoot, "status-indexer.mjs"),
-    to: resolve(distRoot, "status-indexer.mjs"),
+    from: resolve(packageRoot, "wallets/wallet-adapters.mjs"),
+    to: resolve(distRoot, "wallets/wallet-adapters.mjs"),
     replacements: [
-      ["../xroute-types/index.mjs", "./vendor/xroute-types/index.mjs"],
+      ["../../xroute-types/index.mjs", "../vendor/xroute-types/index.mjs"],
+    ],
+  },
+  {
+    from: resolve(packageRoot, "routers/router-adapters.mjs"),
+    to: resolve(distRoot, "routers/router-adapters.mjs"),
+    replacements: [
+      ["../../xroute-types/index.mjs", "../vendor/xroute-types/index.mjs"],
+      ["../../xroute-xcm/index.mjs", "../vendor/xroute-xcm/index.mjs"],
+    ],
+  },
+  {
+    from: resolve(packageRoot, "indexers/status-indexer.mjs"),
+    to: resolve(distRoot, "indexers/status-indexer.mjs"),
+    replacements: [
+      ["../../xroute-types/index.mjs", "../vendor/xroute-types/index.mjs"],
     ],
   },
   {
