@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { createTransferIntent, createSwapIntent, createExecuteIntent } from "../../xroute-intents/index.mjs";
 import { DEPLOYMENT_PROFILES } from "../../xroute-precompile-interfaces/index.mjs";
-import { createRouteEngineQuoteProvider } from "../index.mjs";
+import { createRouteEngineQuoteProvider } from "../internal.mjs";
 
 const walletAddress = "0x1111111111111111111111111111111111111111";
 const quoteProvider = createRouteEngineQuoteProvider({

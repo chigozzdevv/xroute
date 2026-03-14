@@ -8,7 +8,7 @@ import {
   createSwapIntent,
   createTransferIntent,
 } from "../../xroute-intents/index.mjs";
-import { createRouteEngineQuoteProvider } from "../../xroute-sdk/index.mjs";
+import { createRouteEngineQuoteProvider } from "../../xroute-sdk/internal.mjs";
 import { buildExecutionEnvelope, getDefaultXcmCodecContext } from "../index.mjs";
 
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");

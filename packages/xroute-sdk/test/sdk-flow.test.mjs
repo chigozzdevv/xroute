@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 
 import { createExecuteIntent, createSwapIntent } from "../../xroute-intents/index.mjs";
 import { createDispatchEnvelope } from "../../xroute-xcm/index.mjs";
-import { createConfiguredXRouteClient } from "../index.mjs";
+import { createConfiguredXRouteClient } from "../internal.mjs";
 import {
   InMemoryStatusIndexer,
   createDestinationExecutionFailedEvent,

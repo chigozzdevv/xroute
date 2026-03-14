@@ -18,11 +18,11 @@ import {
   createTransferIntent,
 } from "../packages/xroute-intents/index.mjs";
 import {
-  createConfiguredXRouteClient,
   createHttpExecutorRelayerClient,
   createHttpQuoteProvider,
   NATIVE_ASSET_ADDRESS,
 } from "../packages/xroute-sdk/index.mjs";
+import { createConfiguredXRouteClient } from "../packages/xroute-sdk/internal.mjs";
 import {
   createCastRouterAdapter,
   createSourceAwareRouterAdapter,

@@ -9,9 +9,9 @@ import { spawn } from "node:child_process";
 import { createTransferIntent, createExecuteIntent } from "../../../packages/xroute-intents/index.mjs";
 import {
   createHttpExecutorRelayerClient,
-  createRouteEngineQuoteProvider,
   normalizeQuote,
 } from "../../../packages/xroute-sdk/index.mjs";
+import { createRouteEngineQuoteProvider } from "../../../packages/xroute-sdk/internal.mjs";
 import { spawnRustService } from "../../../scripts/lib/spawn-rust-service.mjs";
 
 const workspaceRoot = process.cwd();

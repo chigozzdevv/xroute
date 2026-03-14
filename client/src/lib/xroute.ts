@@ -356,29 +356,18 @@ export function getTransferAssetOptions(sourceChain: ChainKey, destinationChain:
   );
 }
 
-export function canTransferAsset(asset: AssetKey, sourceChain: ChainKey, destinationChain: ChainKey) {
-  if (sourceChain === destinationChain) {
-    return false;
-  }
-  if (isChainDisabled(sourceChain) || isChainDisabled(destinationChain)) {
-    return false;
-  }
-
-  return Boolean(getTransferDestinationRecord(sourceChain, destinationChain)?.assets.includes(asset));
-}
-
-export function evmAddressLabelForChain(chainKey: ChainKey) {
+export function isEvmChain(chainKey: ChainKey) {
   return getChainWalletType(chainKey, DEFAULT_DEPLOYMENT_PROFILE) === "evm";
 }
 
 export function recipientLabelForChain(chainKey: ChainKey) {
-  return evmAddressLabelForChain(chainKey)
+  return isEvmChain(chainKey)
     ? "Recipient (EVM address)"
     : "Recipient (SS58 address)";
 }
 
 export function exampleRecipientForChain(chainKey: ChainKey) {
-  return evmAddressLabelForChain(chainKey) ? EXAMPLE_EVM_ADDRESS : EXAMPLE_SS58_ADDRESS;
+  return isEvmChain(chainKey) ? EXAMPLE_EVM_ADDRESS : EXAMPLE_SS58_ADDRESS;
 }
 
 export function coerceOptionValue<T extends string>(currentValue: T, options: readonly Option<T>[]) {

@@ -7,10 +7,8 @@ import {
   createSwapIntent,
   createTransferIntent,
 } from "../packages/xroute-intents/index.mjs";
-import {
-  createRouteEngineQuoteProvider,
-  normalizeQuote,
-} from "../packages/xroute-sdk/index.mjs";
+import { normalizeQuote } from "../packages/xroute-sdk/index.mjs";
+import { createRouteEngineQuoteProvider } from "../packages/xroute-sdk/internal.mjs";
 import { buildExecutionEnvelope } from "../packages/xroute-xcm/index.mjs";
 
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
