@@ -19,7 +19,13 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@xroute/sdk": ["../packages/xroute-sdk/index.mjs"],
+      "@xroute/sdk/quote": ["../packages/xroute-sdk/quote/index.mjs"],
+      "@xroute/sdk/wallet": ["../packages/xroute-sdk/wallet/index.mjs"],
+      "@xroute/sdk/status": ["../packages/xroute-sdk/status/index.mjs"],
+      "@xroute/sdk/chains": ["../packages/xroute-sdk/chains/index.mjs"],
+      "@xroute/sdk/routes": ["../packages/xroute-sdk/routes/index.mjs"]
     }
   },
   "include": [

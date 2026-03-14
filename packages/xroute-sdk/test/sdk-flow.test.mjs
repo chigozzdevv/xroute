@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 
 import { createExecuteIntent, createSwapIntent } from "../../xroute-intents/index.mjs";
 import { createDispatchEnvelope } from "../../xroute-xcm/index.mjs";
-import { createXRouteClient } from "../index.mjs";
+import { createConfiguredXRouteClient } from "../index.mjs";
 import {
   InMemoryStatusIndexer,
   createDestinationExecutionFailedEvent,
@@ -145,7 +145,7 @@ test("sdk coordinates quote, submit, dispatch, and status tracking", async () =>
     }
   }
 
-  const client = createXRouteClient({
+  const client = createConfiguredXRouteClient({
     quoteProvider,
     routerAdapter: new MemoryRouterAdapter(indexer),
     statusProvider: indexer,
@@ -333,7 +333,7 @@ test("sdk runFlow sequences swap then execute as separate settled intents", asyn
     },
   };
 
-  const client = createXRouteClient({
+  const client = createConfiguredXRouteClient({
     quoteProvider,
     routerAdapter,
     statusProvider: indexer,
@@ -521,7 +521,7 @@ test("sdk coordinates fail and refund helpers", async () => {
     }
   }
 
-  const client = createXRouteClient({
+  const client = createConfiguredXRouteClient({
     quoteProvider,
     routerAdapter: new MemoryRouterAdapter(indexer),
     statusProvider: indexer,

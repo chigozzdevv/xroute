@@ -3,26 +3,16 @@
 import { Fragment, useState } from "react";
 
 import {
-  fieldClass,
-  fieldFullClass,
-  formClass,
-  gridClass,
-  inputClass,
-  labelClass,
-  textareaClass,
-} from "./form-classes";
-import { PoweredBy } from "./powered-by";
-import {
   type AssetKey,
   type ChainKey,
   type ExecuteType,
   EXAMPLE_ADAPTER_ADDRESS,
   EXAMPLE_EVM_ADDRESS,
   chainOptions,
-  coerceOptionValue,
   chainLabel,
-  executeAssetForType,
+  coerceOptionValue,
   exampleRecipientForChain,
+  executeAssetForType,
   executeDestinationChain,
   executeTypeOptions,
   getExecuteSourceChainOptions,
@@ -34,7 +24,17 @@ import {
   swapAssetInOptions,
   swapDestinationChain,
   swapSourceChainOptions,
-} from "./xroute-form-options";
+} from "@/lib/xroute";
+import {
+  fieldClass,
+  fieldFullClass,
+  formClass,
+  gridClass,
+  inputClass,
+  labelClass,
+  textareaClass,
+} from "./form-classes";
+import { PoweredBy } from "./powered-by";
 import { Select } from "@/components/ui/select";
 
 type WorkflowActionType = "transfer" | "swap" | "execute";
@@ -52,13 +52,13 @@ type TransferWorkflowStep = {
 type SwapWorkflowStep = {
   id: string;
   kind: "swap";
-  sourceChain: "polkadot-hub" | "moonbeam";
-  destinationChain: "hydration";
-  assetIn: "DOT";
-  assetOut: "USDT" | "HDX";
+  sourceChain: ChainKey;
+  destinationChain: ChainKey;
+  assetIn: AssetKey;
+  assetOut: AssetKey;
   amountIn: string;
   minAmountOut: string;
-  settlementChain: "hydration" | "polkadot-hub";
+  settlementChain: ChainKey;
   recipient: string;
 };
 
@@ -66,8 +66,8 @@ type ExecuteWorkflowStep = {
   id: string;
   kind: "execute";
   executionType: ExecuteType;
-  sourceChain: "polkadot-hub" | "hydration" | "bifrost";
-  destinationChain: "moonbeam";
+  sourceChain: ChainKey;
+  destinationChain: ChainKey;
   maxPaymentAmount: string;
   contractAddress: string;
   calldata: string;
@@ -191,18 +191,12 @@ function workflowActionLabel(step: WorkflowStep) {
     case "swap":
       return "Swap";
     case "execute":
-      switch (step.executionType) {
-        case "call":
-          return "Call";
-        case "mint-vdot":
-          return "Mint vDOT";
-        case "redeem-vdot":
-          return "Redeem vDOT";
-        default:
-          throw new Error(`unsupported execute workflow type: ${step.executionType satisfies never}`);
-      }
+      if (step.executionType === "call") return "Call";
+      if (step.executionType === "mint-vdot") return "Mint vDOT";
+      if (step.executionType === "redeem-vdot") return "Redeem vDOT";
+      return step.executionType;
     default:
-      throw new Error(`unsupported workflow step type: ${step satisfies never}`);
+      throw new Error("unsupported workflow step type");
   }
 }
 
@@ -552,20 +546,17 @@ export function WorkflowForm() {
                       <Select
                         value={step.assetOut}
                         onChange={(event) => {
-                          const assetOut = event.target.value as SwapWorkflowStep["assetOut"];
+                          const assetOut = event.target.value as AssetKey;
                           const nextSettlementChain = coerceOptionValue(
                             step.settlementChain,
                             getSwapSettlementChainOptions(assetOut),
-                          );
+                          ) ?? step.settlementChain;
 
                           replaceStep(step.id, {
                             ...step,
                             assetOut,
                             settlementChain: nextSettlementChain,
-                            recipient:
-                              nextSettlementChain === "hydration"
-                                ? exampleRecipientForChain("hydration")
-                                : EXAMPLE_EVM_ADDRESS,
+                            recipient: exampleRecipientForChain(nextSettlementChain),
                           });
                         }}
                       >
@@ -729,10 +720,10 @@ export function WorkflowForm() {
                           const nextSourceChain = coerceOptionValue(
                             step.sourceChain,
                             getExecuteSourceChainOptions(executionType),
-                          );
+                          ) ?? step.sourceChain;
 
                           replaceStep(step.id, {
-                            ...step,
+                            ...(step.kind === "execute" ? step : createExecuteStep()),
                             executionType,
                             sourceChain: nextSourceChain,
                             gasLimit: executionType === "call" ? "250000" : "500000",

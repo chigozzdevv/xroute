@@ -14,6 +14,7 @@ import {
 import { PoweredBy } from "./powered-by";
 import { QuoteFooter } from "./quote-footer";
 import {
+  type ChainKey,
   type ExecuteType,
   chainLabel,
   coerceOptionValue,
@@ -21,15 +22,15 @@ import {
   executeDestinationChain,
   executeTypeOptions,
   getExecuteSourceChainOptions,
-} from "./xroute-form-options";
+  type QuoteRequest,
+  useXRouteQuote,
+} from "@/lib/xroute";
 import { Select } from "@/components/ui/select";
 import { useWallet } from "@/hooks/use-wallet";
-import type { QuoteRequest } from "@/lib/xroute/client";
-import { useXRouteQuote } from "@/lib/xroute/use-xroute-quote";
 
 type ExecuteFormState = {
-  sourceChain: "polkadot-hub" | "hydration" | "bifrost";
-  destinationChain: "moonbeam";
+  sourceChain: ChainKey;
+  destinationChain: ChainKey;
   executionType: ExecuteType;
   maxPaymentAmount: string;
   contractAddress: string;
@@ -116,7 +117,7 @@ export function ExecuteForm() {
                     const nextSourceChain = coerceOptionValue(
                       current.sourceChain,
                       getExecuteSourceChainOptions(executionType),
-                    );
+                    ) ?? current.sourceChain;
 
                     return {
                       ...current,
@@ -146,7 +147,7 @@ export function ExecuteForm() {
                 onChange={(event) =>
                   setForm((current) => ({
                     ...current,
-                    sourceChain: event.target.value as ExecuteFormState["sourceChain"],
+                    sourceChain: event.target.value as ChainKey,
                   }))
                 }
               >
@@ -314,7 +315,7 @@ export function ExecuteForm() {
             ) : null}
       </div>
 
-      <QuoteFooter quote={quote?.quote ?? null} />
+      <QuoteFooter quote={quote} />
 
       <PoweredBy />
     </div>

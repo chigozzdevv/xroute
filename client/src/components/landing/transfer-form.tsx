@@ -20,12 +20,12 @@ import {
   exampleRecipientForChain,
   getTransferAssetOptions,
   getTransferDestinationOptions,
+  type QuoteRequest,
   recipientLabelForChain,
-} from "./xroute-form-options";
+  useXRouteQuote,
+} from "@/lib/xroute";
 import { Select } from "@/components/ui/select";
 import { useWallet } from "@/hooks/use-wallet";
-import type { QuoteRequest } from "@/lib/xroute/client";
-import { useXRouteQuote } from "@/lib/xroute/use-xroute-quote";
 
 type TransferFormState = {
   sourceChain: ChainKey;
@@ -202,7 +202,7 @@ export function TransferForm() {
             </label>
       </div>
 
-      <QuoteFooter quote={quote?.quote ?? null} />
+      <QuoteFooter quote={quote} />
 
       <PoweredBy />
     </div>

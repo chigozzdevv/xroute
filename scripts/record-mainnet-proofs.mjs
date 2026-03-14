@@ -18,9 +18,9 @@ import {
   createTransferIntent,
 } from "../packages/xroute-intents/index.mjs";
 import {
+  createConfiguredXRouteClient,
   createHttpExecutorRelayerClient,
   createHttpQuoteProvider,
-  createXRouteClient,
   NATIVE_ASSET_ADDRESS,
 } from "../packages/xroute-sdk/index.mjs";
 import {
@@ -86,7 +86,7 @@ try {
   const routerAdapter = createSourceAwareRouterAdapter({
     adaptersByChain: await createSourceAdapters(settings, statusProvider),
   });
-  const client = createXRouteClient({
+  const client = createConfiguredXRouteClient({
     quoteProvider: createHttpQuoteProvider({
       endpoint: `${quoteService.url}/quote`,
       headers: {

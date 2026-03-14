@@ -14,30 +14,31 @@ import { PoweredBy } from "./powered-by";
 import { QuoteFooter } from "./quote-footer";
 import {
   EXAMPLE_EVM_ADDRESS,
+  type AssetKey,
   type ChainKey,
   chainLabel,
   coerceOptionValue,
   exampleRecipientForChain,
   getSwapSettlementChainOptions,
+  type QuoteRequest,
   recipientLabelForChain,
   swapAssetInOptions,
   swapAssetOutOptions,
   swapDestinationChain,
   swapSourceChainOptions,
-} from "./xroute-form-options";
+  useXRouteQuote,
+} from "@/lib/xroute";
 import { Select } from "@/components/ui/select";
 import { useWallet } from "@/hooks/use-wallet";
-import type { QuoteRequest } from "@/lib/xroute/client";
-import { useXRouteQuote } from "@/lib/xroute/use-xroute-quote";
 
 type SwapFormState = {
   sourceChain: ChainKey;
-  destinationChain: "hydration";
-  assetIn: "DOT";
-  assetOut: "USDT" | "HDX";
+  destinationChain: ChainKey;
+  assetIn: AssetKey;
+  assetOut: AssetKey;
   amountIn: string;
   minAmountOut: string;
-  settlementChain: "hydration" | "polkadot-hub";
+  settlementChain: ChainKey;
   recipient: string;
 };
 
@@ -66,7 +67,7 @@ function buildQuoteRequest(form: SwapFormState, ownerAddress?: string): QuoteReq
 
   return {
     kind: "swap",
-    sourceChain: form.sourceChain as "polkadot-hub" | "moonbeam",
+    sourceChain: form.sourceChain,
     destinationChain: form.destinationChain,
     assetIn: form.assetIn,
     assetOut: form.assetOut,
@@ -143,20 +144,17 @@ export function SwapForm() {
                 value={form.assetOut}
                 onChange={(event) =>
                   setForm((current) => {
-                    const assetOut = event.target.value as SwapFormState["assetOut"];
+                    const assetOut = event.target.value as AssetKey;
                     const nextSettlementChain = coerceOptionValue(
                       current.settlementChain,
                       getSwapSettlementChainOptions(assetOut),
-                    );
+                    ) ?? current.settlementChain;
 
                     return {
                       ...current,
                       assetOut,
                       settlementChain: nextSettlementChain,
-                      recipient:
-                        nextSettlementChain === "hydration"
-                          ? exampleRecipientForChain("hydration")
-                          : EXAMPLE_EVM_ADDRESS,
+                      recipient: exampleRecipientForChain(nextSettlementChain),
                     };
                   })
                 }
@@ -247,7 +245,7 @@ export function SwapForm() {
             </label>
       </div>
 
-      <QuoteFooter quote={quote?.quote ?? null} />
+      <QuoteFooter quote={quote} />
 
       <PoweredBy />
     </div>

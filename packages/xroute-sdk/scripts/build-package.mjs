@@ -27,12 +27,51 @@ const textCopies = [
     ],
   },
   {
-    from: resolve(packageRoot, "browser-quote-client.mjs"),
-    to: resolve(distRoot, "browser-quote-client.mjs"),
+    from: resolve(packageRoot, "quote/index.mjs"),
+    to: resolve(distRoot, "quote/index.mjs"),
     replacements: [
-      ["../xroute-intents/index.mjs", "./vendor/xroute-intents/index.mjs"],
-      ["../xroute-types/index.mjs", "./vendor/xroute-types/index.mjs"],
-      ["../xroute-precompile-interfaces/index.mjs", "./vendor/xroute-precompile-interfaces/index.mjs"],
+      ["../../xroute-intents/index.mjs", "../vendor/xroute-intents/index.mjs"],
+      ["../../xroute-types/index.mjs", "../vendor/xroute-types/index.mjs"],
+      ["../../xroute-precompile-interfaces/index.mjs", "../vendor/xroute-precompile-interfaces/index.mjs"],
+    ],
+  },
+  {
+    from: resolve(packageRoot, "quote/normalize.mjs"),
+    to: resolve(distRoot, "quote/normalize.mjs"),
+    replacements: [
+      ["../../xroute-types/index.mjs", "../vendor/xroute-types/index.mjs"],
+      ["../../xroute-precompile-interfaces/index.mjs", "../vendor/xroute-precompile-interfaces/index.mjs"],
+    ],
+  },
+  {
+    from: resolve(packageRoot, "wallet/index.mjs"),
+    to: resolve(distRoot, "wallet/index.mjs"),
+    replacements: [
+      ["../../xroute-types/index.mjs", "../vendor/xroute-types/index.mjs"],
+    ],
+  },
+  {
+    from: resolve(packageRoot, "status/index.mjs"),
+    to: resolve(distRoot, "status/index.mjs"),
+    replacements: [
+      ["../../xroute-types/index.mjs", "../vendor/xroute-types/index.mjs"],
+    ],
+  },
+  {
+    from: resolve(packageRoot, "chains/index.mjs"),
+    to: resolve(distRoot, "chains/index.mjs"),
+    replacements: [
+      ["../../xroute-chain-registry/index.mjs", "../vendor/xroute-chain-registry/index.mjs"],
+      ["../../xroute-precompile-interfaces/index.mjs", "../vendor/xroute-precompile-interfaces/index.mjs"],
+    ],
+  },
+  {
+    from: resolve(packageRoot, "routes/index.mjs"),
+    to: resolve(distRoot, "routes/index.mjs"),
+    replacements: [
+      ["../../xroute-chain-registry/index.mjs", "../vendor/xroute-chain-registry/index.mjs"],
+      ["../../xroute-types/index.mjs", "../vendor/xroute-types/index.mjs"],
+      ["../../xroute-precompile-interfaces/index.mjs", "../vendor/xroute-precompile-interfaces/index.mjs"],
     ],
   },
   {

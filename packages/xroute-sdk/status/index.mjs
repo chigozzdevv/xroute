@@ -1,7 +1,4 @@
 import { assertNonEmptyString } from "../../xroute-types/index.mjs";
-import {
-  DEFAULT_DEPLOYMENT_PROFILE,
-} from "../../xroute-precompile-interfaces/index.mjs";
 
 export const DEFAULT_XROUTE_API_BASE_URL = "https://xroute-api.onrender.com/v1";
 
@@ -17,16 +14,22 @@ export {
   createRefundIssuedEvent,
 } from "../indexers/status-indexer.mjs";
 
-export function trackStatus({
-  baseUrl = DEFAULT_XROUTE_API_BASE_URL,
+export function trackStatus(options = {}) {
+  return createHttpStatusProvider({
+    endpoint: options.baseUrl ?? DEFAULT_XROUTE_API_BASE_URL,
+    apiKey: options.apiKey,
+    fetchImpl: options.fetchImpl,
+  });
+}
+
+export function createHttpStatusProvider({
+  endpoint,
   apiKey,
   fetchImpl = globalThis.fetch,
 } = {}) {
-  const normalizedEndpoint = String(baseUrl ?? DEFAULT_XROUTE_API_BASE_URL)
-    .trim()
-    .replace(/\/+$/, "");
+  const normalizedEndpoint = String(endpoint ?? "").trim().replace(/\/+$/, "");
   if (normalizedEndpoint === "") {
-    throw new Error("baseUrl is required");
+    throw new Error("endpoint is required");
   }
   if (typeof fetchImpl !== "function") {
     throw new Error("fetchImpl is required");

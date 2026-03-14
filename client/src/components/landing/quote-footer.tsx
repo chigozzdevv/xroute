@@ -2,26 +2,18 @@
 
 import { useState } from "react";
 
-import type { QuoteResponse } from "@/lib/xroute/client";
-
-type AssetAmount = {
-  asset: string;
-  amount: bigint;
-};
+import {
+  getAssetDecimals,
+  type Quote,
+  type QuoteAssetAmount,
+} from "@/lib/xroute";
 
 type QuoteFooterProps = {
-  quote: QuoteResponse["quote"] | null;
+  quote: Quote | null;
 };
 
-const ASSET_DECIMALS: Record<string, number> = {
-  DOT: 10,
-  USDT: 6,
-  HDX: 12,
-  VDOT: 10,
-};
-
-function formatAssetAmount({ asset, amount }: AssetAmount) {
-  const decimals = ASSET_DECIMALS[asset] ?? 6;
+function formatAssetAmount({ asset, amount }: QuoteAssetAmount) {
+  const decimals = resolveAssetDecimals(asset);
   const divisor = BigInt(10) ** BigInt(decimals);
   const whole = amount / divisor;
   const fraction = amount % divisor;
@@ -35,15 +27,12 @@ function formatAssetAmount({ asset, amount }: AssetAmount) {
   return `${whole.toString()}.${paddedFraction} ${asset}`;
 }
 
-function toAmount(input?: { asset: string; amount: string } | null): AssetAmount | null {
-  if (!input?.asset || input.amount === undefined) {
-    return null;
+function resolveAssetDecimals(asset: string) {
+  try {
+    return getAssetDecimals(asset);
+  } catch {
+    return 6;
   }
-
-  return {
-    asset: input.asset,
-    amount: BigInt(input.amount),
-  };
 }
 
 export function QuoteFooter({ quote }: QuoteFooterProps) {
@@ -53,14 +42,10 @@ export function QuoteFooter({ quote }: QuoteFooterProps) {
     return null;
   }
 
-  const totalFee = toAmount(quote.fees.totalFee);
-  const xcmFee = toAmount(quote.fees.xcmFee);
-  const destinationFee = toAmount(quote.fees.destinationFee);
-  const platformFee = toAmount(quote.fees.platformFee);
-
-  if (!totalFee || !xcmFee || !destinationFee || !platformFee) {
-    return null;
-  }
+  const totalFee = quote.fees.totalFee;
+  const xcmFee = quote.fees.xcmFee;
+  const destinationFee = quote.fees.destinationFee;
+  const platformFee = quote.fees.platformFee;
 
   const breakdown = [
     { label: "XCM fee", fee: xcmFee },

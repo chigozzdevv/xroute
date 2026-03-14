@@ -259,16 +259,10 @@ const unsubscribe = client.subscribe((record) => {
 });
 ```
 
-## Lower-Level Hosted Clients
-
-If you want direct access to the hosted HTTP layers, these are also exported:
+## Other Exports
 
 - `createHttpQuoteProvider(...)`
 - `createHttpExecutorRelayerClient(...)`
-
-## Other Exports
-
-- `createRouteEngineQuoteProvider(...)`
 - `normalizeQuote(...)`
 - `NATIVE_ASSET_ADDRESS`
 - `DEFAULT_XROUTE_API_BASE_URL`

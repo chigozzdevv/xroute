@@ -13,7 +13,6 @@ import {
   EXECUTION_TYPES,
   INTENT_STATUSES,
   toBigInt,
-  assertIncluded,
   assertNonEmptyString,
   toPlainObject,
 } from "../xroute-types/index.mjs";
@@ -27,7 +26,15 @@ import {
   DEFAULT_DEPLOYMENT_PROFILE,
   normalizeDeploymentProfile,
 } from "../xroute-precompile-interfaces/index.mjs";
-import { normalizeQuote } from "./quotes/normalize-quote.mjs";
+import {
+  createHttpQuoteProvider,
+  createQuote,
+  normalizeQuote,
+} from "./quote/index.mjs";
+import {
+  createHttpStatusProvider,
+  trackStatus,
+} from "./status/index.mjs";
 import { createWallet } from "./wallet/index.mjs";
 
 export {
@@ -37,8 +44,8 @@ export {
 
 export { NATIVE_ASSET_ADDRESS } from "./routers/router-adapters.mjs";
 export { createWallet } from "./wallet/index.mjs";
-export { createQuote } from "./quote/index.mjs";
-export { trackStatus } from "./status/index.mjs";
+export { createQuote, createHttpQuoteProvider, normalizeQuote } from "./quote/index.mjs";
+export { createHttpStatusProvider, trackStatus } from "./status/index.mjs";
 
 const execFileAsync = promisify(execFile);
 let serializedCommandQueue = Promise.resolve();
@@ -53,14 +60,10 @@ const DEFAULT_INTENT_DEADLINE_SECONDS = 60 * 60;
 export const DEFAULT_XROUTE_API_BASE_URL = "https://xroute-api.onrender.com/v1";
 
 export function createXRouteClient(options = {}) {
-  if (isHostedClientOptions(options)) {
-    return createHostedXRouteClient(options);
-  }
-
-  return createConfiguredXRouteClient(options);
+  return createHostedXRouteClient(options);
 }
 
-function createConfiguredXRouteClient({
+export function createConfiguredXRouteClient({
   quoteProvider,
   routerAdapter,
   statusProvider,
@@ -509,7 +512,7 @@ function createHostedXRouteClient({
       });
     },
 
-    async call(input) {
+    async execute(input) {
       const owner = await resolveConnectedWalletOwner(requireHostedWallet(walletConnector));
       const intent = createExecuteIntent({
         deploymentProfile: input.deploymentProfile ?? normalizedDeploymentProfile,
@@ -518,8 +521,11 @@ function createHostedXRouteClient({
         senderAddress: input.senderAddress ?? input.ownerAddress ?? owner,
         deadline: input.deadline ?? defaultIntentDeadline(),
         params: input.action?.params ?? input.params ?? {
-          executionType: EXECUTION_TYPES.CALL,
+          executionType: input.executionType ?? EXECUTION_TYPES.CALL,
           asset: input.asset ?? "DOT",
+          amount: input.amount,
+          recipient: input.recipient,
+          adapterAddress: input.adapterAddress,
           maxPaymentAmount: input.maxPaymentAmount,
           contractAddress: input.contractAddress,
           calldata: input.calldata,
@@ -533,12 +539,21 @@ function createHostedXRouteClient({
                   proofSize: input.fallbackProofSize,
                 }
               : undefined),
+          remark: input.remark,
+          channelId: input.channelId,
         },
       });
 
       return requireHostedConnectedClient(connectedClient).execute({
         intent,
         owner,
+      });
+    },
+
+    async call(input) {
+      return api.execute({
+        ...input,
+        executionType: input.executionType ?? EXECUTION_TYPES.CALL,
       });
     },
 
@@ -579,17 +594,6 @@ function createHostedXRouteClient({
   }
 
   return api;
-}
-
-function isHostedClientOptions(options) {
-  return (
-    !options.quoteProvider &&
-    (options.apiKey !== undefined ||
-      options.baseUrl !== undefined ||
-      options.wallet !== undefined ||
-      options.authToken !== undefined ||
-      options.fetchImpl !== undefined)
-  );
 }
 
 function normalizeHostedBaseUrl(baseUrl) {
@@ -661,66 +665,6 @@ async function resolveOptionalFlowValue(value, context) {
   return typeof value === "function" ? value(context) : value;
 }
 
-export function createHttpStatusProvider({
-  endpoint,
-  apiKey,
-  fetchImpl = globalThis.fetch,
-} = {}) {
-  const normalizedEndpoint = String(endpoint ?? "").trim().replace(/\/+$/, "");
-  if (normalizedEndpoint === "") {
-    throw new Error("endpoint is required");
-  }
-  if (typeof fetchImpl !== "function") {
-    throw new Error("fetchImpl is required");
-  }
-
-  const requestHeaders = {};
-  if (apiKey) {
-    requestHeaders["x-api-key"] = apiKey;
-  }
-
-  return {
-    async getStatus(intentId) {
-      const normalizedIntentId = assertNonEmptyString("intentId", intentId);
-      const response = await fetchImpl(
-        `${normalizedEndpoint}/intents/${encodeURIComponent(normalizedIntentId)}/status`,
-        { method: "GET", headers: requestHeaders },
-      );
-
-      if (response.status === 404) {
-        return null;
-      }
-      if (!response.ok) {
-        throw new Error(`hosted status request failed with status ${response.status}`);
-      }
-
-      return response.json();
-    },
-
-    async getTimeline(intentId) {
-      const normalizedIntentId = assertNonEmptyString("intentId", intentId);
-      const response = await fetchImpl(
-        `${normalizedEndpoint}/intents/${encodeURIComponent(normalizedIntentId)}/timeline`,
-        { method: "GET", headers: requestHeaders },
-      );
-
-      if (response.status === 404) {
-        return [];
-      }
-      if (!response.ok) {
-        throw new Error(`hosted timeline request failed with status ${response.status}`);
-      }
-
-      const payload = await response.json();
-      return payload?.timeline ?? payload ?? [];
-    },
-
-    subscribe(_listener) {
-      return () => {};
-    },
-  };
-}
-
 export function createRouteEngineQuoteProvider({
   command = "cargo",
   commandArgs = ["run", "-q", "-p", "route-engine", "--"],
@@ -761,69 +705,6 @@ export function createRouteEngineQuoteProvider({
         const detail = error.stderr?.trim() || error.stdout?.trim() || error.message;
         throw new Error(`route engine quote failed: ${detail}`);
       }
-    },
-  };
-}
-
-export function createHttpQuoteProvider({
-  endpoint,
-  apiKey,
-  fetchImpl = globalThis.fetch,
-  headers = {},
-} = {}) {
-  const normalizedEndpoint = String(endpoint ?? "").trim();
-  if (normalizedEndpoint === "") {
-    throw new Error("endpoint is required");
-  }
-  if (typeof fetchImpl !== "function") {
-    throw new Error("fetchImpl is required");
-  }
-
-  const normalizedDeploymentProfile =
-    headers["x-xroute-deployment-profile"] ?? headers["X-XRoute-Deployment-Profile"] ?? null;
-
-  const requestHeaders = {
-    ...headers,
-  };
-  if (apiKey) {
-    requestHeaders["x-api-key"] = apiKey;
-  }
-
-  return {
-    deploymentProfile: normalizedDeploymentProfile ?? undefined,
-    async quote(intentInput) {
-      const intent = intentInput.quoteId
-        ? intentInput
-        : createIntent({
-            ...intentInput,
-            deploymentProfile:
-              intentInput.deploymentProfile ?? normalizedDeploymentProfile ?? undefined,
-          });
-      const response = await fetchImpl(normalizedEndpoint, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...requestHeaders,
-        },
-        body: JSON.stringify({
-          intent: toPlainIntent(intent),
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`http quote failed with status ${response.status}`);
-      }
-
-      const payload = await response.json();
-      const resolvedQuote = payload?.quote ?? payload;
-      if (!resolvedQuote?.submission) {
-        throw new Error("http quote response is missing quote");
-      }
-
-      return {
-        ...resolvedQuote,
-        quoteId: intent.quoteId,
-      };
     },
   };
 }
@@ -1012,7 +893,6 @@ function normalizeSourceDispatch(dispatchResult) {
   };
 }
 
-export { normalizeQuote } from "./quotes/normalize-quote.mjs";
 
 function buildRouteEngineQuoteArgs(
   intent,

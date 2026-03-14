@@ -7,7 +7,11 @@
   "main": "./dist/index.mjs",
   "exports": {
     ".": "./dist/index.mjs",
-    "./browser-quote-client": "./dist/browser-quote-client.mjs",
+    "./quote": "./dist/quote/index.mjs",
+    "./wallet": "./dist/wallet/index.mjs",
+    "./status": "./dist/status/index.mjs",
+    "./chains": "./dist/chains/index.mjs",
+    "./routes": "./dist/routes/index.mjs",
     "./wallet-adapters": "./dist/wallets/wallet-adapters.mjs",
     "./router-adapters": "./dist/routers/router-adapters.mjs",
     "./status-indexer": "./dist/indexers/status-indexer.mjs",
