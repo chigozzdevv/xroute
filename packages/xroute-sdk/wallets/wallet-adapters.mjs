@@ -11,6 +11,7 @@ import {
   assertInteger,
   assertNonEmptyString,
 } from "../../xroute-types/index.mjs";
+import { computeExecutionHash } from "../../xroute-xcm/index.mjs";
 import {
   createSubstrateXcmAdapter,
   NATIVE_ASSET_ADDRESS as ROUTER_NATIVE_ASSET_ADDRESS,
@@ -312,7 +313,7 @@ export function createSubstrateWalletAdapter({
   chainKey = "hydration",
   rpcUrl,
   statusProvider = null,
-  assetAddresses = {},
+  assetAddresses,
   codecContext = null,
   eventClock,
   xcmPalletNames,
@@ -325,7 +326,9 @@ export function createSubstrateWalletAdapter({
 
   const normalizedChainKey = assertNonEmptyString("chainKey", chainKey);
   const normalizedRpcUrl = assertNonEmptyString("rpcUrl", rpcUrl);
-  const assetAddressResolver = createWalletAssetAddressResolver(assetAddresses);
+  const assetAddressResolver = assetAddresses
+    ? createWalletAssetAddressResolver(assetAddresses)
+    : undefined;
 
   let accountContextPromise = null;
   let substrateAdapterPromise = null;
@@ -410,6 +413,14 @@ export function createSubstrateWalletAdapter({
     routerAdapter,
     statusProvider,
     assetAddressResolver,
+    submitRequestBuilder({ intent, quote, envelope, castBin = "cast" }) {
+      return buildSubstrateSubmitRequest({
+        intent,
+        quote,
+        envelope,
+        castBin,
+      });
+    },
     chainKey: normalizedChainKey,
   };
 }
@@ -428,6 +439,38 @@ function createWalletAssetAddressResolver(assetAddresses) {
 
     return assertAddress("assetAddress", address);
   };
+}
+
+function buildSubstrateSubmitRequest({
+  intent,
+  quote,
+  envelope,
+  castBin = "cast",
+}) {
+  if (!quote?.submission) {
+    throw new Error("quote.submission is required");
+  }
+  if (quote.quoteId !== intent.quoteId) {
+    throw new Error("quote does not belong to the provided intent");
+  }
+
+  return Object.freeze({
+    sourceKind: "substrate-source",
+    refundAddress: assertNonEmptyString("intent.refundAddress", intent.refundAddress),
+    asset: assertNonEmptyString("quote.submission.asset", quote.submission.asset),
+    amount: toBigInt(quote.submission.amount, "quote.submission.amount"),
+    xcmFee: toBigInt(quote.submission.xcmFee, "quote.submission.xcmFee"),
+    destinationFee: toBigInt(
+      quote.submission.destinationFee,
+      "quote.submission.destinationFee",
+    ),
+    minOutputAmount: toBigInt(
+      quote.submission.minOutputAmount,
+      "quote.submission.minOutputAmount",
+    ),
+    deadline: assertInteger("intent.deadline", intent.deadline),
+    executionHash: computeExecutionHash(envelope, { castBin }),
+  });
 }
 
 async function resolveSubstrateAccountContext({

@@ -378,6 +378,7 @@ test("executor relayer fails moonbeam-origin jobs when no moonbeam execution con
 test("executor relayer dispatches hydration source intents and completes substrate-source settlement lifecycles", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "xroute-relayer-hydration-source-"));
   const anvil = await spawnAnvil();
+  const substrateRefundAddress = ss58Recipient;
   const substrateDispatchScript = join(tempDir, "mock-substrate-dispatch.mjs");
   writeFileSync(
     substrateDispatchScript,
@@ -425,7 +426,7 @@ test("executor relayer dispatches hydration source intents and completes substra
       deploymentProfile: "mainnet",
       sourceChain: "hydration",
       destinationChain: "moonbeam",
-      refundAddress,
+      refundAddress: substrateRefundAddress,
       deadline: 1_773_185_200,
       params: {
         executionType: "call",
@@ -541,6 +542,7 @@ test("executor relayer dispatches hydration source intents and completes substra
 test("executor relayer dispatches bifrost source intents on mainnet and records refund lifecycles", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "xroute-relayer-bifrost-source-"));
   const anvil = await spawnAnvil();
+  const substrateRefundAddress = ss58Recipient;
   const substrateDispatchScript = join(tempDir, "mock-substrate-dispatch.mjs");
   writeFileSync(
     substrateDispatchScript,
@@ -588,7 +590,7 @@ test("executor relayer dispatches bifrost source intents on mainnet and records 
       deploymentProfile: "mainnet",
       sourceChain: "bifrost",
       destinationChain: "moonbeam",
-      refundAddress,
+      refundAddress: substrateRefundAddress,
       deadline: 1_773_185_200,
       params: {
         asset: "DOT",

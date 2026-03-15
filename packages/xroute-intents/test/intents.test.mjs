@@ -84,6 +84,23 @@ test("createTransferIntent falls back to senderAddress for refunds", () => {
   assert.equal(intent.refundAddress, "0x1111111111111111111111111111111111111111");
 });
 
+test("createTransferIntent accepts substrate senderAddress values for substrate sources", () => {
+  const senderAddress = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
+  const intent = createTransferIntent({
+    sourceChain: "hydration",
+    destinationChain: "moonbeam",
+    senderAddress,
+    deadline: 1_773_185_200,
+    params: {
+      asset: "DOT",
+      amount: "10",
+      recipient: "0x1111111111111111111111111111111111111111",
+    },
+  });
+
+  assert.equal(intent.refundAddress, senderAddress);
+});
+
 test("createSwapIntent accepts a multihop moonbeam to hydration swap", () => {
   const intent = createSwapIntent({
     sourceChain: "moonbeam",

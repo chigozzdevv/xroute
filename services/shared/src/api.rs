@@ -348,7 +348,8 @@ impl WireIntent {
 fn wire_intent_to_internal(wire: &WireIntent) -> Result<Intent, String> {
     let source_chain = parse_chain(&wire.source_chain)?;
     let destination_chain = parse_chain(&wire.destination_chain)?;
-    let refund_address = normalize_address(&wire.refund_address, "refundAddress")?;
+    let refund_address =
+        normalize_refund_address(source_chain, &wire.refund_address, "refundAddress")?;
     let action = parse_action(&wire.action, source_chain, destination_chain)?;
 
     Ok(Intent {
@@ -869,6 +870,17 @@ fn normalize_address(value: &str, name: &str) -> Result<String, String> {
     Ok(normalized)
 }
 
+fn normalize_refund_address(
+    source_chain: ChainKey,
+    value: &str,
+    name: &str,
+) -> Result<String, String> {
+    match source_chain {
+        ChainKey::PolkadotHub | ChainKey::Moonbeam => normalize_address(value, name),
+        ChainKey::Hydration | ChainKey::Bifrost => require_non_empty(value, name),
+    }
+}
+
 fn normalize_bytes32(value: &str, name: &str) -> Result<String, String> {
     let normalized = normalize_hex(value, name)?;
     if normalized.len() != 66 {
@@ -924,5 +936,69 @@ fn fee_type_label(fee_type: FeeType) -> &'static str {
         FeeType::Xcm => "xcm",
         FeeType::Destination => "destination",
         FeeType::Platform => "platform",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn quote_request_accepts_substrate_refund_address_for_hydration_sources() {
+        let body = serde_json::to_vec(&json!({
+            "intent": {
+                "sourceChain": "hydration",
+                "destinationChain": "moonbeam",
+                "refundAddress": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+                "deadline": 1_773_185_200u64,
+                "action": {
+                    "type": "transfer",
+                    "params": {
+                        "asset": "DOT",
+                        "amount": "10",
+                        "recipient": "0x1111111111111111111111111111111111111111",
+                    }
+                }
+            }
+        }))
+        .expect("request body should encode");
+
+        let parsed = quote_request_from_slice(&body).expect("hydration refund address should parse");
+        assert_eq!(parsed.intent.source_chain, ChainKey::Hydration);
+        assert_eq!(
+            parsed.intent.refund_address,
+            "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+        );
+    }
+
+    #[test]
+    fn quote_request_rejects_non_evm_refund_address_for_evm_sources() {
+        let body = serde_json::to_vec(&json!({
+            "intent": {
+                "sourceChain": "moonbeam",
+                "destinationChain": "hydration",
+                "refundAddress": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+                "deadline": 1_773_185_200u64,
+                "action": {
+                    "type": "transfer",
+                    "params": {
+                        "asset": "DOT",
+                        "amount": "10",
+                        "recipient": "5Frecipient",
+                    }
+                }
+            }
+        }))
+        .expect("request body should encode");
+
+        let error = quote_request_from_slice(&body).expect_err("moonbeam refund address must stay evm");
+        assert!(
+            error
+                .message
+                .contains("refundAddress must be a 0x-prefixed even-length hex string"),
+            "unexpected error: {}",
+            error.message
+        );
     }
 }

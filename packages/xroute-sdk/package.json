@@ -31,6 +31,7 @@
     "prepack": "npm run build"
   },
   "dependencies": {
+    "@noble/hashes": "2.0.1",
     "@scure/sr25519": "1.0.0",
     "@polkadot-api/metadata-builders": "0.13.9",
     "@polkadot-api/substrate-bindings": "0.17.0",

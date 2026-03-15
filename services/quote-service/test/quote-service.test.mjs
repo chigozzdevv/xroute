@@ -8,6 +8,7 @@ import { spawnRustService } from "../../../scripts/lib/spawn-rust-service.mjs";
 
 const workspaceRoot = process.cwd();
 const refundAddress = "0x1111111111111111111111111111111111111111";
+const substrateRefundAddress = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
 
 test("quote service serves health and quote responses", async () => {
   const fixture = createLiveInputsFixture();
@@ -126,6 +127,49 @@ test("quote service enforces moonbeam evm execution policy", async () => {
     assert.equal(disallowed.status, 400);
     const disallowedBody = await disallowed.json();
     assert.match(disallowedBody.error, /not allowlisted|maxGasLimit|maxPaymentAmount/);
+  } finally {
+    await service.close();
+    fixture.cleanup();
+  }
+});
+
+test("quote service accepts substrate refund identities for hydration-source quotes", async () => {
+  const fixture = createLiveInputsFixture();
+  const service = await spawnRustService({
+    packageName: "quote-service",
+    cwd: workspaceRoot,
+    env: fixture.env(),
+  });
+
+  try {
+    const quoteResponse = await fetch(`${service.url}/quote`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        intent: {
+          quoteId: "0xhydrafeed",
+          sourceChain: "hydration",
+          destinationChain: "moonbeam",
+          refundAddress: substrateRefundAddress,
+          deadline: 1_773_185_200,
+          action: {
+            type: "transfer",
+            params: {
+              asset: "DOT",
+              amount: "10",
+              recipient: "0x1111111111111111111111111111111111111111",
+            },
+          },
+        },
+      }),
+    });
+
+    assert.equal(quoteResponse.status, 200);
+    const payload = await quoteResponse.json();
+    assert.equal(payload.intent.refundAddress, substrateRefundAddress);
+    assert.equal(payload.quote.quoteId, "0xhydrafeed");
   } finally {
     await service.close();
     fixture.cleanup();

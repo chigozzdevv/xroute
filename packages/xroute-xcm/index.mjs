@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 import {
@@ -9,6 +8,8 @@ import {
   unifyMetadata,
 } from "@polkadot-api/substrate-bindings";
 import { getDynamicBuilder, getLookupFn } from "@polkadot-api/metadata-builders";
+import { keccak_256 } from "@noble/hashes/sha3.js";
+import { bytesToHex, hexToBytes as hexToBytesRaw } from "@noble/hashes/utils.js";
 
 import { getAssetLocation, getParachainId } from "../xroute-chain-registry/index.mjs";
 import {
@@ -113,22 +114,16 @@ export function buildExecutionEnvelope({
 }
 
 export function computeExecutionHash(envelope, { castBin = "cast" } = {}) {
+  void castBin;
   const normalized = createDispatchEnvelope(envelope);
   const modeValue = DISPATCH_MODE_TO_CONTRACT_ENUM[normalized.mode];
+  const encoded = encodeDispatchExecutionHashTuple({
+    mode: modeValue,
+    destinationHex: normalized.destinationHex,
+    messageHex: normalized.messageHex,
+  });
 
-  const encoded = execFileSync(
-    castBin,
-    [
-      "abi-encode",
-      "f(uint8,bytes,bytes)",
-      String(modeValue),
-      normalized.destinationHex,
-      normalized.messageHex,
-    ],
-    { encoding: "utf8" },
-  ).trim();
-
-  return execFileSync(castBin, ["keccak", encoded], { encoding: "utf8" }).trim().toLowerCase();
+  return `0x${bytesToHex(keccak_256(hexToBytesRaw(encoded)))}`;
 }
 
 export function buildDispatchRequest(envelope) {
@@ -176,6 +171,49 @@ export function buildRouterIntentRequest({
     deadline: assertInteger("intent.deadline", intent.deadline),
     executionHash,
   });
+}
+
+function encodeDispatchExecutionHashTuple({
+  mode,
+  destinationHex,
+  messageHex,
+}) {
+  const encodedDestination = encodeAbiBytes(destinationHex);
+  const encodedMessage = encodeAbiBytes(messageHex);
+  const destinationOffset = 96n;
+  const messageOffset = destinationOffset + encodedDestination.byteLength;
+
+  return (
+    `${encodeUint256Word(BigInt(mode))}`
+    + `${encodeUint256Word(destinationOffset)}`
+    + `${encodeUint256Word(messageOffset)}`
+    + `${encodedDestination.encoded}`
+    + `${encodedMessage.encoded}`
+  );
+}
+
+function encodeAbiBytes(value) {
+  const normalized = stripHexPrefix(assertHexString("bytes", value));
+  const paddedLength = Math.ceil(normalized.length / 64) * 64;
+  const padded = normalized.padEnd(paddedLength, "0");
+
+  return {
+    encoded: `${encodeUint256Word(BigInt(normalized.length / 2))}${padded}`,
+    byteLength: 32n + BigInt(padded.length / 2),
+  };
+}
+
+function encodeUint256Word(value) {
+  const normalized = toBigInt(value, "uint256");
+  if (normalized < 0n) {
+    throw new Error("uint256 cannot be negative");
+  }
+
+  return normalized.toString(16).padStart(64, "0");
+}
+
+function stripHexPrefix(value) {
+  return value.startsWith("0x") ? value.slice(2) : value;
 }
 
 export function buildExplorerLabel({ sourceChain, destinationChain, mode }) {

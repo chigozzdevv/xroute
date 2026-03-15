@@ -29,6 +29,7 @@ import {
 } from "./quote/index.mjs";
 import {
   createHttpStatusProvider,
+  createStatusClient,
   trackStatus,
 } from "./status/index.mjs";
 import { createWallet } from "./wallet/index.mjs";
@@ -41,7 +42,7 @@ export {
 export { NATIVE_ASSET_ADDRESS } from "./routers/router-adapters.mjs";
 export { createWallet } from "./wallet/index.mjs";
 export { createQuote, createHttpQuoteProvider, normalizeQuote } from "./quote/index.mjs";
-export { createHttpStatusProvider, trackStatus } from "./status/index.mjs";
+export { createHttpStatusProvider, createStatusClient, trackStatus } from "./status/index.mjs";
 
 const SUBSTRATE_SOURCE_CHAINS = new Set(["hydration", "bifrost"]);
 const TERMINAL_INTENT_STATUSES = new Set([
@@ -57,11 +58,33 @@ export function createXRouteClient(options = {}) {
   return createHostedXRouteClient(options);
 }
 
+export function createXRouteOperatorClient({
+  apiKey,
+  baseUrl = DEFAULT_XROUTE_API_BASE_URL,
+  authToken,
+  fetchImpl = globalThis.fetch,
+  headers,
+} = {}) {
+  const normalizedApiKey =
+    apiKey === undefined || apiKey === null
+      ? undefined
+      : assertNonEmptyString("apiKey", apiKey);
+
+  return createHttpExecutorRelayerClient({
+    endpoint: normalizeHostedBaseUrl(baseUrl),
+    apiKey: normalizedApiKey,
+    authToken,
+    fetchImpl,
+    headers,
+  });
+}
+
 export function createConfiguredXRouteClient({
   quoteProvider,
   routerAdapter,
   statusProvider,
   assetAddressResolver,
+  submitRequestBuilder = null,
   xcmEnvelopeBuilder = buildExecutionEnvelope,
   castBin = "cast",
 }) {
@@ -74,8 +97,11 @@ export function createConfiguredXRouteClient({
   if (!statusProvider?.getStatus || !statusProvider?.getTimeline || !statusProvider?.subscribe) {
     throw new Error("statusProvider is incomplete");
   }
-  if (typeof assetAddressResolver !== "function") {
-    throw new Error("assetAddressResolver is required");
+  if (
+    typeof submitRequestBuilder !== "function"
+    && typeof assetAddressResolver !== "function"
+  ) {
+    throw new Error("assetAddressResolver or submitRequestBuilder is required");
   }
 
   async function quoteIntent(intentInput) {
@@ -106,17 +132,24 @@ export function createConfiguredXRouteClient({
     const normalizedEnvelope = createDispatchEnvelope(
       envelope ?? xcmEnvelopeBuilder({ intent: normalizedIntent, quote: normalizedQuote }),
     );
-    const assetAddress = await assetAddressResolver({
-      chainKey: normalizedIntent.sourceChain,
-      assetKey: normalizedQuote.submission.asset,
-    });
-    const request = buildRouterIntentRequest({
-      intent: normalizedIntent,
-      quote: normalizedQuote,
-      envelope: normalizedEnvelope,
-      assetAddress,
-      castBin,
-    });
+    const request =
+      typeof submitRequestBuilder === "function"
+        ? await submitRequestBuilder({
+            intent: normalizedIntent,
+            quote: normalizedQuote,
+            envelope: normalizedEnvelope,
+            castBin,
+          })
+        : buildRouterIntentRequest({
+            intent: normalizedIntent,
+            quote: normalizedQuote,
+            envelope: normalizedEnvelope,
+            assetAddress: await assetAddressResolver({
+              chainKey: normalizedIntent.sourceChain,
+              assetKey: normalizedQuote.submission.asset,
+            }),
+            castBin,
+          });
 
     return routerAdapter.submitIntent({
       owner,
@@ -169,7 +202,7 @@ export function createConfiguredXRouteClient({
       quote: quoted.quote,
       submitted,
       dispatched,
-      status: statusProvider.getStatus(submitted.intentId),
+      status: await statusProvider.getStatus(submitted.intentId),
     };
   }
 
@@ -217,67 +250,9 @@ export function createConfiguredXRouteClient({
       pollIntervalMs = 1_000,
     } = {},
   ) {
-    const normalizedIntentId = assertNonEmptyString("intentId", intentId);
-    const existing = statusProvider.getStatus(normalizedIntentId);
-    if (isTerminalIntentStatus(existing?.status)) {
-      return existing;
-    }
-
-    return new Promise((resolve, reject) => {
-      let timeoutId = null;
-      let pollId = null;
-      let unsubscribe = null;
-
-      const cleanup = () => {
-        if (timeoutId !== null) {
-          clearTimeout(timeoutId);
-        }
-        if (pollId !== null) {
-          clearInterval(pollId);
-        }
-        if (typeof unsubscribe === "function") {
-          unsubscribe();
-        }
-      };
-
-      const finish = (handler, value) => {
-        cleanup();
-        handler(value);
-      };
-
-      const inspect = (record) => {
-        if (!record || record.intentId !== normalizedIntentId) {
-          return;
-        }
-        if (isTerminalIntentStatus(record.status)) {
-          finish(resolve, record);
-        }
-      };
-
-      if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
-        timeoutId = setTimeout(() => {
-          finish(
-            reject,
-            new Error(
-              `timed out waiting for terminal status on intent ${normalizedIntentId}`,
-            ),
-          );
-        }, timeoutMs);
-      }
-
-      if (typeof statusProvider.subscribe === "function") {
-        unsubscribe = statusProvider.subscribe((record) => {
-          inspect(record);
-        });
-      }
-
-      if (Number.isFinite(pollIntervalMs) && pollIntervalMs > 0) {
-        pollId = setInterval(() => {
-          inspect(statusProvider.getStatus(normalizedIntentId));
-        }, pollIntervalMs);
-      }
-
-      inspect(statusProvider.getStatus(normalizedIntentId));
+    return waitForIntentStatus(statusProvider, intentId, {
+      timeoutMs,
+      pollIntervalMs,
     });
   }
 
@@ -359,9 +334,13 @@ export function createConfiguredXRouteClient({
     execute: executeIntent,
     runFlow,
     waitForCompletion,
+    wait: waitForCompletion,
     settle: settleIntent,
     fail: failIntent,
     refund: refundIntent,
+    track(intentId, options) {
+      return trackIntentStatus(statusProvider, intentId, options);
+    },
 
     getStatus(intentId) {
       return statusProvider.getStatus(intentId);
@@ -420,17 +399,24 @@ function createHostedXRouteClient({
   const api = {
     connectWallet(typeOrWallet, walletOptions) {
       if (typeof typeOrWallet === "string") {
-        walletConnector = normalizeHostedWalletConnector(
-          createWallet(typeOrWallet, walletOptions),
+        walletConnector = normalizeWalletConnector(
+          createWallet(typeOrWallet, {
+            ...walletOptions,
+            deploymentProfile: normalizedDeploymentProfile,
+          }),
         );
       } else {
-        walletConnector = normalizeHostedWalletConnector(typeOrWallet);
+        walletConnector = normalizeWalletConnector(typeOrWallet);
       }
       connectedClient = createConfiguredXRouteClient({
         quoteProvider,
-        routerAdapter: walletConnector.routerAdapter,
-        statusProvider: walletConnector.statusProvider ?? hostedStatusProvider,
+        routerAdapter: createRelayerAwareRouterAdapter({
+          walletConnector,
+          relayer,
+        }),
+        statusProvider: hostedStatusProvider,
         assetAddressResolver: walletConnector.assetAddressResolver,
+        submitRequestBuilder: walletConnector.submitRequestBuilder,
         xcmEnvelopeBuilder:
           walletConnector.xcmEnvelopeBuilder ?? buildExecutionEnvelope,
         castBin: walletConnector.castBin ?? "cast",
@@ -462,7 +448,7 @@ function createHostedXRouteClient({
     },
 
     async transfer(input) {
-      const owner = await resolveConnectedWalletOwner(requireHostedWallet(walletConnector));
+      const owner = await resolveConnectedWalletOwner(requireWalletConnection(walletConnector));
       const intent = createTransferIntent({
         deploymentProfile: input.deploymentProfile ?? normalizedDeploymentProfile,
         sourceChain: input.sourceChain,
@@ -476,14 +462,14 @@ function createHostedXRouteClient({
         },
       });
 
-      return requireHostedConnectedClient(connectedClient).execute({
+      return requireConnectedClient(connectedClient).execute({
         intent,
         owner,
       });
     },
 
     async swap(input) {
-      const owner = await resolveConnectedWalletOwner(requireHostedWallet(walletConnector));
+      const owner = await resolveConnectedWalletOwner(requireWalletConnection(walletConnector));
       const intent = createSwapIntent({
         deploymentProfile: input.deploymentProfile ?? normalizedDeploymentProfile,
         sourceChain: input.sourceChain,
@@ -500,14 +486,14 @@ function createHostedXRouteClient({
         },
       });
 
-      return requireHostedConnectedClient(connectedClient).execute({
+      return requireConnectedClient(connectedClient).execute({
         intent,
         owner,
       });
     },
 
     async execute(input) {
-      const owner = await resolveConnectedWalletOwner(requireHostedWallet(walletConnector));
+      const owner = await resolveConnectedWalletOwner(requireWalletConnection(walletConnector));
       const intent = createExecuteIntent({
         deploymentProfile: input.deploymentProfile ?? normalizedDeploymentProfile,
         sourceChain: input.sourceChain,
@@ -538,7 +524,7 @@ function createHostedXRouteClient({
         },
       });
 
-      return requireHostedConnectedClient(connectedClient).execute({
+      return requireConnectedClient(connectedClient).execute({
         intent,
         owner,
       });
@@ -554,8 +540,8 @@ function createHostedXRouteClient({
     async runFlow(options = {}) {
       const owner =
         options.owner ??
-        await resolveConnectedWalletOwner(requireHostedWallet(walletConnector));
-      return requireHostedConnectedClient(connectedClient).runFlow({
+        await resolveConnectedWalletOwner(requireWalletConnection(walletConnector));
+      return requireConnectedClient(connectedClient).runFlow({
         ...options,
         owner,
       });
@@ -569,18 +555,17 @@ function createHostedXRouteClient({
       return hostedStatusProvider.getTimeline(intentId);
     },
 
-    subscribe(listener) {
-      if (connectedClient) {
-        return connectedClient.subscribe(listener);
-      }
-
-      return hostedStatusProvider.subscribe(listener);
+    async wait(intentId, options) {
+      return waitForIntentStatus(hostedStatusProvider, intentId, options);
     },
 
-    jobs: relayer,
-    relayer,
-    quoteProvider,
-    hostedStatusProvider,
+    track(intentId, options) {
+      return trackIntentStatus(hostedStatusProvider, intentId, options);
+    },
+
+    subscribe(listener) {
+      return hostedStatusProvider.subscribe(listener);
+    },
   };
 
   if (wallet) {
@@ -600,28 +585,103 @@ function normalizeHostedBaseUrl(baseUrl) {
   return normalized;
 }
 
-function normalizeHostedWalletConnector(wallet) {
+function normalizeWalletConnector(wallet) {
   if (!wallet || typeof wallet !== "object") {
     throw new Error("connectWallet(wallet) requires a wallet connector object");
   }
   if (!wallet.routerAdapter?.submitIntent || !wallet.routerAdapter?.dispatchIntent) {
     throw new Error("wallet.routerAdapter submitIntent and dispatchIntent are required");
   }
-  if (typeof wallet.assetAddressResolver !== "function") {
-    throw new Error("wallet.assetAddressResolver is required");
+  if (
+    typeof wallet.submitRequestBuilder !== "function"
+    && typeof wallet.assetAddressResolver !== "function"
+  ) {
+    throw new Error("wallet.assetAddressResolver or submitRequestBuilder is required");
   }
 
   return wallet;
 }
 
-function requireHostedWallet(wallet) {
+function createRelayerAwareRouterAdapter({ walletConnector, relayer }) {
+  const walletRouterAdapter = walletConnector.routerAdapter;
+  const substrateDispatches = new Map();
+
+  const hostedRouterAdapter = {
+    async submitIntent(input) {
+      const submitted = await walletRouterAdapter.submitIntent(input);
+
+      if (requiresSubstrateSourceMetadata(input?.intent?.sourceChain)) {
+        substrateDispatches.set(assertNonEmptyString("intentId", submitted.intentId), {
+          intent: input.intent,
+          quote: input.quote,
+          dispatchResult: null,
+          registrationResult: null,
+        });
+      }
+
+      return submitted;
+    },
+
+    async dispatchIntent({ intentId, request }) {
+      const normalizedIntentId = assertNonEmptyString("intentId", intentId);
+      const state = substrateDispatches.get(normalizedIntentId);
+      const dispatchResult =
+        state?.dispatchResult
+        ?? await walletRouterAdapter.dispatchIntent({ intentId: normalizedIntentId, request });
+
+      if (!state) {
+        return dispatchResult;
+      }
+
+      if (!state.dispatchResult) {
+        state.dispatchResult = dispatchResult;
+      }
+
+      if (!state.registrationResult) {
+        state.registrationResult = await relayer.dispatch({
+          intentId: normalizedIntentId,
+          intent: state.intent,
+          quote: state.quote,
+          request,
+          dispatchResult,
+        });
+      }
+
+      return {
+        ...dispatchResult,
+        relayerJob: state.registrationResult.job ?? state.registrationResult,
+      };
+    },
+  };
+
+  if (typeof walletRouterAdapter.finalizeSuccess === "function") {
+    hostedRouterAdapter.finalizeSuccess =
+      walletRouterAdapter.finalizeSuccess.bind(walletRouterAdapter);
+  }
+  if (typeof walletRouterAdapter.finalizeFailure === "function") {
+    hostedRouterAdapter.finalizeFailure =
+      walletRouterAdapter.finalizeFailure.bind(walletRouterAdapter);
+  }
+  if (typeof walletRouterAdapter.refundFailedIntent === "function") {
+    hostedRouterAdapter.refundFailedIntent =
+      walletRouterAdapter.refundFailedIntent.bind(walletRouterAdapter);
+  }
+  if (typeof walletRouterAdapter.previewRefundableAmount === "function") {
+    hostedRouterAdapter.previewRefundableAmount =
+      walletRouterAdapter.previewRefundableAmount.bind(walletRouterAdapter);
+  }
+
+  return hostedRouterAdapter;
+}
+
+function requireWalletConnection(wallet) {
   if (!wallet) {
     throw new Error("connectWallet(wallet) is required for source-chain execution");
   }
   return wallet;
 }
 
-function requireHostedConnectedClient(client) {
+function requireConnectedClient(client) {
   if (!client) {
     throw new Error("connectWallet(wallet) is required for source-chain execution");
   }
@@ -633,6 +693,163 @@ async function resolveConnectedWalletOwner(wallet) {
     return assertNonEmptyString("wallet.getAddress()", await wallet.getAddress());
   }
   return assertNonEmptyString("wallet.address", wallet.owner ?? wallet.address);
+}
+
+function trackIntentStatus(
+  statusProvider,
+  intentId,
+  {
+    pollIntervalMs = 1_000,
+    timeoutMs = null,
+    includeTimeline = false,
+    onUpdate = null,
+    stopOnTerminal = true,
+    signal,
+  } = {},
+) {
+  const normalizedIntentId = assertNonEmptyString("intentId", intentId);
+  let stopped = false;
+  let inFlight = false;
+  let timeoutId = null;
+  let pollId = null;
+  let abortListener = null;
+  let lastSnapshot = null;
+  let lastSerializedSnapshot = null;
+  let resolveDone;
+  let rejectDone;
+
+  const done = new Promise((resolve, reject) => {
+    resolveDone = resolve;
+    rejectDone = reject;
+  });
+
+  const cleanup = () => {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+    if (pollId !== null) {
+      clearTimeout(pollId);
+      pollId = null;
+    }
+    if (signal && abortListener) {
+      signal.removeEventListener("abort", abortListener);
+      abortListener = null;
+    }
+  };
+
+  const stop = () => {
+    if (stopped) {
+      return lastSnapshot;
+    }
+    stopped = true;
+    cleanup();
+    resolveDone(lastSnapshot?.status ?? null);
+    return lastSnapshot;
+  };
+
+  const fail = (error) => {
+    if (stopped) {
+      return;
+    }
+    stopped = true;
+    cleanup();
+    rejectDone(error);
+  };
+
+  const scheduleNextPoll = () => {
+    if (stopped || !Number.isFinite(pollIntervalMs) || pollIntervalMs <= 0) {
+      return;
+    }
+    pollId = setTimeout(() => {
+      void poll();
+    }, pollIntervalMs);
+  };
+
+  const publish = (snapshot) => {
+    lastSnapshot = snapshot;
+    const serialized = JSON.stringify(toPlainObject({
+      status: snapshot.status,
+      timeline: snapshot.timeline ?? null,
+    }));
+    if (serialized === lastSerializedSnapshot) {
+      return;
+    }
+    lastSerializedSnapshot = serialized;
+    if (typeof onUpdate === "function") {
+      onUpdate(snapshot);
+    }
+  };
+
+  const poll = async () => {
+    if (stopped || inFlight) {
+      return;
+    }
+    inFlight = true;
+
+    try {
+      const status = await statusProvider.getStatus(normalizedIntentId);
+      const timeline =
+        includeTimeline
+          ? await statusProvider.getTimeline(normalizedIntentId)
+          : undefined;
+      const snapshot = Object.freeze({
+        intentId: normalizedIntentId,
+        status,
+        ...(includeTimeline ? { timeline } : {}),
+      });
+
+      publish(snapshot);
+
+      if (stopOnTerminal && isTerminalIntentStatus(status?.status)) {
+        stop();
+        return;
+      }
+    } catch (error) {
+      fail(error);
+      return;
+    } finally {
+      inFlight = false;
+    }
+
+    scheduleNextPoll();
+  };
+
+  if (signal?.aborted) {
+    fail(new Error(`tracking aborted for intent ${normalizedIntentId}`));
+    return {
+      stop,
+      done,
+    };
+  }
+
+  if (signal) {
+    abortListener = () => {
+      fail(new Error(`tracking aborted for intent ${normalizedIntentId}`));
+    };
+    signal.addEventListener("abort", abortListener, { once: true });
+  }
+
+  if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+    timeoutId = setTimeout(() => {
+      fail(new Error(`timed out tracking intent ${normalizedIntentId}`));
+    }, timeoutMs);
+  }
+
+  void poll();
+
+  return {
+    stop,
+    done,
+  };
+}
+
+async function waitForIntentStatus(statusProvider, intentId, options = {}) {
+  const tracker = trackIntentStatus(statusProvider, intentId, {
+    ...options,
+    stopOnTerminal: true,
+  });
+  return tracker.done;
 }
 
 function defaultIntentDeadline() {

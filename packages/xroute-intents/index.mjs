@@ -31,6 +31,7 @@ const DEFAULT_CALL_FALLBACK_WEIGHT = Object.freeze({
 const DEFAULT_VDOT_ORDER_GAS_LIMIT = 500000n;
 const DEFAULT_VDOT_ORDER_REMARK = "xroute";
 const DEFAULT_VDOT_ORDER_CHANNEL_ID = 0;
+const EVM_SOURCE_CHAINS = new Set(["polkadot-hub", "moonbeam"]);
 
 export function createTransferIntent(input) {
   return createIntent({
@@ -68,7 +69,7 @@ export function createIntent(input) {
   );
   const sourceChain = getChain(input.sourceChain, deploymentProfile).key;
   const destinationChain = getChain(input.destinationChain, deploymentProfile).key;
-  const refundAddress = resolveRefundAddress(input);
+  const refundAddress = resolveRefundAddress(input, sourceChain);
   const deadline = assertInteger("deadline", input.deadline);
   const actionType = assertIncluded(
     "action.type",
@@ -352,9 +353,11 @@ function assertRemark(name, value) {
   return normalized;
 }
 
-function resolveRefundAddress(input) {
-  return assertAddress(
-    "refundAddress",
-    input.refundAddress ?? input.senderAddress ?? input.ownerAddress,
-  );
+function resolveRefundAddress(input, sourceChain) {
+  const value = input.refundAddress ?? input.senderAddress ?? input.ownerAddress;
+  if (EVM_SOURCE_CHAINS.has(sourceChain)) {
+    return assertAddress("refundAddress", value);
+  }
+
+  return assertNonEmptyString("refundAddress", value);
 }

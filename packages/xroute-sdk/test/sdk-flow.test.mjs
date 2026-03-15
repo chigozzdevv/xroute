@@ -573,3 +573,153 @@ test("sdk coordinates fail and refund helpers", async () => {
   assert.equal(status.refund.asset, "DOT");
   assert.equal(status.refund.amount, 1000250000000n);
 });
+
+test("sdk runFlow waits correctly when statusProvider.getStatus is async", async () => {
+  const indexer = new InMemoryStatusIndexer();
+  let nextAt = 1;
+  let nextSequence = 0;
+  let nextNonce = 0;
+  const records = new Map();
+
+  const quoteProvider = {
+    async quote(intent) {
+      return {
+        quoteId: intent.quoteId,
+        deploymentProfile: "mainnet",
+        route: ["moonbeam", "polkadot-hub", "hydration"],
+        fees: {
+          xcmFee: { asset: "DOT", amount: 150000000n },
+          destinationFee: { asset: "DOT", amount: 100000000n },
+          platformFee: { asset: "DOT", amount: 1000000000n },
+          totalFee: { asset: "DOT", amount: 1250000000n },
+        },
+        expectedOutput: { asset: "USDT", amount: 493515000n },
+        minOutput: { asset: "USDT", amount: 490000000n },
+        submission: {
+          action: "swap",
+          asset: "DOT",
+          amount: 1000000000000n,
+          xcmFee: 150000000n,
+          destinationFee: 100000000n,
+          minOutputAmount: 490000000n,
+        },
+        executionPlan: {
+          route: ["moonbeam", "polkadot-hub", "hydration"],
+          steps: [],
+        },
+      };
+    },
+  };
+
+  const routerAdapter = {
+    async submitIntent({ owner, intent, quote, request }) {
+      const intentId = `0x${createHash("sha256")
+        .update(`${owner}|${quote.quoteId}|${nextNonce++}|${request.executionHash}`)
+        .digest("hex")}`;
+      records.set(intentId, { owner, intent, quote, request });
+      indexer.ingest(
+        createIntentSubmittedEvent({
+          at: nextAt++,
+          sequence: nextSequence++,
+          intentId,
+          quoteId: quote.quoteId,
+          owner,
+          sourceChain: intent.sourceChain,
+          destinationChain: intent.destinationChain,
+          actionType: intent.action.type,
+          asset: quote.submission.asset,
+          amount: quote.submission.amount,
+        }),
+      );
+      return { intentId, request };
+    },
+
+    async dispatchIntent({ intentId, request }) {
+      const stored = records.get(intentId);
+      assert.ok(stored, "intent must exist before dispatch");
+
+      indexer.ingest(
+        createIntentDispatchedEvent({
+          at: nextAt++,
+          sequence: nextSequence++,
+          intentId,
+          dispatchMode: request.mode === 0 ? "execute" : "send",
+          executionHash: stored.request.executionHash,
+        }),
+      );
+      indexer.ingest(
+        createDestinationExecutionStartedEvent({
+          at: nextAt++,
+          sequence: nextSequence++,
+          intentId,
+        }),
+      );
+
+      queueMicrotask(() => {
+        indexer.ingest(
+          createDestinationExecutionSucceededEvent({
+            at: nextAt++,
+            sequence: nextSequence++,
+            intentId,
+            resultAsset: stored.quote.expectedOutput.asset,
+            resultAmount: stored.quote.expectedOutput.amount,
+            destinationTxHash: `0x${"cc".repeat(32)}`,
+          }),
+        );
+      });
+
+      return { intentId };
+    },
+  };
+
+  const statusProvider = {
+    async getStatus(intentId) {
+      return indexer.getStatus(intentId);
+    },
+    async getTimeline(intentId) {
+      return indexer.getTimeline(intentId);
+    },
+    subscribe(listener) {
+      return indexer.subscribe(listener);
+    },
+  };
+
+  const client = createConfiguredXRouteClient({
+    quoteProvider,
+    routerAdapter,
+    statusProvider,
+    assetAddressResolver: async () => "0x0000000000000000000000000000000000000000",
+  });
+
+  const flow = await client.runFlow({
+    steps: [
+      {
+        name: "swap",
+        intent: createSwapIntent({
+          sourceChain: "moonbeam",
+          destinationChain: "hydration",
+          refundAddress: "0x1111111111111111111111111111111111111111",
+          deadline: 1_773_185_200,
+          params: {
+            assetIn: "DOT",
+            assetOut: "USDT",
+            amountIn: "1000000000000",
+            minAmountOut: "490000000",
+            settlementChain: "polkadot-hub",
+            recipient: "5Frecipient",
+          },
+        }),
+        envelope: createDispatchEnvelope({
+          mode: "execute",
+          message: "0x1234",
+        }),
+      },
+    ],
+    owner: "0x1111111111111111111111111111111111111111",
+    timeoutMs: 1_000,
+    pollIntervalMs: 10,
+  });
+
+  assert.equal(flow.finalStep.finalStatus.status, "settled");
+  assert.equal(flow.steps.length, 1);
+});
