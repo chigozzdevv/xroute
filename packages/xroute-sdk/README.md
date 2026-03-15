@@ -13,7 +13,10 @@ const client = createXRouteClient({ apiKey });
 Then:
 
 ```js
-client.connectWallet(wallet);
+client.connectWallet("evm", {
+  provider: window.ethereum,
+  chainKey: "moonbeam",
+});
 
 await client.quote(...);
 await client.transfer(...);
@@ -22,6 +25,7 @@ await client.call(...);
 await client.runFlow(...);
 await client.getStatus(intentId);
 await client.getTimeline(intentId);
+await client.wait(intentId);
 ```
 
 ## Intent Surface
@@ -81,24 +85,26 @@ const client = createXRouteClient({
 
 For quote-only usage, no wallet connection is needed.
 
-For source-chain execution, connect the **user's source wallet connector**:
+For source-chain execution, connect the user's source wallet:
 
 ```js
-client.connectWallet(wallet);
+client.connectWallet("evm", {
+  provider: window.ethereum,
+  chainKey: "moonbeam",
+});
 ```
 
-### Current Wallet Requirement
+or:
 
-At the moment, `connectWallet(wallet)` expects an **XRoute-compatible wallet connector**, not a raw browser wallet object.
+```js
+client.connectWallet("substrate", {
+  extension: injectedExtension,
+  chainKey: "hydration",
+  rpcUrl: "wss://hydration-rpc.example",
+});
+```
 
-Today that connector must provide:
-
-- `address` or `getAddress()`
-- `routerAdapter`
-- `statusProvider`
-- `assetAddressResolver`
-
-This is the current bridge between hosted XRoute infrastructure and source-chain user signing.
+You can still pass an XRoute-compatible wallet connector object directly when needed.
 
 ## Quote
 
@@ -244,23 +250,51 @@ const flow = await client.runFlow({
 
 ## Status And Timeline
 
-With a connected wallet connector that includes a status provider:
+Hosted status lookups do not require a wallet connection:
 
 ```js
-const status = client.getStatus(intentId);
-const timeline = client.getTimeline(intentId);
+const status = await client.getStatus(intentId);
+const timeline = await client.getTimeline(intentId);
+const finalStatus = await client.wait(intentId);
 ```
 
-You can also subscribe:
+For polling-based tracking:
 
 ```js
-const unsubscribe = client.subscribe((record) => {
-  console.log(record.status);
+const tracker = client.track(intentId, {
+  pollIntervalMs: 1000,
+  onUpdate(snapshot) {
+    console.log(snapshot.status?.status);
+  },
 });
+
+const finalStatus = await tracker.done;
 ```
+
+## Form Options From The SDK
+
+Use the SDK to drive chain, asset, and route options:
+
+```js
+import {
+  listChains,
+  listAssets,
+  getChainWalletType,
+  getAssetDecimals,
+} from "@xroute/sdk/chains";
+import {
+  getTransferOptions,
+  getSwapOptions,
+  getExecuteOptions,
+} from "@xroute/sdk/routes";
+```
+
+These helpers are the intended source of truth for your UI option state.
 
 ## Other Exports
 
+- `createStatusClient(...)`
+- `createXRouteOperatorClient(...)`
 - `createHttpQuoteProvider(...)`
 - `createHttpExecutorRelayerClient(...)`
 - `normalizeQuote(...)`

@@ -2,10 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  createWallet,
   createEvmWalletAdapter,
   createHttpExecutorRelayerClient,
   createHttpQuoteProvider,
   createHttpStatusProvider,
+  createXRouteOperatorClient,
   createXRouteClient,
 } from "../index.mjs";
 
@@ -168,6 +170,277 @@ test("hosted createXRouteClient works without apiKey", async () => {
   assert.equal(seen[0][1].headers["x-api-key"], undefined);
 });
 
+test("hosted createXRouteClient executes hydration-source transfers through custom wallet submit builders", async () => {
+  const seen = [];
+  const walletAddress = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
+  const intentId = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const dispatchTxHash = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const submitted = [];
+  const dispatched = [];
+  const client = createXRouteClient({
+    apiKey: "public-test-key",
+    baseUrl: "https://example.test/v1",
+    fetchImpl: async (url, request) => {
+      seen.push([url, request]);
+      if (url.endsWith("/status")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              intentId,
+              status: "dispatched",
+            };
+          },
+        };
+      }
+
+      if (!url.endsWith("/quote")) {
+        if (!url.endsWith("/jobs/dispatch")) {
+          throw new Error(`unexpected request to ${url}`);
+        }
+
+        return {
+          ok: true,
+          async json() {
+            return {
+              job: {
+                id: "job-1",
+                status: "queued",
+              },
+            };
+          },
+        };
+      }
+
+      return {
+        ok: true,
+        async json() {
+          return {
+            quote: {
+              quoteId: "ignored",
+              deploymentProfile: "mainnet",
+              route: ["hydration", "polkadot-hub", "moonbeam"],
+              segments: [],
+              fees: {
+                xcmFee: { asset: "DOT", amount: "1" },
+                destinationFee: { asset: "DOT", amount: "2" },
+                platformFee: { asset: "DOT", amount: "3" },
+                totalFee: { asset: "DOT", amount: "6" },
+              },
+              expectedOutput: { asset: "DOT", amount: "0" },
+              minOutput: null,
+              submission: {
+                action: "transfer",
+                asset: "DOT",
+                amount: "10000000000",
+                xcmFee: "1",
+                destinationFee: "2",
+                minOutputAmount: "10000000000",
+              },
+              executionPlan: {
+                route: ["hydration", "polkadot-hub", "moonbeam"],
+                steps: [],
+              },
+            },
+          };
+        },
+      };
+    },
+  });
+
+  client.connectWallet({
+    async getAddress() {
+      return walletAddress;
+    },
+    xcmEnvelopeBuilder() {
+      return {
+        mode: "execute",
+        messageHex: "0x1234",
+      };
+    },
+    submitRequestBuilder({ intent, quote, envelope }) {
+      assert.equal(intent.sourceChain, "hydration");
+      assert.equal(intent.refundAddress, walletAddress);
+      assert.equal(quote.submission.asset, "DOT");
+      assert.equal(envelope.mode, "execute");
+
+      return {
+        sourceKind: "substrate-source",
+        refundAddress: intent.refundAddress,
+        asset: quote.submission.asset,
+        amount: quote.submission.amount,
+        xcmFee: quote.submission.xcmFee,
+        destinationFee: quote.submission.destinationFee,
+        minOutputAmount: quote.submission.minOutputAmount,
+        deadline: intent.deadline,
+        executionHash: "0x1111111111111111111111111111111111111111111111111111111111111111",
+      };
+    },
+    routerAdapter: {
+      async submitIntent({ owner, intent, quote, request }) {
+        submitted.push({ owner, intent, quote, request });
+        return {
+          intentId,
+          request,
+        };
+      },
+      async dispatchIntent({ intentId: dispatchedIntentId, request }) {
+        dispatched.push({ intentId: dispatchedIntentId, request });
+        return {
+          intentId: dispatchedIntentId,
+          txHash: dispatchTxHash,
+          request,
+        };
+      },
+    },
+  });
+
+  const execution = await client.transfer({
+    sourceChain: "hydration",
+    destinationChain: "moonbeam",
+    asset: "DOT",
+    amount: "10000000000",
+    recipient: "0x1111111111111111111111111111111111111111",
+  });
+
+  assert.equal(execution.intent.refundAddress, walletAddress);
+  assert.equal(submitted.length, 1);
+  assert.equal(submitted[0].owner, walletAddress);
+  assert.equal(submitted[0].request.sourceKind, "substrate-source");
+  assert.equal(dispatched.length, 1);
+  assert.equal(dispatched[0].request.mode, 0);
+  assert.equal(execution.dispatched.relayerJob.id, "job-1");
+  assert.equal(execution.status.status, "dispatched");
+
+  const quoteBody = JSON.parse(seen[0][1].body);
+  const relayerBody = JSON.parse(seen[1][1].body);
+  assert.equal(quoteBody.intent.sourceChain, "hydration");
+  assert.equal(quoteBody.intent.refundAddress, walletAddress);
+  assert.equal(seen[1][0], "https://example.test/v1/jobs/dispatch");
+  assert.equal(relayerBody.intent.refundAddress, walletAddress);
+  assert.equal(relayerBody.sourceIntent.kind, "substrate-source");
+  assert.equal(relayerBody.sourceDispatch.txHash, dispatchTxHash);
+});
+
+test("hosted createXRouteClient waits for terminal status via the hosted status provider", async () => {
+  const statuses = ["submitted", "executing", "settled"];
+  const seen = [];
+  const client = createXRouteClient({
+    apiKey: "public-test-key",
+    baseUrl: "https://example.test/v1",
+    fetchImpl: async (url, request) => {
+      seen.push([url, request]);
+      if (!url.endsWith("/status")) {
+        throw new Error(`unexpected request to ${url}`);
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            intentId:
+              "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            status: statuses.shift() ?? "settled",
+          };
+        },
+      };
+    },
+  });
+
+  const status = await client.wait(
+    "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    {
+      pollIntervalMs: 1,
+      timeoutMs: 1_000,
+    },
+  );
+
+  assert.equal(status.status, "settled");
+  assert.ok(seen.length >= 2);
+});
+
+test("hosted createXRouteClient tracks status changes until settlement", async () => {
+  const pendingStatuses = ["submitted", "executing", "settled"];
+  const seenUpdates = [];
+  const client = createXRouteClient({
+    apiKey: "public-test-key",
+    baseUrl: "https://example.test/v1",
+    fetchImpl: async (url) => {
+      if (url.endsWith("/timeline")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              timeline: seenUpdates.map((status, index) => ({
+                type: status,
+                at: index + 1,
+              })),
+            };
+          },
+        };
+      }
+      if (!url.endsWith("/status")) {
+        throw new Error(`unexpected request to ${url}`);
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            intentId:
+              "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            status: pendingStatuses.shift() ?? "settled",
+          };
+        },
+      };
+    },
+  });
+
+  const tracker = client.track(
+    "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    {
+      pollIntervalMs: 1,
+      timeoutMs: 1_000,
+      includeTimeline: true,
+      onUpdate(snapshot) {
+        seenUpdates.push(snapshot.status?.status ?? null);
+      },
+    },
+  );
+
+  const finalStatus = await tracker.done;
+  assert.equal(finalStatus.status, "settled");
+  assert.deepEqual(seenUpdates, ["submitted", "executing", "settled"]);
+});
+
+test("createXRouteOperatorClient exposes relayer operations outside the public browser client", async () => {
+  const seen = [];
+  const client = createXRouteOperatorClient({
+    authToken: "secret-token",
+    baseUrl: "https://example.test/v1",
+    fetchImpl: async (url, request) => {
+      seen.push([url, request]);
+      return {
+        ok: true,
+        async json() {
+          return {
+            jobs: [],
+          };
+        },
+      };
+    },
+  });
+
+  const payload = await client.listJobs();
+  assert.deepEqual(payload.jobs, []);
+  assert.equal(seen[0][0], "https://example.test/v1/jobs");
+  assert.equal(seen[0][1].headers.authorization, "Bearer secret-token");
+});
+
 test("createEvmWalletAdapter submits intents with approval and extracts intent id from receipt", async () => {
   const calls = [];
   const routerAddress = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -291,6 +564,100 @@ test("createEvmWalletAdapter submits intents with approval and extracts intent i
   assert.ok(sentTxs[1].data.startsWith("0xdf260bc0"));
   assert.equal(sentTxs[2].to.toLowerCase(), routerAddress);
   assert.ok(sentTxs[2].data.startsWith("0xa65e5b7d"));
+});
+
+test("createWallet resolves hosted mainnet defaults for moonbeam evm wallets", async () => {
+  const calls = [];
+  const ownerAddress = "0x1111111111111111111111111111111111111111";
+  const routerAddress = "0x33810619b522ee56dcd0cfba53822fad5ff48fdd";
+  const tokenAddress = "0xffffffff1fcacbd218edc0eba20fc2308c778080";
+  const intentId = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+  const txHashes = {
+    approve: "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    submit: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  };
+
+  const provider = {
+    async request({ method, params }) {
+      calls.push({ method, params });
+      switch (method) {
+        case "eth_requestAccounts":
+          return [ownerAddress];
+        case "eth_call": {
+          const data = params?.[0]?.data ?? "";
+          if (data.startsWith("0x12747753")) {
+            return "0x01f4";
+          }
+          if (data.startsWith("0xdd62ed3e")) {
+            return "0x0";
+          }
+          throw new Error(`unexpected eth_call payload: ${data}`);
+        }
+        case "eth_sendTransaction": {
+          const tx = params?.[0];
+          if (tx.data.startsWith("0x095ea7b3")) {
+            return txHashes.approve;
+          }
+          if (tx.data.startsWith("0xdf260bc0")) {
+            return txHashes.submit;
+          }
+          throw new Error(`unexpected tx payload: ${tx.data}`);
+        }
+        case "eth_getTransactionReceipt": {
+          const txHash = params?.[0];
+          if (txHash === txHashes.approve) {
+            return { status: "0x1", logs: [] };
+          }
+          if (txHash === txHashes.submit) {
+            return {
+              status: "0x1",
+              logs: [
+                {
+                  address: routerAddress,
+                  topics: [
+                    "0x958ded10bf7c27600499d19f87c591832d502b52c7439827fabc5c4fe5d7d028",
+                    intentId,
+                  ],
+                },
+              ],
+            };
+          }
+          return null;
+        }
+        default:
+          throw new Error(`unexpected rpc method: ${method}`);
+      }
+    },
+  };
+
+  const wallet = createWallet("evm", {
+    provider,
+    chainKey: "moonbeam",
+    deploymentProfile: "mainnet",
+  });
+
+  const submitted = await wallet.routerAdapter.submitIntent({
+    owner: ownerAddress,
+    request: {
+      actionType: 0,
+      asset: tokenAddress,
+      refundAddress: ownerAddress,
+      amount: 100n,
+      xcmFee: 20n,
+      destinationFee: 5n,
+      minOutputAmount: 100n,
+      deadline: 1_773_185_200,
+      executionHash: "0x1111111111111111111111111111111111111111111111111111111111111111",
+    },
+  });
+
+  assert.equal(submitted.intentId, intentId);
+
+  const sentTxs = calls
+    .filter((call) => call.method === "eth_sendTransaction")
+    .map((call) => call.params[0]);
+  assert.equal(sentTxs[0].to.toLowerCase(), tokenAddress);
+  assert.equal(sentTxs[1].to.toLowerCase(), routerAddress);
 });
 
 test("createXRouteClient uses the hosted base url for quote requests", async () => {

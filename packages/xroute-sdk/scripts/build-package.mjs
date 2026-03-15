@@ -48,6 +48,7 @@ const textCopies = [
     to: resolve(distRoot, "wallet/index.mjs"),
     replacements: [
       ["../../xroute-types/index.mjs", "../vendor/xroute-types/index.mjs"],
+      ["../../xroute-precompile-interfaces/index.mjs", "../vendor/xroute-precompile-interfaces/index.mjs"],
     ],
   },
   {

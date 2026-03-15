@@ -1,8 +1,13 @@
 import { assertNonEmptyString } from "../../xroute-types/index.mjs";
 import {
+  DEFAULT_DEPLOYMENT_PROFILE,
+  normalizeDeploymentProfile,
+} from "../../xroute-precompile-interfaces/index.mjs";
+import {
   createEvmWalletAdapter,
   createSubstrateWalletAdapter,
 } from "../wallets/wallet-adapters.mjs";
+import { NATIVE_ASSET_ADDRESS } from "../routers/router-adapters.mjs";
 
 const WALLET_TYPES = Object.freeze({
   EVM: "evm",
@@ -10,6 +15,27 @@ const WALLET_TYPES = Object.freeze({
 });
 
 export { WALLET_TYPES };
+
+const HOSTED_EVM_WALLET_DEFAULTS = Object.freeze({
+  mainnet: Object.freeze({
+    "polkadot-hub": Object.freeze({
+      routerAddress: "0xaa696e1929b0284f3a0bbc2cab2653cae6c8f7a8",
+      assetAddresses: Object.freeze({
+        "polkadot-hub": Object.freeze({
+          DOT: NATIVE_ASSET_ADDRESS,
+        }),
+      }),
+    }),
+    moonbeam: Object.freeze({
+      routerAddress: "0x33810619b522ee56dcd0cfba53822fad5ff48fdd",
+      assetAddresses: Object.freeze({
+        moonbeam: Object.freeze({
+          DOT: "0xffffffff1fcacbd218edc0eba20fc2308c778080",
+        }),
+      }),
+    }),
+  }),
+});
 
 export function createWallet(type, options = {}) {
   const normalizedType = assertNonEmptyString("type", type).toLowerCase();
@@ -32,6 +58,7 @@ function createEvmWallet({
   routerAddress,
   statusProvider,
   assetAddresses,
+  deploymentProfile = DEFAULT_DEPLOYMENT_PROFILE,
   gasLimit,
   autoApprove,
   receiptPollIntervalMs,
@@ -43,12 +70,21 @@ function createEvmWallet({
     );
   }
 
+  const normalizedDeploymentProfile = normalizeDeploymentProfile(deploymentProfile);
+  const normalizedChainKey = assertNonEmptyString("chainKey", chainKey);
+  const defaultConfig = normalizedChainKey
+    ? resolveHostedEvmWalletDefaults(normalizedChainKey, normalizedDeploymentProfile)
+    : null;
+
   return createEvmWalletAdapter({
     provider,
-    chainKey,
-    routerAddress,
+    chainKey: normalizedChainKey,
+    routerAddress: routerAddress ?? defaultConfig?.routerAddress,
     statusProvider,
-    assetAddresses,
+    assetAddresses: mergeAssetAddressMaps(
+      defaultConfig?.assetAddresses,
+      normalizeAssetAddressOverrides(assetAddresses, normalizedChainKey),
+    ),
     gasLimit,
     autoApprove,
     receiptPollIntervalMs,
@@ -75,12 +111,13 @@ function createSubstrateWallet({
       'createWallet("substrate") requires an extension or account',
     );
   }
+  const normalizedChainKey = assertNonEmptyString("chainKey", chainKey);
 
   return createSubstrateWalletAdapter({
     extension,
     account,
     accountAddress,
-    chainKey,
+    chainKey: normalizedChainKey,
     rpcUrl,
     statusProvider,
     assetAddresses,
@@ -90,4 +127,50 @@ function createSubstrateWallet({
     xcmWeightRuntimeApis,
     extensionDappName,
   });
+}
+
+function resolveHostedEvmWalletDefaults(chainKey, deploymentProfile) {
+  const profileConfig = HOSTED_EVM_WALLET_DEFAULTS[deploymentProfile];
+  return profileConfig?.[chainKey] ?? null;
+}
+
+function normalizeAssetAddressOverrides(assetAddresses, chainKey) {
+  if (!assetAddresses || !isRecord(assetAddresses) || !chainKey) {
+    return assetAddresses;
+  }
+
+  const values = Object.values(assetAddresses);
+  const looksFlat = values.length > 0 && values.every((value) => typeof value === "string");
+  return looksFlat ? { [chainKey]: assetAddresses } : assetAddresses;
+}
+
+function mergeAssetAddressMaps(defaults, overrides) {
+  if (!defaults) {
+    return overrides;
+  }
+  if (!overrides) {
+    return defaults;
+  }
+  if (!isRecord(defaults) || !isRecord(overrides)) {
+    return overrides;
+  }
+
+  const merged = { ...defaults };
+  for (const [key, value] of Object.entries(overrides)) {
+    if (isRecord(value) && isRecord(defaults[key])) {
+      merged[key] = {
+        ...defaults[key],
+        ...value,
+      };
+      continue;
+    }
+
+    merged[key] = value;
+  }
+
+  return merged;
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }

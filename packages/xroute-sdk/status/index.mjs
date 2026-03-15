@@ -14,13 +14,15 @@ export {
   createRefundIssuedEvent,
 } from "../indexers/status-indexer.mjs";
 
-export function trackStatus(options = {}) {
+export function createStatusClient(options = {}) {
   return createHttpStatusProvider({
     endpoint: options.baseUrl ?? DEFAULT_XROUTE_API_BASE_URL,
     apiKey: options.apiKey,
     fetchImpl: options.fetchImpl,
   });
 }
+
+export const trackStatus = createStatusClient;
 
 export function createHttpStatusProvider({
   endpoint,
