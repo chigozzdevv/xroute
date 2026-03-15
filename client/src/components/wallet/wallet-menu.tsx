@@ -7,7 +7,16 @@ import { useWallet } from "@/hooks/use-wallet";
 import { cn } from "@/lib/cn";
 
 export function WalletMenu() {
-  const { account, connect, disconnect, error, isConnecting } = useWallet();
+  const {
+    account,
+    availableWallets,
+    connectEvm,
+    connectSubstrate,
+    disconnect,
+    error,
+    isConnecting,
+    kind,
+  } = useWallet();
   const [isOpen, setIsOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
@@ -25,13 +34,18 @@ export function WalletMenu() {
     };
   }, []);
 
-  async function handleTriggerClick() {
-    if (!account) {
-      await connect();
-      return;
-    }
-
+  function handleTriggerClick() {
     setIsOpen((current) => !current);
+  }
+
+  async function handleConnectEvm() {
+    await connectEvm();
+    setIsOpen(false);
+  }
+
+  async function handleConnectSubstrate() {
+    await connectSubstrate();
+    setIsOpen(false);
   }
 
   function handleDisconnect() {
@@ -55,8 +69,8 @@ export function WalletMenu() {
         )}
         onClick={handleTriggerClick}
         disabled={isConnecting}
-        aria-haspopup={account ? "menu" : undefined}
-        aria-expanded={account ? isOpen : undefined}
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
       >
         <span className="font-extrabold tracking-[-0.02em]">{walletLabel}</span>
         <svg
@@ -78,25 +92,60 @@ export function WalletMenu() {
         </svg>
       </button>
 
-      {account && isOpen ? (
+      {isOpen ? (
         <div
           className="w-full min-w-[220px] rounded-[24px] border border-line bg-surface-strong p-3 shadow-panel backdrop-blur-xl sm:absolute sm:right-0 sm:top-full sm:mt-2 sm:w-[240px]"
           role="menu"
         >
-          <p className="mb-1 text-[0.72rem] uppercase tracking-[0.12em] text-muted">
-            Connected account
-          </p>
-          <p className="mb-3.5 font-extrabold tracking-[-0.03em]">
-            {truncateAddress(account, 8, 6)}
-          </p>
-          <button
-            type="button"
-            className="w-full rounded-2xl bg-teal/8 px-4 py-3 text-left font-bold transition duration-150 hover:bg-teal/14 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/30 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
-            onClick={handleDisconnect}
-            role="menuitem"
-          >
-            Disconnect
-          </button>
+          {account ? (
+            <>
+              <p className="mb-1 text-[0.72rem] uppercase tracking-[0.12em] text-muted">
+                Connected {kind === "substrate" ? "Substrate" : "EVM"} account
+              </p>
+              <p className="mb-3.5 font-extrabold tracking-[-0.03em]">
+                {truncateAddress(account, 8, 6)}
+              </p>
+            </>
+          ) : (
+            <p className="mb-3 text-[0.72rem] uppercase tracking-[0.12em] text-muted">
+              Choose a wallet
+            </p>
+          )}
+
+          <div className="grid gap-2">
+            {availableWallets.evm ? (
+              <button
+                type="button"
+                className="w-full rounded-2xl bg-teal/8 px-4 py-3 text-left font-bold transition duration-150 hover:bg-teal/14 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/30 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
+                onClick={handleConnectEvm}
+                role="menuitem"
+              >
+                {kind === "evm" ? "Reconnect EVM" : "Connect EVM"}
+              </button>
+            ) : null}
+
+            {availableWallets.substrate ? (
+              <button
+                type="button"
+                className="w-full rounded-2xl bg-orange/10 px-4 py-3 text-left font-bold transition duration-150 hover:bg-orange/16 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange/30 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
+                onClick={handleConnectSubstrate}
+                role="menuitem"
+              >
+                {kind === "substrate" ? "Reconnect Substrate" : "Connect Substrate"}
+              </button>
+            ) : null}
+
+            {account ? (
+              <button
+                type="button"
+                className="w-full rounded-2xl bg-white px-4 py-3 text-left font-bold transition duration-150 hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/30 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
+                onClick={handleDisconnect}
+                role="menuitem"
+              >
+                Disconnect
+              </button>
+            ) : null}
+          </div>
         </div>
       ) : null}
 

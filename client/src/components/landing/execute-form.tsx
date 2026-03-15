@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import {
+  actionButtonClass,
   fieldClass,
   fieldFullClass,
   formClass,
@@ -11,19 +12,24 @@ import {
   labelClass,
   textareaClass,
 } from "./form-classes";
+import { IntentStatusCard } from "./intent-status-card";
 import { PoweredBy } from "./powered-by";
 import { QuoteFooter } from "./quote-footer";
 import {
   type ChainKey,
   type ExecuteType,
-  chainLabel,
   coerceOptionValue,
-  executeAssetForType,
-  executeDestinationChain,
-  executeTypeOptions,
+  createExecuteQuoteRequest,
+  getExecuteAssetOptions,
+  getExecuteDestinationOptions,
   getExecuteSourceChainOptions,
-  type QuoteRequest,
+  getExecuteTypeOptions,
+  resolveWalletAccountForChain,
+  submitCallWithWallet,
+  useXRouteExecution,
   useXRouteQuote,
+  walletMatchesChain,
+  walletRequirementLabel,
 } from "@/lib/xroute";
 import { Select } from "@/components/ui/select";
 import { useWallet } from "@/hooks/use-wallet";
@@ -46,7 +52,7 @@ function createInitialExecuteForm(): ExecuteFormState {
     sourceChain: "hydration",
     destinationChain: "moonbeam",
     executionType: "call",
-    maxPaymentAmount: "200000000",
+    maxPaymentAmount: "0.02",
     contractAddress: "0x2222222222222222222222222222222222222222",
     calldata:
       "0xdeadbeef0000000000000000000000001111111111111111111111111111111111111111",
@@ -57,10 +63,7 @@ function createInitialExecuteForm(): ExecuteFormState {
   };
 }
 
-function buildQuoteRequest(
-  form: ExecuteFormState,
-  ownerAddress?: string,
-): QuoteRequest | null {
+function canBuildQuote(form: ExecuteFormState, ownerAddress?: string) {
   if (form.executionType !== "call") {
     return null;
   }
@@ -72,37 +75,67 @@ function buildQuoteRequest(
   if (!form.contractAddress.trim() || !form.calldata.trim()) {
     return null;
   }
-
-  return {
-    kind: "execute",
-    sourceChain: form.sourceChain,
-    destinationChain: form.destinationChain,
-    executionType: "call",
-    maxPaymentAmount: form.maxPaymentAmount,
-    contractAddress: form.contractAddress,
-    calldata: form.calldata,
-    value: form.value,
-    gasLimit: form.gasLimit,
-    fallbackRefTime: form.fallbackRefTime,
-    fallbackProofSize: form.fallbackProofSize,
-    ownerAddress: ownerAddress.trim(),
-  };
+  return ownerAddress.trim();
 }
 
 export function ExecuteForm() {
   const [form, setForm] = useState<ExecuteFormState>(createInitialExecuteForm);
-  const { account } = useWallet();
+  const { session } = useWallet();
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const executionTypeOptions = useMemo(
+    () => getExecuteTypeOptions(form.sourceChain, form.destinationChain),
+    [form.destinationChain, form.sourceChain],
+  );
   const sourceChainOptions = useMemo(
-    () => getExecuteSourceChainOptions(form.executionType),
-    [form.executionType],
+    () => getExecuteSourceChainOptions(form.executionType, form.destinationChain),
+    [form.destinationChain, form.executionType],
   );
-  const executionAsset = executeAssetForType(form.executionType);
+  const destinationOptions = useMemo(
+    () => getExecuteDestinationOptions(form.sourceChain, form.executionType),
+    [form.executionType, form.sourceChain],
+  );
+  const executionAssetOptions = useMemo(
+    () => getExecuteAssetOptions(form.sourceChain, form.destinationChain, form.executionType),
+    [form.destinationChain, form.executionType, form.sourceChain],
+  );
+  const executionAsset =
+    executionAssetOptions.find((candidate) => !candidate.disabled)?.value ?? "DOT";
+  const ownerAddress = resolveWalletAccountForChain(session, form.sourceChain) ?? undefined;
   const quoteRequest = useMemo(
-    () => buildQuoteRequest(form, account ?? undefined),
-    [account, form],
+    () => {
+      const walletAddress = canBuildQuote(form, ownerAddress);
+      if (!walletAddress) {
+        return null;
+      }
+
+      return createExecuteQuoteRequest({
+        ...form,
+        asset: executionAsset,
+        ownerAddress: walletAddress,
+      });
+    },
+    [executionAsset, form, ownerAddress],
   );
-  const { quote } = useXRouteQuote(quoteRequest);
+  const { quote, error: quoteError } = useXRouteQuote(quoteRequest);
+  const execution = useXRouteExecution();
+  const walletReady = walletMatchesChain(session, form.sourceChain);
+
+  async function handleSubmit() {
+    if (!session || !walletReady || form.executionType !== "call") {
+      return;
+    }
+
+    try {
+      await execution.execute(() =>
+        submitCallWithWallet(session, {
+          ...form,
+          asset: executionAsset,
+        }),
+      );
+    } catch {
+      // handled in hook state
+    }
+  }
 
   return (
     <div className={formClass}>
@@ -116,19 +149,24 @@ export function ExecuteForm() {
                     const executionType = event.target.value as ExecuteType;
                     const nextSourceChain = coerceOptionValue(
                       current.sourceChain,
-                      getExecuteSourceChainOptions(executionType),
+                      getExecuteSourceChainOptions(executionType, current.destinationChain),
                     ) ?? current.sourceChain;
+                    const nextDestinationChain = coerceOptionValue(
+                      current.destinationChain,
+                      getExecuteDestinationOptions(nextSourceChain, executionType),
+                    ) ?? current.destinationChain;
 
                     return {
                       ...current,
                       executionType,
                       sourceChain: nextSourceChain,
+                      destinationChain: nextDestinationChain,
                       gasLimit: current.gasLimit || "250000",
                     };
                   })
                 }
               >
-                {executeTypeOptions.map((option) => (
+                {executionTypeOptions.map((option) => (
                   <option
                     key={option.value}
                     value={option.value}
@@ -145,10 +183,19 @@ export function ExecuteForm() {
               <Select
                 value={form.sourceChain}
                 onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    sourceChain: event.target.value as ChainKey,
-                  }))
+                  setForm((current) => {
+                    const sourceChain = event.target.value as ChainKey;
+                    const destinationChain = coerceOptionValue(
+                      current.destinationChain,
+                      getExecuteDestinationOptions(sourceChain, current.executionType),
+                    ) ?? current.destinationChain;
+
+                    return {
+                      ...current,
+                      sourceChain,
+                      destinationChain,
+                    };
+                  })
                 }
               >
                 {sourceChainOptions.map((option) => (
@@ -165,17 +212,39 @@ export function ExecuteForm() {
 
             <label className={fieldClass}>
               <span className={labelClass}>Destination chain</span>
-              <Select value={form.destinationChain} disabled>
-                <option value={executeDestinationChain}>
-                  {chainLabel(executeDestinationChain)}
-                </option>
+              <Select
+                value={form.destinationChain}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    destinationChain: event.target.value as ChainKey,
+                  }))
+                }
+              >
+                {destinationOptions.map((option) => (
+                  <option
+                    key={option.value}
+                    value={option.value}
+                    disabled={option.disabled}
+                  >
+                    {option.label}
+                  </option>
+                ))}
               </Select>
             </label>
 
             <label className={fieldClass}>
               <span className={labelClass}>Execution asset</span>
               <Select value={executionAsset} disabled>
-                <option value={executionAsset}>{executionAsset}</option>
+                {executionAssetOptions.map((option) => (
+                  <option
+                    key={option.value}
+                    value={option.value}
+                    disabled={option.disabled}
+                  >
+                    {option.label}
+                  </option>
+                ))}
               </Select>
             </label>
 
@@ -183,7 +252,7 @@ export function ExecuteForm() {
               <span className={labelClass}>Max payment amount</span>
               <input
                 className={inputClass}
-                inputMode="numeric"
+                inputMode="decimal"
                 value={form.maxPaymentAmount}
                 onChange={(event) =>
                   setForm((current) => ({
@@ -316,6 +385,42 @@ export function ExecuteForm() {
       </div>
 
       <QuoteFooter quote={quote} />
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="m-0 text-sm leading-6 text-muted">
+          {walletReady
+            ? "Quote ready. Submit to execute the contract call."
+            : `Connect a ${walletRequirementLabel(form.sourceChain).toLowerCase()} to quote and execute from ${form.sourceChain}.`}
+        </p>
+        <button
+          type="button"
+          className={actionButtonClass}
+          onClick={handleSubmit}
+          disabled={
+            form.executionType !== "call"
+            || !walletReady
+            || !quote
+            || execution.isSubmitting
+            || execution.isTracking
+          }
+        >
+          {execution.isSubmitting ? "Submitting..." : "Call"}
+        </button>
+      </div>
+
+      <IntentStatusCard
+        execution={execution.execution}
+        status={execution.status}
+        timeline={execution.timeline}
+        error={execution.error ?? quoteError}
+        isSubmitting={execution.isSubmitting}
+        isTracking={execution.isTracking}
+        idleMessage={
+          walletReady
+            ? null
+            : `This route requires a ${walletRequirementLabel(form.sourceChain).toLowerCase()}.`
+        }
+      />
 
       <PoweredBy />
     </div>

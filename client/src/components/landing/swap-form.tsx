@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import {
+  actionButtonClass,
   fieldClass,
   fieldFullClass,
   formClass,
@@ -10,23 +11,27 @@ import {
   inputClass,
   labelClass,
 } from "./form-classes";
+import { IntentStatusCard } from "./intent-status-card";
 import { PoweredBy } from "./powered-by";
 import { QuoteFooter } from "./quote-footer";
 import {
-  EXAMPLE_EVM_ADDRESS,
   type AssetKey,
   type ChainKey,
-  chainLabel,
   coerceOptionValue,
+  createSwapQuoteRequest,
   exampleRecipientForChain,
+  getSwapAssetInOptions,
+  getSwapAssetOutOptions,
+  getSwapDestinationOptions,
   getSwapSettlementChainOptions,
-  type QuoteRequest,
   recipientLabelForChain,
-  swapAssetInOptions,
-  swapAssetOutOptions,
-  swapDestinationChain,
+  resolveWalletAccountForChain,
+  submitSwapWithWallet,
   swapSourceChainOptions,
+  useXRouteExecution,
   useXRouteQuote,
+  walletMatchesChain,
+  walletRequirementLabel,
 } from "@/lib/xroute";
 import { Select } from "@/components/ui/select";
 import { useWallet } from "@/hooks/use-wallet";
@@ -51,11 +56,11 @@ function createInitialSwapForm(): SwapFormState {
     amountIn: "10",
     minAmountOut: "49",
     settlementChain: "polkadot-hub",
-    recipient: EXAMPLE_EVM_ADDRESS,
+    recipient: exampleRecipientForChain("polkadot-hub"),
   };
 }
 
-function buildQuoteRequest(form: SwapFormState, ownerAddress?: string): QuoteRequest | null {
+function canBuildQuote(form: SwapFormState, ownerAddress?: string) {
   if (
     !form.amountIn.trim() ||
     !form.minAmountOut.trim() ||
@@ -64,33 +69,68 @@ function buildQuoteRequest(form: SwapFormState, ownerAddress?: string): QuoteReq
   ) {
     return null;
   }
-
-  return {
-    kind: "swap",
-    sourceChain: form.sourceChain,
-    destinationChain: form.destinationChain,
-    assetIn: form.assetIn,
-    assetOut: form.assetOut,
-    amountIn: form.amountIn,
-    minAmountOut: form.minAmountOut,
-    settlementChain: form.settlementChain,
-    recipient: form.recipient,
-    ownerAddress: ownerAddress.trim(),
-  };
+  return ownerAddress.trim();
 }
 
 export function SwapForm() {
   const [form, setForm] = useState<SwapFormState>(createInitialSwapForm);
-  const { account } = useWallet();
+  const { session } = useWallet();
+  const destinationOptions = useMemo(
+    () => getSwapDestinationOptions(form.sourceChain),
+    [form.sourceChain],
+  );
+  const assetInOptions = useMemo(
+    () => getSwapAssetInOptions(form.sourceChain, form.destinationChain),
+    [form.destinationChain, form.sourceChain],
+  );
+  const assetOutOptions = useMemo(
+    () => getSwapAssetOutOptions(form.sourceChain, form.destinationChain, form.assetIn),
+    [form.assetIn, form.destinationChain, form.sourceChain],
+  );
   const settlementChainOptions = useMemo(
-    () => getSwapSettlementChainOptions(form.assetOut),
-    [form.assetOut],
+    () =>
+      getSwapSettlementChainOptions(
+        form.sourceChain,
+        form.destinationChain,
+        form.assetIn,
+        form.assetOut,
+      ),
+    [form.assetIn, form.assetOut, form.destinationChain, form.sourceChain],
   );
+  const ownerAddress = resolveWalletAccountForChain(session, form.sourceChain) ?? undefined;
   const quoteRequest = useMemo(
-    () => buildQuoteRequest(form, account ?? undefined),
-    [account, form],
+    () => {
+      const walletAddress = canBuildQuote(form, ownerAddress);
+      if (!walletAddress) {
+        return null;
+      }
+
+      return createSwapQuoteRequest({
+        ...form,
+        ownerAddress: walletAddress,
+      });
+    },
+    [form, ownerAddress],
   );
-  const { quote } = useXRouteQuote(quoteRequest);
+  const { quote, error: quoteError } = useXRouteQuote(quoteRequest);
+  const execution = useXRouteExecution();
+  const walletReady = walletMatchesChain(session, form.sourceChain);
+
+  async function handleSubmit() {
+    if (!session || !walletReady) {
+      return;
+    }
+
+    try {
+      await execution.execute(() =>
+        submitSwapWithWallet(session, {
+          ...form,
+        }),
+      );
+    } catch {
+      // handled in hook state
+    }
+  }
 
   return (
     <div className={formClass}>
@@ -100,10 +140,42 @@ export function SwapForm() {
               <Select
                 value={form.sourceChain}
                 onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    sourceChain: event.target.value as ChainKey,
-                  }))
+                  setForm((current) => {
+                    const sourceChain = event.target.value as ChainKey;
+                    const nextDestinationOptions = getSwapDestinationOptions(sourceChain);
+                    const destinationChain =
+                      coerceOptionValue(current.destinationChain, nextDestinationOptions) ??
+                      current.destinationChain;
+                    const nextAssetInOptions = getSwapAssetInOptions(sourceChain, destinationChain);
+                    const assetIn =
+                      coerceOptionValue(current.assetIn, nextAssetInOptions) ?? current.assetIn;
+                    const nextAssetOutOptions = getSwapAssetOutOptions(
+                      sourceChain,
+                      destinationChain,
+                      assetIn,
+                    );
+                    const assetOut =
+                      coerceOptionValue(current.assetOut, nextAssetOutOptions) ?? current.assetOut;
+                    const nextSettlementOptions = getSwapSettlementChainOptions(
+                      sourceChain,
+                      destinationChain,
+                      assetIn,
+                      assetOut,
+                    );
+                    const settlementChain =
+                      coerceOptionValue(current.settlementChain, nextSettlementOptions) ??
+                      current.settlementChain;
+
+                    return {
+                      ...current,
+                      sourceChain,
+                      destinationChain,
+                      assetIn,
+                      assetOut,
+                      settlementChain,
+                      recipient: exampleRecipientForChain(settlementChain),
+                    };
+                  })
                 }
               >
                 {swapSourceChainOptions.map((option) => (
@@ -120,18 +192,97 @@ export function SwapForm() {
 
             <label className={fieldClass}>
               <span className={labelClass}>Destination chain</span>
-              <Select value={form.destinationChain} disabled>
-                <option value={swapDestinationChain}>
-                  {chainLabel(swapDestinationChain)}
-                </option>
+              <Select
+                value={form.destinationChain}
+                onChange={(event) =>
+                  setForm((current) => {
+                    const destinationChain = event.target.value as ChainKey;
+                    const nextAssetInOptions = getSwapAssetInOptions(
+                      current.sourceChain,
+                      destinationChain,
+                    );
+                    const assetIn =
+                      coerceOptionValue(current.assetIn, nextAssetInOptions) ?? current.assetIn;
+                    const nextAssetOutOptions = getSwapAssetOutOptions(
+                      current.sourceChain,
+                      destinationChain,
+                      assetIn,
+                    );
+                    const assetOut =
+                      coerceOptionValue(current.assetOut, nextAssetOutOptions) ?? current.assetOut;
+                    const nextSettlementOptions = getSwapSettlementChainOptions(
+                      current.sourceChain,
+                      destinationChain,
+                      assetIn,
+                      assetOut,
+                    );
+                    const settlementChain =
+                      coerceOptionValue(current.settlementChain, nextSettlementOptions) ??
+                      current.settlementChain;
+
+                    return {
+                      ...current,
+                      destinationChain,
+                      assetIn,
+                      assetOut,
+                      settlementChain,
+                      recipient: exampleRecipientForChain(settlementChain),
+                    };
+                  })
+                }
+              >
+                {destinationOptions.map((option) => (
+                  <option
+                    key={option.value}
+                    value={option.value}
+                    disabled={option.disabled}
+                  >
+                    {option.label}
+                  </option>
+                ))}
               </Select>
             </label>
 
             <label className={fieldClass}>
               <span className={labelClass}>Asset in</span>
-              <Select value={form.assetIn} disabled>
-                {swapAssetInOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
+              <Select
+                value={form.assetIn}
+                onChange={(event) =>
+                  setForm((current) => {
+                    const assetIn = event.target.value as AssetKey;
+                    const nextAssetOutOptions = getSwapAssetOutOptions(
+                      current.sourceChain,
+                      current.destinationChain,
+                      assetIn,
+                    );
+                    const assetOut =
+                      coerceOptionValue(current.assetOut, nextAssetOutOptions) ?? current.assetOut;
+                    const nextSettlementOptions = getSwapSettlementChainOptions(
+                      current.sourceChain,
+                      current.destinationChain,
+                      assetIn,
+                      assetOut,
+                    );
+                    const settlementChain =
+                      coerceOptionValue(current.settlementChain, nextSettlementOptions) ??
+                      current.settlementChain;
+
+                    return {
+                      ...current,
+                      assetIn,
+                      assetOut,
+                      settlementChain,
+                      recipient: exampleRecipientForChain(settlementChain),
+                    };
+                  })
+                }
+              >
+                {assetInOptions.map((option) => (
+                  <option
+                    key={option.value}
+                    value={option.value}
+                    disabled={option.disabled}
+                  >
                     {option.label}
                   </option>
                 ))}
@@ -147,7 +298,12 @@ export function SwapForm() {
                     const assetOut = event.target.value as AssetKey;
                     const nextSettlementChain = coerceOptionValue(
                       current.settlementChain,
-                      getSwapSettlementChainOptions(assetOut),
+                      getSwapSettlementChainOptions(
+                        current.sourceChain,
+                        current.destinationChain,
+                        current.assetIn,
+                        assetOut,
+                      ),
                     ) ?? current.settlementChain;
 
                     return {
@@ -159,7 +315,7 @@ export function SwapForm() {
                   })
                 }
               >
-                {swapAssetOutOptions.map((option) => (
+                {assetOutOptions.map((option) => (
                   <option
                     key={option.value}
                     value={option.value}
@@ -209,10 +365,9 @@ export function SwapForm() {
                   setForm((current) => ({
                     ...current,
                     settlementChain: event.target.value as SwapFormState["settlementChain"],
-                    recipient:
-                      event.target.value === "hydration"
-                        ? exampleRecipientForChain("hydration")
-                        : EXAMPLE_EVM_ADDRESS,
+                    recipient: exampleRecipientForChain(
+                      event.target.value as SwapFormState["settlementChain"],
+                    ),
                   }))
                 }
               >
@@ -246,6 +401,36 @@ export function SwapForm() {
       </div>
 
       <QuoteFooter quote={quote} />
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="m-0 text-sm leading-6 text-muted">
+          {walletReady
+            ? "Quote ready. Submit to execute the swap."
+            : `Connect a ${walletRequirementLabel(form.sourceChain).toLowerCase()} to quote and execute from ${form.sourceChain}.`}
+        </p>
+        <button
+          type="button"
+          className={actionButtonClass}
+          onClick={handleSubmit}
+          disabled={!walletReady || !quote || execution.isSubmitting || execution.isTracking}
+        >
+          {execution.isSubmitting ? "Submitting..." : "Swap"}
+        </button>
+      </div>
+
+      <IntentStatusCard
+        execution={execution.execution}
+        status={execution.status}
+        timeline={execution.timeline}
+        error={execution.error ?? quoteError}
+        isSubmitting={execution.isSubmitting}
+        isTracking={execution.isTracking}
+        idleMessage={
+          walletReady
+            ? null
+            : `This route requires a ${walletRequirementLabel(form.sourceChain).toLowerCase()}.`
+        }
+      />
 
       <PoweredBy />
     </div>

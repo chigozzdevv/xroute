@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import {
+  actionButtonClass,
   fieldClass,
   fieldFullClass,
   formClass,
@@ -10,6 +11,7 @@ import {
   inputClass,
   labelClass,
 } from "./form-classes";
+import { IntentStatusCard } from "./intent-status-card";
 import { PoweredBy } from "./powered-by";
 import { QuoteFooter } from "./quote-footer";
 import {
@@ -17,12 +19,17 @@ import {
   type ChainKey,
   chainOptions,
   coerceOptionValue,
+  createTransferQuoteRequest,
   exampleRecipientForChain,
   getTransferAssetOptions,
   getTransferDestinationOptions,
-  type QuoteRequest,
   recipientLabelForChain,
+  resolveWalletAccountForChain,
+  submitTransferWithWallet,
   useXRouteQuote,
+  useXRouteExecution,
+  walletMatchesChain,
+  walletRequirementLabel,
 } from "@/lib/xroute";
 import { Select } from "@/components/ui/select";
 import { useWallet } from "@/hooks/use-wallet";
@@ -45,35 +52,52 @@ function createInitialTransferForm(): TransferFormState {
   };
 }
 
-function buildQuoteRequest(
-  form: TransferFormState,
-  ownerAddress?: string,
-): QuoteRequest | null {
+function canBuildQuote(form: TransferFormState, ownerAddress?: string) {
   if (!form.amount.trim() || !form.recipient.trim() || !ownerAddress?.trim()) {
     return null;
   }
-
-  return {
-    kind: "transfer",
-    sourceChain: form.sourceChain,
-    destinationChain: form.destinationChain,
-    asset: form.asset,
-    amount: form.amount,
-    recipient: form.recipient,
-    ownerAddress: ownerAddress.trim(),
-  };
+  return ownerAddress.trim();
 }
 
 export function TransferForm() {
   const [form, setForm] = useState(createInitialTransferForm);
-  const { account } = useWallet();
+  const { session } = useWallet();
   const destinationOptions = getTransferDestinationOptions(form.sourceChain);
   const assetOptions = getTransferAssetOptions(form.sourceChain, form.destinationChain);
+  const ownerAddress = resolveWalletAccountForChain(session, form.sourceChain) ?? undefined;
   const quoteRequest = useMemo(
-    () => buildQuoteRequest(form, account ?? undefined),
-    [account, form],
+    () => {
+      const walletAddress = canBuildQuote(form, ownerAddress);
+      if (!walletAddress) {
+        return null;
+      }
+
+      return createTransferQuoteRequest({
+        ...form,
+        ownerAddress: walletAddress,
+      });
+    },
+    [form, ownerAddress],
   );
-  const { quote } = useXRouteQuote(quoteRequest);
+  const { quote, error: quoteError } = useXRouteQuote(quoteRequest);
+  const execution = useXRouteExecution();
+  const walletReady = walletMatchesChain(session, form.sourceChain);
+
+  async function handleSubmit() {
+    if (!session || !walletReady) {
+      return;
+    }
+
+    try {
+      await execution.execute(() =>
+        submitTransferWithWallet(session, {
+          ...form,
+        }),
+      );
+    } catch {
+      // handled in hook state
+    }
+  }
 
   return (
     <div className={formClass}>
@@ -203,6 +227,36 @@ export function TransferForm() {
       </div>
 
       <QuoteFooter quote={quote} />
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="m-0 text-sm leading-6 text-muted">
+          {walletReady
+            ? "Quote ready. Submit to execute the transfer."
+            : `Connect a ${walletRequirementLabel(form.sourceChain).toLowerCase()} to quote and execute from ${form.sourceChain}.`}
+        </p>
+        <button
+          type="button"
+          className={actionButtonClass}
+          onClick={handleSubmit}
+          disabled={!walletReady || !quote || execution.isSubmitting || execution.isTracking}
+        >
+          {execution.isSubmitting ? "Submitting..." : "Transfer"}
+        </button>
+      </div>
+
+      <IntentStatusCard
+        execution={execution.execution}
+        status={execution.status}
+        timeline={execution.timeline}
+        error={execution.error ?? quoteError}
+        isSubmitting={execution.isSubmitting}
+        isTracking={execution.isTracking}
+        idleMessage={
+          walletReady
+            ? null
+            : `This route requires a ${walletRequirementLabel(form.sourceChain).toLowerCase()}.`
+        }
+      />
 
       <PoweredBy />
     </div>

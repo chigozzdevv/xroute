@@ -12,6 +12,7 @@ import {
 } from "../xroute-precompile-interfaces/index.mjs";
 
 export { createConfiguredXRouteClient } from "./index.mjs";
+export { createHttpExecutorRelayerClient } from "./internal/relayer-client.mjs";
 
 const execFileAsync = promisify(execFile);
 let serializedCommandQueue = Promise.resolve();

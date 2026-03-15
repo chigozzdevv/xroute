@@ -1,7 +1,7 @@
 {
   "name": "@xroute/sdk",
   "version": "0.1.0",
-  "description": "XRoute SDK for intent quoting, XCM dispatch preparation, onchain router submission, and status tracking.",
+  "description": "XRoute integration SDK for route discovery, source-chain execution, and hosted intent status tracking.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.mjs",

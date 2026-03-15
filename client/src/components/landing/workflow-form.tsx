@@ -8,24 +8,32 @@ import {
   type ExecuteType,
   EXAMPLE_ADAPTER_ADDRESS,
   EXAMPLE_EVM_ADDRESS,
+  type FlowResponse,
   chainOptions,
-  chainLabel,
   coerceOptionValue,
+  connectWalletSessionForChain,
+  createExecuteQuoteRequest,
+  createSwapQuoteRequest,
+  createTransferQuoteRequest,
   exampleRecipientForChain,
-  executeAssetForType,
-  executeDestinationChain,
-  executeTypeOptions,
+  getExecuteAssetOptions,
+  getExecuteDestinationOptions,
   getExecuteSourceChainOptions,
+  getExecuteTypeOptions,
+  getSwapAssetInOptions,
+  requestXRouteFlow,
   getSwapAssetOutOptions,
+  getSwapDestinationOptions,
   getSwapSettlementChainOptions,
   getTransferAssetOptions,
   getTransferDestinationOptions,
   recipientLabelForChain,
-  swapAssetInOptions,
-  swapDestinationChain,
   swapSourceChainOptions,
+  walletMatchesChain,
+  walletRequirementLabel,
 } from "@/lib/xroute";
 import {
+  actionButtonClass,
   fieldClass,
   fieldFullClass,
   formClass,
@@ -36,6 +44,7 @@ import {
 } from "./form-classes";
 import { PoweredBy } from "./powered-by";
 import { Select } from "@/components/ui/select";
+import { useWallet } from "@/hooks/use-wallet";
 
 type WorkflowActionType = "transfer" | "swap" | "execute";
 
@@ -121,7 +130,7 @@ function createSwapStep(): SwapWorkflowStep {
     amountIn: "10",
     minAmountOut: "49",
     settlementChain: "polkadot-hub",
-    recipient: EXAMPLE_EVM_ADDRESS,
+    recipient: exampleRecipientForChain("polkadot-hub"),
   };
 }
 
@@ -132,7 +141,7 @@ function createExecuteStep(): ExecuteWorkflowStep {
     executionType: "call",
     sourceChain: "hydration",
     destinationChain: "moonbeam",
-    maxPaymentAmount: "200000000",
+    maxPaymentAmount: "0.02",
     contractAddress: "0x2222222222222222222222222222222222222222",
     calldata:
       "0xdeadbeef0000000000000000000000001111111111111111111111111111111111111111",
@@ -200,11 +209,59 @@ function workflowActionLabel(step: WorkflowStep) {
   }
 }
 
+function getWorkflowExecuteAsset(step: ExecuteWorkflowStep) {
+  return (
+    getExecuteAssetOptions(step.sourceChain, step.destinationChain, step.executionType).find(
+      (candidate) => !candidate.disabled,
+    )?.value ?? "DOT"
+  );
+}
+
+function buildWorkflowIntent(step: WorkflowStep, ownerAddress: string) {
+  switch (step.kind) {
+    case "transfer":
+      return createTransferQuoteRequest({
+        ...step,
+        ownerAddress,
+      });
+    case "swap":
+      return createSwapQuoteRequest({
+        ...step,
+        ownerAddress,
+      });
+    case "execute":
+      if (step.executionType !== "call") {
+        throw new Error("Only call workflow steps are currently supported.");
+      }
+
+      return createExecuteQuoteRequest({
+        ...step,
+        asset: getWorkflowExecuteAsset(step),
+        ownerAddress,
+      });
+    default:
+      throw new Error("unsupported workflow step type");
+  }
+}
+
 export function WorkflowForm() {
   const [steps, setSteps] = useState<WorkflowStep[]>([]);
   const [showPicker, setShowPicker] = useState(false);
   const [openStepId, setOpenStepId] = useState<string | null>(null);
+  const [isRunning, setIsRunning] = useState(false);
+  const [flowError, setFlowError] = useState<string | null>(null);
+  const [flowResult, setFlowResult] = useState<FlowResponse | null>(null);
+  const { session } = useWallet();
   const isEditable = true;
+  const workflowSourceChain = steps[0]?.sourceChain ?? null;
+  const hasSingleSourceChain =
+    steps.length > 0 && steps.every((step) => step.sourceChain === workflowSourceChain);
+  const walletReady = Boolean(
+    session
+    && workflowSourceChain
+    && hasSingleSourceChain
+    && walletMatchesChain(session, workflowSourceChain),
+  );
 
   const replaceStep = (stepId: string, nextStep: WorkflowStep) => {
     setSteps((current) =>
@@ -233,6 +290,31 @@ export function WorkflowForm() {
     setOpenStepId(null);
     setShowPicker((current) => !current);
   };
+
+  async function handleRunWorkflow() {
+    if (!session || !workflowSourceChain || !hasSingleSourceChain) {
+      return;
+    }
+
+    setIsRunning(true);
+    setFlowError(null);
+    setFlowResult(null);
+
+    try {
+      connectWalletSessionForChain(session, workflowSourceChain);
+      const result = await requestXRouteFlow({
+        steps: steps.map((step, index) => ({
+          name: `${step.kind}-${index + 1}`,
+          intent: buildWorkflowIntent(step, session.account),
+        })),
+      });
+      setFlowResult(result);
+    } catch (error) {
+      setFlowError(error instanceof Error ? error.message : "Workflow execution failed.");
+    } finally {
+      setIsRunning(false);
+    }
+  }
 
   return (
     <div className={formClass}>
@@ -437,8 +519,19 @@ export function WorkflowForm() {
             }
 
             if (step.kind === "swap") {
-              const assetOutOptions = getSwapAssetOutOptions(step.assetIn);
-              const settlementChainOptions = getSwapSettlementChainOptions(step.assetOut);
+              const destinationOptions = getSwapDestinationOptions(step.sourceChain);
+              const assetInOptions = getSwapAssetInOptions(step.sourceChain, step.destinationChain);
+              const assetOutOptions = getSwapAssetOutOptions(
+                step.sourceChain,
+                step.destinationChain,
+                step.assetIn,
+              );
+              const settlementChainOptions = getSwapSettlementChainOptions(
+                step.sourceChain,
+                step.destinationChain,
+                step.assetIn,
+                step.assetOut,
+              );
 
               return (
                 <Fragment key={step.id}>
@@ -502,12 +595,45 @@ export function WorkflowForm() {
                       <span className={labelClass}>Source chain</span>
                       <Select
                         value={step.sourceChain}
-                        onChange={(event) =>
+                        onChange={(event) => {
+                          const sourceChain = event.target.value as SwapWorkflowStep["sourceChain"];
+                          const nextDestinationOptions = getSwapDestinationOptions(sourceChain);
+                          const destinationChain =
+                            coerceOptionValue(step.destinationChain, nextDestinationOptions) ??
+                            step.destinationChain;
+                          const nextAssetInOptions = getSwapAssetInOptions(
+                            sourceChain,
+                            destinationChain,
+                          );
+                          const assetIn =
+                            coerceOptionValue(step.assetIn, nextAssetInOptions) ?? step.assetIn;
+                          const nextAssetOutOptions = getSwapAssetOutOptions(
+                            sourceChain,
+                            destinationChain,
+                            assetIn,
+                          );
+                          const assetOut =
+                            coerceOptionValue(step.assetOut, nextAssetOutOptions) ?? step.assetOut;
+                          const nextSettlementOptions = getSwapSettlementChainOptions(
+                            sourceChain,
+                            destinationChain,
+                            assetIn,
+                            assetOut,
+                          );
+                          const settlementChain =
+                            coerceOptionValue(step.settlementChain, nextSettlementOptions) ??
+                            step.settlementChain;
+
                           replaceStep(step.id, {
                             ...step,
-                            sourceChain: event.target.value as SwapWorkflowStep["sourceChain"],
-                          })
-                        }
+                            sourceChain,
+                            destinationChain,
+                            assetIn,
+                            assetOut,
+                            settlementChain,
+                            recipient: exampleRecipientForChain(settlementChain),
+                          });
+                        }}
                       >
                         {swapSourceChainOptions.map((option) => (
                           <option
@@ -523,18 +649,94 @@ export function WorkflowForm() {
 
                     <label className={fieldClass}>
                       <span className={labelClass}>Destination chain</span>
-                      <Select value={step.destinationChain} disabled>
-                        <option value={swapDestinationChain}>
-                          {chainLabel(swapDestinationChain)}
-                        </option>
+                      <Select
+                        value={step.destinationChain}
+                        onChange={(event) => {
+                          const destinationChain =
+                            event.target.value as SwapWorkflowStep["destinationChain"];
+                          const nextAssetInOptions = getSwapAssetInOptions(
+                            step.sourceChain,
+                            destinationChain,
+                          );
+                          const assetIn =
+                            coerceOptionValue(step.assetIn, nextAssetInOptions) ?? step.assetIn;
+                          const nextAssetOutOptions = getSwapAssetOutOptions(
+                            step.sourceChain,
+                            destinationChain,
+                            assetIn,
+                          );
+                          const assetOut =
+                            coerceOptionValue(step.assetOut, nextAssetOutOptions) ?? step.assetOut;
+                          const nextSettlementOptions = getSwapSettlementChainOptions(
+                            step.sourceChain,
+                            destinationChain,
+                            assetIn,
+                            assetOut,
+                          );
+                          const settlementChain =
+                            coerceOptionValue(step.settlementChain, nextSettlementOptions) ??
+                            step.settlementChain;
+
+                          replaceStep(step.id, {
+                            ...step,
+                            destinationChain,
+                            assetIn,
+                            assetOut,
+                            settlementChain,
+                            recipient: exampleRecipientForChain(settlementChain),
+                          });
+                        }}
+                      >
+                        {destinationOptions.map((option) => (
+                          <option
+                            key={option.value}
+                            value={option.value}
+                            disabled={option.disabled}
+                          >
+                            {option.label}
+                          </option>
+                        ))}
                       </Select>
                     </label>
 
                     <label className={fieldClass}>
                       <span className={labelClass}>Asset in</span>
-                      <Select value={step.assetIn} disabled>
-                        {swapAssetInOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
+                      <Select
+                        value={step.assetIn}
+                        onChange={(event) => {
+                          const assetIn = event.target.value as AssetKey;
+                          const nextAssetOutOptions = getSwapAssetOutOptions(
+                            step.sourceChain,
+                            step.destinationChain,
+                            assetIn,
+                          );
+                          const assetOut =
+                            coerceOptionValue(step.assetOut, nextAssetOutOptions) ?? step.assetOut;
+                          const nextSettlementOptions = getSwapSettlementChainOptions(
+                            step.sourceChain,
+                            step.destinationChain,
+                            assetIn,
+                            assetOut,
+                          );
+                          const settlementChain =
+                            coerceOptionValue(step.settlementChain, nextSettlementOptions) ??
+                            step.settlementChain;
+
+                          replaceStep(step.id, {
+                            ...step,
+                            assetIn,
+                            assetOut,
+                            settlementChain,
+                            recipient: exampleRecipientForChain(settlementChain),
+                          });
+                        }}
+                      >
+                        {assetInOptions.map((option) => (
+                          <option
+                            key={option.value}
+                            value={option.value}
+                            disabled={option.disabled}
+                          >
                             {option.label}
                           </option>
                         ))}
@@ -549,7 +751,12 @@ export function WorkflowForm() {
                           const assetOut = event.target.value as AssetKey;
                           const nextSettlementChain = coerceOptionValue(
                             step.settlementChain,
-                            getSwapSettlementChainOptions(assetOut),
+                            getSwapSettlementChainOptions(
+                              step.sourceChain,
+                              step.destinationChain,
+                              step.assetIn,
+                              assetOut,
+                            ),
                           ) ?? step.settlementChain;
 
                           replaceStep(step.id, {
@@ -611,12 +818,11 @@ export function WorkflowForm() {
                             ...step,
                             settlementChain:
                               event.target.value as SwapWorkflowStep["settlementChain"],
-                    recipient:
-                      event.target.value === "hydration"
-                        ? exampleRecipientForChain("hydration")
-                        : EXAMPLE_EVM_ADDRESS,
-                  })
-                }
+                            recipient: exampleRecipientForChain(
+                              event.target.value as SwapWorkflowStep["settlementChain"],
+                            ),
+                          })
+                        }
                       >
                         {settlementChainOptions.map((option) => (
                           <option
@@ -652,6 +858,26 @@ export function WorkflowForm() {
                 </Fragment>
               );
             }
+
+            const executionTypeOptions = getExecuteTypeOptions(
+              step.sourceChain,
+              step.destinationChain,
+            );
+            const executeSourceChainOptions = getExecuteSourceChainOptions(
+              step.executionType,
+              step.destinationChain,
+            );
+            const executeDestinationOptions = getExecuteDestinationOptions(
+              step.sourceChain,
+              step.executionType,
+            );
+            const executeAssetOptions = getExecuteAssetOptions(
+              step.sourceChain,
+              step.destinationChain,
+              step.executionType,
+            );
+            const executionAsset =
+              executeAssetOptions.find((candidate) => !candidate.disabled)?.value ?? "DOT";
 
             return (
               <Fragment key={step.id}>
@@ -719,18 +945,23 @@ export function WorkflowForm() {
                           const executionType = event.target.value as ExecuteType;
                           const nextSourceChain = coerceOptionValue(
                             step.sourceChain,
-                            getExecuteSourceChainOptions(executionType),
+                            getExecuteSourceChainOptions(executionType, step.destinationChain),
                           ) ?? step.sourceChain;
+                          const nextDestinationChain = coerceOptionValue(
+                            step.destinationChain,
+                            getExecuteDestinationOptions(nextSourceChain, executionType),
+                          ) ?? step.destinationChain;
 
                           replaceStep(step.id, {
                             ...(step.kind === "execute" ? step : createExecuteStep()),
                             executionType,
                             sourceChain: nextSourceChain,
+                            destinationChain: nextDestinationChain,
                             gasLimit: executionType === "call" ? "250000" : "500000",
                           });
                         }}
                       >
-                        {executeTypeOptions.map((option) => (
+                        {executionTypeOptions.map((option) => (
                           <option
                             key={option.value}
                             value={option.value}
@@ -746,14 +977,22 @@ export function WorkflowForm() {
                       <span className={labelClass}>Source chain</span>
                       <Select
                         value={step.sourceChain}
-                        onChange={(event) =>
+                        onChange={(event) => {
+                          const sourceChain =
+                            event.target.value as ExecuteWorkflowStep["sourceChain"];
+                          const destinationChain = coerceOptionValue(
+                            step.destinationChain,
+                            getExecuteDestinationOptions(sourceChain, step.executionType),
+                          ) ?? step.destinationChain;
+
                           replaceStep(step.id, {
                             ...step,
-                            sourceChain: event.target.value as ExecuteWorkflowStep["sourceChain"],
-                          })
-                        }
+                            sourceChain,
+                            destinationChain,
+                          });
+                        }}
                       >
-                        {getExecuteSourceChainOptions(step.executionType).map((option) => (
+                        {executeSourceChainOptions.map((option) => (
                           <option
                             key={option.value}
                             value={option.value}
@@ -767,19 +1006,40 @@ export function WorkflowForm() {
 
                     <label className={fieldClass}>
                       <span className={labelClass}>Destination chain</span>
-                      <Select value={step.destinationChain} disabled>
-                        <option value={executeDestinationChain}>
-                          {chainLabel(executeDestinationChain)}
-                        </option>
+                      <Select
+                        value={step.destinationChain}
+                        onChange={(event) =>
+                          replaceStep(step.id, {
+                            ...step,
+                            destinationChain:
+                              event.target.value as ExecuteWorkflowStep["destinationChain"],
+                          })
+                        }
+                      >
+                        {executeDestinationOptions.map((option) => (
+                          <option
+                            key={option.value}
+                            value={option.value}
+                            disabled={option.disabled}
+                          >
+                            {option.label}
+                          </option>
+                        ))}
                       </Select>
                     </label>
 
                     <label className={fieldClass}>
                       <span className={labelClass}>Execution asset</span>
-                      <Select value={executeAssetForType(step.executionType)} disabled>
-                        <option value={executeAssetForType(step.executionType)}>
-                          {executeAssetForType(step.executionType)}
-                        </option>
+                      <Select value={executionAsset} disabled>
+                        {executeAssetOptions.map((option) => (
+                          <option
+                            key={option.value}
+                            value={option.value}
+                            disabled={option.disabled}
+                          >
+                            {option.label}
+                          </option>
+                        ))}
                       </Select>
                     </label>
 
@@ -789,7 +1049,7 @@ export function WorkflowForm() {
                           <span className={labelClass}>Max payment amount</span>
                           <input
                             className={inputClass}
-                            inputMode="numeric"
+                            inputMode="decimal"
                             value={step.maxPaymentAmount}
                             onChange={(event) =>
                               replaceStep(step.id, {
@@ -1050,7 +1310,67 @@ export function WorkflowForm() {
             >
               + Add step
             </button>
+
+            <button
+              type="button"
+              className={actionButtonClass}
+              onClick={handleRunWorkflow}
+              disabled={!walletReady || steps.length === 0 || isRunning}
+            >
+              {isRunning ? "Running workflow..." : "Run workflow"}
+            </button>
           </div>
+
+          {steps.length === 0 ? (
+            <p className="m-0 text-sm leading-6 text-muted">
+              Add at least one step to run a workflow.
+            </p>
+          ) : null}
+
+          {steps.length > 0 && !hasSingleSourceChain ? (
+            <p className="m-0 text-sm leading-6 text-danger">
+              Workflow execution currently requires every step to use the same source chain.
+            </p>
+          ) : null}
+
+          {steps.length > 0 && hasSingleSourceChain && !walletReady ? (
+            <p className="m-0 text-sm leading-6 text-muted">
+              Connect a {walletRequirementLabel(workflowSourceChain!).toLowerCase()} to run this workflow.
+            </p>
+          ) : null}
+
+          {flowError ? (
+            <div className="rounded-[18px] border border-line bg-white/62 px-4 py-3.5 sm:px-5">
+              <p className="m-0 text-sm leading-6 text-danger">{flowError}</p>
+            </div>
+          ) : null}
+
+          {flowResult ? (
+            <div className="grid gap-3 rounded-[18px] border border-line bg-white/62 px-4 py-3.5 sm:px-5">
+              <div>
+                <p className="text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-muted">
+                  Workflow status
+                </p>
+                <p className="mt-1 text-lg font-extrabold tracking-[-0.04em] text-ink">
+                  {flowResult.finalStep?.finalStatus?.status ?? "Completed"}
+                </p>
+              </div>
+
+              <div className="grid gap-2 border-t border-line/70 pt-3">
+                {flowResult.steps.map((step: FlowResponse["steps"][number]) => (
+                  <div
+                    key={`${step.name}-${step.intent.quoteId}`}
+                    className="flex items-center justify-between gap-4 text-sm"
+                  >
+                    <span className="font-semibold capitalize tracking-tight text-ink">
+                      {step.name.replace(/-/g, " ")}
+                    </span>
+                    <span className="text-muted">{step.finalStatus.status}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
       </>
 
       <PoweredBy />

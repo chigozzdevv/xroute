@@ -80,12 +80,22 @@ const textCopies = [
     to: resolve(distRoot, "wallets/wallet-adapters.mjs"),
     replacements: [
       ["../../xroute-types/index.mjs", "../vendor/xroute-types/index.mjs"],
+      ["../../xroute-xcm/index.mjs", "../vendor/xroute-xcm/index.mjs"],
     ],
   },
   {
     from: resolve(packageRoot, "routers/router-adapters.mjs"),
     to: resolve(distRoot, "routers/router-adapters.mjs"),
     replacements: [
+      ["../../xroute-types/index.mjs", "../vendor/xroute-types/index.mjs"],
+      ["../../xroute-xcm/index.mjs", "../vendor/xroute-xcm/index.mjs"],
+    ],
+  },
+  {
+    from: resolve(packageRoot, "internal/relayer-client.mjs"),
+    to: resolve(distRoot, "internal/relayer-client.mjs"),
+    replacements: [
+      ["../../xroute-intents/index.mjs", "../vendor/xroute-intents/index.mjs"],
       ["../../xroute-types/index.mjs", "../vendor/xroute-types/index.mjs"],
       ["../../xroute-xcm/index.mjs", "../vendor/xroute-xcm/index.mjs"],
     ],

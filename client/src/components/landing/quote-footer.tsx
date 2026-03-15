@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import {
-  getAssetDecimals,
+  formatAssetAmount as formatSdkAssetAmount,
   type Quote,
   type QuoteAssetAmount,
 } from "@/lib/xroute";
@@ -13,26 +13,7 @@ type QuoteFooterProps = {
 };
 
 function formatAssetAmount({ asset, amount }: QuoteAssetAmount) {
-  const decimals = resolveAssetDecimals(asset);
-  const divisor = BigInt(10) ** BigInt(decimals);
-  const whole = amount / divisor;
-  const fraction = amount % divisor;
-
-  if (fraction === BigInt(0)) {
-    return `${whole.toString()} ${asset}`;
-  }
-
-  const paddedFraction = fraction.toString().padStart(decimals, "0").replace(/0+$/, "");
-
-  return `${whole.toString()}.${paddedFraction} ${asset}`;
-}
-
-function resolveAssetDecimals(asset: string) {
-  try {
-    return getAssetDecimals(asset);
-  } catch {
-    return 6;
-  }
+  return `${formatSdkAssetAmount(asset, amount)} ${asset}`;
 }
 
 export function QuoteFooter({ quote }: QuoteFooterProps) {

@@ -5,21 +5,25 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createXRouteClient } from "@xroute/sdk";
 import {
   DEFAULT_DEPLOYMENT_PROFILE,
+  formatAssetAmount,
   getAssetDecimals,
   getChain,
   getChainWalletType,
   listAssets,
   listChains,
+  parseAssetAmount,
 } from "@xroute/sdk/chains";
 import {
   getExecuteOptions,
   getSwapOptions,
   getTransferOptions,
 } from "@xroute/sdk/routes";
+import type { WalletKind, WalletSession } from "@/hooks/use-wallet";
 
 export type ChainKey = string;
 export type AssetKey = string;
 export type ExecuteType = string;
+export type XRouteWalletKind = WalletKind;
 
 export type Option<T extends string = string> = {
   value: T;
@@ -29,6 +33,14 @@ export type Option<T extends string = string> = {
 
 export const xrouteClient = createXRouteClient({
   apiKey: process.env.NEXT_PUBLIC_XROUTE_API_KEY?.trim() || undefined,
+});
+
+const DEFAULT_INTENT_DEADLINE_SECONDS = 60 * 60;
+const SUBSTRATE_RPC_URLS = Object.freeze({
+  hydration:
+    process.env.NEXT_PUBLIC_XROUTE_HYDRATION_RPC_URL?.trim() || "wss://rpc.hydradx.cloud",
+  bifrost:
+    process.env.NEXT_PUBLIC_XROUTE_BIFROST_RPC_URL?.trim() || "wss://hk.p.bifrost-rpc.liebi.com/ws",
 });
 
 export type QuoteClient = typeof xrouteClient;
@@ -46,6 +58,14 @@ export type ExecuteRequest = Parameters<QuoteClient["execute"]>[0];
 export type ExecuteResponse = Awaited<ReturnType<QuoteClient["execute"]>>;
 export type CallRequest = Parameters<QuoteClient["call"]>[0];
 export type CallResponse = Awaited<ReturnType<QuoteClient["call"]>>;
+export type FlowRequest = Parameters<QuoteClient["runFlow"]>[0];
+export type FlowResponse = Awaited<ReturnType<QuoteClient["runFlow"]>>;
+export type IntentStatus = Awaited<ReturnType<QuoteClient["getStatus"]>>;
+export type IntentTimeline = Awaited<ReturnType<QuoteClient["getTimeline"]>>;
+type IntentTrackingSnapshot = {
+  status?: IntentStatus | null;
+  timeline?: IntentTimeline;
+};
 
 export function connectXRouteWallet(...args: XRouteWalletConnection) {
   xrouteClient.connectWallet(...args);
@@ -75,6 +95,416 @@ export function requestXRouteExecute(input: ExecuteRequest) {
 
 export function requestXRouteCall(input: CallRequest) {
   return xrouteClient.call(input);
+}
+
+export function requestXRouteFlow(input: FlowRequest) {
+  return xrouteClient.runFlow(input);
+}
+
+export function trackXRouteIntent(intentId: string, options?: Parameters<QuoteClient["track"]>[1]) {
+  return xrouteClient.track(intentId, options);
+}
+
+export function getXRouteIntentStatus(intentId: string) {
+  return xrouteClient.getStatus(intentId);
+}
+
+export function getXRouteIntentTimeline(intentId: string) {
+  return xrouteClient.getTimeline(intentId);
+}
+
+export function waitForXRouteIntent(intentId: string, options?: Parameters<QuoteClient["wait"]>[1]) {
+  return xrouteClient.wait(intentId, options);
+}
+
+export function defaultIntentDeadline() {
+  return Math.floor(Date.now() / 1000) + DEFAULT_INTENT_DEADLINE_SECONDS;
+}
+
+export function walletKindForChain(chainKey: ChainKey): XRouteWalletKind {
+  return getChainWalletType(chainKey, DEFAULT_DEPLOYMENT_PROFILE);
+}
+
+export function walletMatchesChain(
+  session: WalletSession | null | undefined,
+  chainKey: ChainKey,
+) {
+  return session?.kind === walletKindForChain(chainKey);
+}
+
+export function resolveWalletAccountForChain(
+  session: WalletSession | null | undefined,
+  chainKey: ChainKey,
+) {
+  return walletMatchesChain(session, chainKey) ? session?.account ?? null : null;
+}
+
+export function walletRequirementLabel(chainKey: ChainKey) {
+  return walletKindForChain(chainKey) === "evm" ? "EVM wallet" : "Substrate wallet";
+}
+
+export function connectWalletSessionForChain(
+  session: WalletSession,
+  sourceChain: ChainKey,
+) {
+  const requiredKind = walletKindForChain(sourceChain);
+  if (session.kind !== requiredKind) {
+    throw new Error(`Connect a ${walletRequirementLabel(sourceChain).toLowerCase()} for ${chainLabel(sourceChain)}.`);
+  }
+
+  if (session.kind === "evm") {
+    return connectXRouteWallet("evm", {
+      provider: session.provider,
+      chainKey: sourceChain,
+    });
+  }
+
+  return connectXRouteWallet("substrate", {
+    extension: session.extensionSource,
+    accountAddress: session.account,
+    chainKey: sourceChain,
+    rpcUrl: resolveSubstrateRpcUrl(sourceChain),
+    extensionDappName: "xroute",
+  });
+}
+
+export function toAssetUnits(assetKey: AssetKey, value: string) {
+  return parseAssetAmount(assetKey, value, DEFAULT_DEPLOYMENT_PROFILE);
+}
+
+export function fromAssetUnits(assetKey: AssetKey, value: string | bigint) {
+  return formatAssetAmount(assetKey, value, DEFAULT_DEPLOYMENT_PROFILE);
+}
+
+export function createTransferQuoteRequest({
+  sourceChain,
+  destinationChain,
+  asset,
+  amount,
+  recipient,
+  ownerAddress,
+  deadline = defaultIntentDeadline(),
+}: {
+  sourceChain: ChainKey;
+  destinationChain: ChainKey;
+  asset: AssetKey;
+  amount: string;
+  recipient: string;
+  ownerAddress: string;
+  deadline?: number;
+}): QuoteRequest {
+  return {
+    sourceChain,
+    destinationChain,
+    ownerAddress,
+    deadline,
+    action: {
+      type: "transfer",
+      params: {
+        asset,
+        amount: toAssetUnits(asset, amount),
+        recipient,
+      },
+    },
+  };
+}
+
+export function createSwapQuoteRequest({
+  sourceChain,
+  destinationChain,
+  assetIn,
+  assetOut,
+  amountIn,
+  minAmountOut,
+  settlementChain,
+  recipient,
+  ownerAddress,
+  deadline = defaultIntentDeadline(),
+}: {
+  sourceChain: ChainKey;
+  destinationChain: ChainKey;
+  assetIn: AssetKey;
+  assetOut: AssetKey;
+  amountIn: string;
+  minAmountOut: string;
+  settlementChain: ChainKey;
+  recipient: string;
+  ownerAddress: string;
+  deadline?: number;
+}): QuoteRequest {
+  return {
+    sourceChain,
+    destinationChain,
+    ownerAddress,
+    deadline,
+    action: {
+      type: "swap",
+      params: {
+        assetIn,
+        assetOut,
+        amountIn: toAssetUnits(assetIn, amountIn),
+        minAmountOut: toAssetUnits(assetOut, minAmountOut),
+        settlementChain,
+        recipient,
+      },
+    },
+  };
+}
+
+export function createExecuteQuoteRequest({
+  sourceChain,
+  destinationChain,
+  executionType,
+  asset,
+  maxPaymentAmount,
+  contractAddress,
+  calldata,
+  value,
+  gasLimit,
+  fallbackRefTime,
+  fallbackProofSize,
+  ownerAddress,
+  deadline = defaultIntentDeadline(),
+}: {
+  sourceChain: ChainKey;
+  destinationChain: ChainKey;
+  executionType: ExecuteType;
+  asset: AssetKey;
+  maxPaymentAmount: string;
+  contractAddress: string;
+  calldata: string;
+  value: string;
+  gasLimit: string;
+  fallbackRefTime: string;
+  fallbackProofSize: string;
+  ownerAddress: string;
+  deadline?: number;
+}): QuoteRequest {
+  return {
+    sourceChain,
+    destinationChain,
+    ownerAddress,
+    deadline,
+    action: {
+      type: "execute",
+      params: {
+        executionType,
+        asset,
+        maxPaymentAmount: toAssetUnits(asset, maxPaymentAmount),
+        contractAddress,
+        calldata,
+        value,
+        gasLimit,
+        fallbackWeight: {
+          refTime: Number.parseInt(fallbackRefTime, 10),
+          proofSize: Number.parseInt(fallbackProofSize, 10),
+        },
+      },
+    },
+  };
+}
+
+export async function submitTransferWithWallet(
+  session: WalletSession,
+  input: {
+    sourceChain: ChainKey;
+    destinationChain: ChainKey;
+    asset: AssetKey;
+    amount: string;
+    recipient: string;
+  },
+) {
+  connectWalletSessionForChain(session, input.sourceChain);
+  return requestXRouteTransfer({
+    ...input,
+    amount: toAssetUnits(input.asset, input.amount),
+  });
+}
+
+export async function submitSwapWithWallet(
+  session: WalletSession,
+  input: {
+    sourceChain: ChainKey;
+    destinationChain: ChainKey;
+    assetIn: AssetKey;
+    assetOut: AssetKey;
+    amountIn: string;
+    minAmountOut: string;
+    settlementChain: ChainKey;
+    recipient: string;
+  },
+) {
+  connectWalletSessionForChain(session, input.sourceChain);
+  return requestXRouteSwap({
+    ...input,
+    amountIn: toAssetUnits(input.assetIn, input.amountIn),
+    minAmountOut: toAssetUnits(input.assetOut, input.minAmountOut),
+  });
+}
+
+export async function submitCallWithWallet(
+  session: WalletSession,
+  input: {
+    sourceChain: ChainKey;
+    destinationChain: ChainKey;
+    asset: AssetKey;
+    executionType: ExecuteType;
+    maxPaymentAmount: string;
+    contractAddress: string;
+    calldata: string;
+    value: string;
+    gasLimit: string;
+    fallbackRefTime: string;
+    fallbackProofSize: string;
+  },
+) {
+  connectWalletSessionForChain(session, input.sourceChain);
+  return requestXRouteCall({
+    sourceChain: input.sourceChain,
+    destinationChain: input.destinationChain,
+    executionType: input.executionType,
+    asset: input.asset,
+    maxPaymentAmount: toAssetUnits(input.asset, input.maxPaymentAmount),
+    contractAddress: input.contractAddress,
+    calldata: input.calldata,
+    value: input.value,
+    gasLimit: input.gasLimit,
+    fallbackRefTime: Number.parseInt(input.fallbackRefTime, 10),
+    fallbackProofSize: Number.parseInt(input.fallbackProofSize, 10),
+  });
+}
+
+export type IntentExecutionResult =
+  | TransferResponse
+  | SwapResponse
+  | ExecuteResponse
+  | CallResponse;
+
+export type IntentExecutionState = {
+  execution: IntentExecutionResult | null;
+  status: IntentStatus | null;
+  timeline: IntentTimeline;
+  error: string | null;
+  isSubmitting: boolean;
+  isTracking: boolean;
+};
+
+const INITIAL_INTENT_EXECUTION_STATE: IntentExecutionState = Object.freeze({
+  execution: null,
+  status: null,
+  timeline: [],
+  error: null,
+  isSubmitting: false,
+  isTracking: false,
+});
+
+export function useXRouteExecution() {
+  const [state, setState] = useState<IntentExecutionState>(INITIAL_INTENT_EXECUTION_STATE);
+  const trackerRef = useRef<ReturnType<typeof trackXRouteIntent> | null>(null);
+  const executionRef = useRef(0);
+
+  useEffect(() => {
+    return () => {
+      trackerRef.current?.stop();
+      trackerRef.current = null;
+    };
+  }, []);
+
+  async function execute(runExecution: () => Promise<IntentExecutionResult>) {
+    executionRef.current += 1;
+    const currentExecutionId = executionRef.current;
+
+    trackerRef.current?.stop();
+    trackerRef.current = null;
+
+    setState({
+      ...INITIAL_INTENT_EXECUTION_STATE,
+      isSubmitting: true,
+    });
+
+    try {
+      const execution = await runExecution();
+      if (executionRef.current !== currentExecutionId) {
+        return execution;
+      }
+
+      setState({
+        execution,
+        status: execution.status ?? null,
+        timeline: [],
+        error: null,
+        isSubmitting: false,
+        isTracking: Boolean(execution.submitted?.intentId),
+      });
+
+      if (execution.submitted?.intentId) {
+        trackerRef.current = trackXRouteIntent(execution.submitted.intentId, {
+          includeTimeline: true,
+          onUpdate(snapshot: IntentTrackingSnapshot) {
+            if (executionRef.current !== currentExecutionId) {
+              return;
+            }
+
+            setState((current) => ({
+              ...current,
+              execution,
+              status: snapshot.status ?? current.status,
+              timeline: snapshot.timeline ?? current.timeline,
+              isTracking: true,
+            }));
+          },
+        });
+
+        trackerRef.current.done
+          .then((finalStatus) => {
+            if (executionRef.current !== currentExecutionId) {
+              return;
+            }
+
+            setState((current) => ({
+              ...current,
+              status: finalStatus ?? current.status,
+              isTracking: false,
+            }));
+          })
+          .catch((error) => {
+            if (executionRef.current !== currentExecutionId) {
+              return;
+            }
+
+            setState((current) => ({
+              ...current,
+              error: error instanceof Error ? error.message : "Tracking failed.",
+              isTracking: false,
+            }));
+          });
+      }
+
+      return execution;
+    } catch (error) {
+      if (executionRef.current === currentExecutionId) {
+        setState({
+          ...INITIAL_INTENT_EXECUTION_STATE,
+          error: error instanceof Error ? error.message : "Execution failed.",
+        });
+      }
+
+      throw error;
+    }
+  }
+
+  function reset() {
+    executionRef.current += 1;
+    trackerRef.current?.stop();
+    trackerRef.current = null;
+    setState(INITIAL_INTENT_EXECUTION_STATE);
+  }
+
+  return {
+    ...state,
+    execute,
+    reset,
+  };
 }
 
 type UseXRouteQuoteOptions = {
@@ -153,7 +583,6 @@ export function useXRouteQuote(
   };
 }
 
-const DISABLED_CHAINS = new Set<ChainKey>(["bifrost"]);
 const EXECUTE_LABELS: Record<string, string> = {
   call: "Call",
   "mint-vdot": "Mint vDOT",
@@ -165,64 +594,53 @@ const ASSETS = listAssets(DEFAULT_DEPLOYMENT_PROFILE);
 const ALL_CHAIN_KEYS = CHAINS.map((chain) => chain.key as ChainKey);
 const ALL_ASSET_KEYS = ASSETS.map((asset) => asset.symbol as AssetKey);
 
-const SWAP_SOURCE_DETAILS = ALL_CHAIN_KEYS.map((sourceChain) => ({
-  sourceChain,
-  destinations: getSwapOptions(sourceChain, DEFAULT_DEPLOYMENT_PROFILE),
-})).filter((entry) => entry.destinations.length > 0);
-
-const SWAP_DESTINATION =
-  SWAP_SOURCE_DETAILS.flatMap((entry) => entry.destinations.map((destination) => destination.chain))[0] ??
-  "hydration";
-
-const SWAP_SOURCE_CHAINS = SWAP_SOURCE_DETAILS
-  .filter((entry) => entry.destinations.some((destination) => destination.chain === SWAP_DESTINATION))
-  .map((entry) => entry.sourceChain);
-
-const SWAP_PAIR_RECORDS = SWAP_SOURCE_DETAILS.flatMap((entry) =>
-  entry.destinations
-    .filter((destination) => destination.chain === SWAP_DESTINATION)
-    .flatMap((destination) =>
-      destination.pairs.map((pair) => ({
-        sourceChain: entry.sourceChain,
-        ...pair,
-      })),
-    ),
-);
-
-const EXECUTE_SOURCE_DETAILS = ALL_CHAIN_KEYS.map((sourceChain) => ({
-  sourceChain,
-  destinations: getExecuteOptions(sourceChain, DEFAULT_DEPLOYMENT_PROFILE),
-})).filter((entry) => entry.destinations.length > 0);
-
-const EXECUTE_DESTINATION =
-  EXECUTE_SOURCE_DETAILS.flatMap((entry) => entry.destinations.map((destination) => destination.chain))[0] ??
-  "moonbeam";
-
-const EXECUTE_CAPABILITY_RECORDS = EXECUTE_SOURCE_DETAILS.flatMap((entry) =>
-  entry.destinations
-    .filter((destination) => destination.chain === EXECUTE_DESTINATION)
-    .flatMap((destination) =>
-      destination.capabilities.map((capability) => ({
-        sourceChain: entry.sourceChain,
-        ...capability,
-      })),
-    ),
+const SWAP_SOURCE_CHAINS = ALL_CHAIN_KEYS.filter(
+  (sourceChain) => getSwapOptions(sourceChain, DEFAULT_DEPLOYMENT_PROFILE).length > 0,
 );
 
 const EXECUTION_TYPES = [
-  ...new Set(EXECUTE_CAPABILITY_RECORDS.map((record) => record.executionType)),
+  ...new Set(
+    ALL_CHAIN_KEYS.flatMap((sourceChain) =>
+      getExecuteOptions(sourceChain, DEFAULT_DEPLOYMENT_PROFILE).flatMap((destination) =>
+        destination.capabilities.map((capability) => capability.executionType),
+      ),
+    ),
+  ),
 ] as ExecuteType[];
 
 function option<T extends string>(value: T, label: string, disabled = false): Option<T> {
   return Object.freeze({ value, label, disabled });
 }
 
-function isChainDisabled(chainKey: ChainKey) {
-  return DISABLED_CHAINS.has(chainKey);
+function createDisabledOptions<T extends string>(
+  options: readonly Option<T>[],
+  supportedValues: ReadonlySet<T>,
+  excludeValue?: T,
+) {
+  return Object.freeze(
+    options
+      .filter((candidate) => candidate.value !== excludeValue)
+      .map((candidate) => ({
+        ...candidate,
+        disabled: candidate.disabled || !supportedValues.has(candidate.value),
+      })),
+  );
 }
 
 function getTransferDestinationRecord(sourceChain: ChainKey, destinationChain: ChainKey) {
   return getTransferOptions(sourceChain, DEFAULT_DEPLOYMENT_PROFILE).find(
+    (candidate) => candidate.chain === destinationChain,
+  );
+}
+
+function getSwapDestinationRecord(sourceChain: ChainKey, destinationChain: ChainKey) {
+  return getSwapOptions(sourceChain, DEFAULT_DEPLOYMENT_PROFILE).find(
+    (candidate) => candidate.chain === destinationChain,
+  );
+}
+
+function getExecuteDestinationRecord(sourceChain: ChainKey, destinationChain: ChainKey) {
+  return getExecuteOptions(sourceChain, DEFAULT_DEPLOYMENT_PROFILE).find(
     (candidate) => candidate.chain === destinationChain,
   );
 }
@@ -232,68 +650,104 @@ function getExecuteTypeLabel(executionType: ExecuteType) {
 }
 
 export const chainOptions: readonly Option<ChainKey>[] = Object.freeze(
-  CHAINS.map((chain) => option(chain.key, chain.label, isChainDisabled(chain.key))),
+  CHAINS.map((chain) => option(chain.key, chain.label)),
 );
 
 export const assetOptions: readonly Option<AssetKey>[] = Object.freeze(
   ASSETS.map((asset) => option(asset.symbol, asset.symbol)),
 );
 
-export const swapDestinationChain = SWAP_DESTINATION;
 export const swapSourceChainOptions: readonly Option<ChainKey>[] = Object.freeze(
-  SWAP_SOURCE_CHAINS.map((chainKey) => option(chainKey, chainLabel(chainKey), isChainDisabled(chainKey))),
+  SWAP_SOURCE_CHAINS.map((chainKey) => option(chainKey, chainLabel(chainKey))),
 );
 
-export const swapAssetInOptions: readonly Option<AssetKey>[] = Object.freeze(
-  [...new Set(SWAP_PAIR_RECORDS.map((pair) => pair.assetIn as AssetKey))].map((assetKey) =>
-    option(assetKey, assetKey),
-  ),
-);
-
-export function getSwapAssetOutOptions(assetIn = swapAssetInOptions[0]?.value ?? "DOT") {
-  return Object.freeze(
-    [
-      ...new Set(
-        SWAP_PAIR_RECORDS.filter((pair) => pair.assetIn === assetIn).map(
-          (pair) => pair.assetOut as AssetKey,
-        ),
-      ),
-    ].map((assetKey) => option(assetKey, assetKey)),
+export function getSwapDestinationOptions(sourceChain: ChainKey) {
+  const supportedDestinations = new Set<ChainKey>(
+    getSwapOptions(sourceChain, DEFAULT_DEPLOYMENT_PROFILE).map((candidate) => candidate.chain),
   );
+
+  return createDisabledOptions(chainOptions, supportedDestinations, sourceChain);
 }
 
-export const swapAssetOutOptions = getSwapAssetOutOptions();
-export const swapSettlementChainOptions: readonly Option<ChainKey>[] = Object.freeze(
-  [...new Set(SWAP_PAIR_RECORDS.flatMap((pair) => pair.settlementChains as ChainKey[]))].map((chainKey) =>
-    option(chainKey, chainLabel(chainKey), isChainDisabled(chainKey)),
-  ),
-);
+export function getSwapAssetInOptions(sourceChain: ChainKey, destinationChain: ChainKey) {
+  const supportedAssets = new Set<AssetKey>(
+    (getSwapDestinationRecord(sourceChain, destinationChain)?.pairs ?? []).map(
+      (pair) => pair.assetIn as AssetKey,
+    ),
+  );
 
-export function getSwapSettlementChainOptions(assetOut: AssetKey) {
+  return createDisabledOptions(assetOptions, supportedAssets);
+}
+
+export function getSwapAssetOutOptions(
+  sourceChain: ChainKey,
+  destinationChain: ChainKey,
+  assetIn: AssetKey,
+) {
+  const supportedAssets = new Set<AssetKey>(
+    (getSwapDestinationRecord(sourceChain, destinationChain)?.pairs ?? [])
+      .filter((pair) => pair.assetIn === assetIn)
+      .map((pair) => pair.assetOut as AssetKey),
+  );
+
+  return createDisabledOptions(assetOptions, supportedAssets);
+}
+
+export function getSwapSettlementChainOptions(
+  sourceChain: ChainKey,
+  destinationChain: ChainKey,
+  assetIn: AssetKey,
+  assetOut: AssetKey,
+) {
   const supportedSettlementChains = new Set<ChainKey>(
-    SWAP_PAIR_RECORDS.filter((pair) => pair.assetOut === assetOut).flatMap(
-      (pair) => pair.settlementChains,
-    ),
+    (getSwapDestinationRecord(sourceChain, destinationChain)?.pairs ?? [])
+      .filter((pair) => pair.assetIn === assetIn && pair.assetOut === assetOut)
+      .flatMap((pair) => pair.settlementChains as ChainKey[]),
+  );
+
+  return createDisabledOptions(chainOptions, supportedSettlementChains);
+}
+
+export function getExecuteTypeOptions(
+  sourceChain?: ChainKey,
+  destinationChain?: ChainKey,
+) {
+  const supportedExecutionTypes = new Set<ExecuteType>(
+    (sourceChain
+      ? getExecuteOptions(sourceChain, DEFAULT_DEPLOYMENT_PROFILE)
+      : ALL_CHAIN_KEYS.flatMap((chainKey) => getExecuteOptions(chainKey, DEFAULT_DEPLOYMENT_PROFILE))
+    )
+      .filter((candidate) => !destinationChain || candidate.chain === destinationChain)
+      .flatMap((candidate) =>
+        candidate.capabilities.map((capability) => capability.executionType as ExecuteType),
+      ),
   );
 
   return Object.freeze(
-    swapSettlementChainOptions.map((candidate) => ({
-      ...candidate,
-      disabled: candidate.disabled || !supportedSettlementChains.has(candidate.value),
-    })),
+    EXECUTION_TYPES.map((executionType) =>
+      option(
+        executionType,
+        getExecuteTypeLabel(executionType),
+        !supportedExecutionTypes.has(executionType),
+      ),
+    ),
   );
 }
 
-export const executeDestinationChain = EXECUTE_DESTINATION;
-export const executeTypeOptions: readonly Option<ExecuteType>[] = Object.freeze(
-  EXECUTION_TYPES.map((executionType) =>
-    option(
-      executionType,
-      getExecuteTypeLabel(executionType),
-      !EXECUTE_CAPABILITY_RECORDS.some((record) => record.executionType === executionType),
-    ),
-  ),
-);
+export function getExecuteDestinationOptions(
+  sourceChain: ChainKey,
+  executionType: ExecuteType,
+) {
+  const supportedDestinations = new Set<ChainKey>(
+    getExecuteOptions(sourceChain, DEFAULT_DEPLOYMENT_PROFILE)
+      .filter((candidate) =>
+        candidate.capabilities.some((capability) => capability.executionType === executionType),
+      )
+      .map((candidate) => candidate.chain),
+  );
+
+  return createDisabledOptions(chainOptions, supportedDestinations, sourceChain);
+}
 
 export const EXAMPLE_EVM_ADDRESS = "0x1111111111111111111111111111111111111111";
 export const EXAMPLE_SS58_ADDRESS = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
@@ -304,28 +758,56 @@ export function chainLabel(chainKey: ChainKey) {
 }
 
 export function executeAssetForType(executionType: ExecuteType): AssetKey {
+  const defaultSourceChain =
+    getExecuteSourceChainOptions(executionType).find((candidate) => !candidate.disabled)?.value ??
+    ALL_CHAIN_KEYS[0] ??
+    "hydration";
+  const defaultDestinationChain =
+    getExecuteDestinationOptions(defaultSourceChain, executionType).find(
+      (candidate) => !candidate.disabled,
+    )?.value ??
+    "moonbeam";
+
   return (
-    EXECUTE_CAPABILITY_RECORDS.find((record) => record.executionType === executionType)?.assets[0] ??
+    getExecuteAssetOptions(defaultSourceChain, defaultDestinationChain, executionType).find(
+      (candidate) => !candidate.disabled,
+    )?.value ??
     ALL_ASSET_KEYS[0] ??
     "DOT"
   );
 }
 
-export function getExecuteSourceChainOptions(executionType: ExecuteType) {
+export function getExecuteSourceChainOptions(
+  executionType: ExecuteType,
+  destinationChain?: ChainKey,
+) {
   const supportedSources = new Set<ChainKey>(
-    EXECUTE_CAPABILITY_RECORDS.filter((record) => record.executionType === executionType).map(
-      (record) => record.sourceChain,
+    ALL_CHAIN_KEYS.filter((sourceChain) =>
+      getExecuteOptions(sourceChain, DEFAULT_DEPLOYMENT_PROFILE).some(
+        (candidate) =>
+          (!destinationChain || candidate.chain === destinationChain)
+          && candidate.capabilities.some((capability) => capability.executionType === executionType),
+      ),
     ),
   );
 
-  return Object.freeze(
-    chainOptions
-      .filter((candidate) => candidate.value !== executeDestinationChain)
-      .map((candidate) => ({
-        ...candidate,
-        disabled: candidate.disabled || !supportedSources.has(candidate.value),
-      })),
+  return createDisabledOptions(chainOptions, supportedSources, destinationChain);
+}
+
+export function getExecuteAssetOptions(
+  sourceChain: ChainKey,
+  destinationChain: ChainKey,
+  executionType: ExecuteType,
+) {
+  const supportedAssets = new Set<AssetKey>(
+    (
+      getExecuteDestinationRecord(sourceChain, destinationChain)?.capabilities.find(
+        (candidate) => candidate.executionType === executionType,
+      )?.assets ?? []
+    ).map((assetKey) => assetKey as AssetKey),
   );
+
+  return createDisabledOptions(assetOptions, supportedAssets);
 }
 
 export function getTransferDestinationOptions(sourceChain: ChainKey) {
@@ -333,14 +815,7 @@ export function getTransferDestinationOptions(sourceChain: ChainKey) {
     getTransferOptions(sourceChain, DEFAULT_DEPLOYMENT_PROFILE).map((candidate) => candidate.chain),
   );
 
-  return Object.freeze(
-    chainOptions
-      .filter((candidate) => candidate.value !== sourceChain)
-      .map((candidate) => ({
-        ...candidate,
-        disabled: candidate.disabled || !supportedDestinations.has(candidate.value),
-      })),
-  );
+  return createDisabledOptions(chainOptions, supportedDestinations, sourceChain);
 }
 
 export function getTransferAssetOptions(sourceChain: ChainKey, destinationChain: ChainKey) {
@@ -348,12 +823,7 @@ export function getTransferAssetOptions(sourceChain: ChainKey, destinationChain:
     getTransferDestinationRecord(sourceChain, destinationChain)?.assets ?? [],
   );
 
-  return Object.freeze(
-    assetOptions.map((candidate) => ({
-      ...candidate,
-      disabled: candidate.disabled || !supportedAssets.has(candidate.value),
-    })),
-  );
+  return createDisabledOptions(assetOptions, supportedAssets);
 }
 
 export function isEvmChain(chainKey: ChainKey) {
@@ -379,4 +849,17 @@ export function coerceOptionValue<T extends string>(currentValue: T, options: re
   return options.find((candidate) => !candidate.disabled)?.value ?? options[0]?.value;
 }
 
-export { getAssetDecimals };
+function resolveSubstrateRpcUrl(chainKey: ChainKey) {
+  const rpcUrl = SUBSTRATE_RPC_URLS[chainKey as keyof typeof SUBSTRATE_RPC_URLS];
+  if (!rpcUrl) {
+    throw new Error(`Missing RPC URL configuration for ${chainLabel(chainKey)}.`);
+  }
+
+  return rpcUrl;
+}
+
+export {
+  formatAssetAmount,
+  getAssetDecimals,
+  parseAssetAmount,
+};

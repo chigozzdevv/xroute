@@ -4,57 +4,14 @@ XRoute is a multihop cross-chain execution router on Polkadot that gives apps on
 
 `@xroute/sdk` is the integration package for XRoute.
 
-It gives integrators one main entrypoint:
-
-```js
-const client = createXRouteClient({ apiKey });
-```
-
-Then:
-
-```js
-client.connectWallet("evm", {
-  provider: window.ethereum,
-  chainKey: "moonbeam",
-});
-
-await client.quote(...);
-await client.transfer(...);
-await client.swap(...);
-await client.call(...);
-await client.runFlow(...);
-await client.getStatus(intentId);
-await client.getTimeline(intentId);
-await client.wait(intentId);
-```
-
 ## Intent Surface
 
-Current public intent surface:
+Supported intent surface:
 
-- `transfer`
-- `swap`
-- `execute`
-  - current public execution type: `call`
-
-## Hosted Access
-
-XRoute is designed as a **hosted integration**.
-
-That means:
-
-- XRoute runs the quote and relayer services
-- integrators use `@xroute/sdk`
-- API keys control access and limits
-
-Base hosted API:
-
-- `https://xroute-api.onrender.com/v1`
-
-Recommended access model:
-
-- free tier: limited quote volume for evaluation and integration work
-- higher limits / production access: [xroute@muwa.io](mailto:xroute@muwa.io)
+- `transfer`: move one supported asset from a source chain to a recipient on a destination chain.
+- `swap`: route an input asset from the source chain and receive a different asset on the destination path.
+- `execute`: pay to perform a supported action on the destination chain.
+  - `call`: execute contract calldata on the destination chain.
 
 ## Install
 
@@ -72,14 +29,7 @@ const client = createXRouteClient({
 });
 ```
 
-You can also override the hosted base URL explicitly:
-
-```js
-const client = createXRouteClient({
-  apiKey: process.env.XROUTE_API_KEY,
-  baseUrl: "https://xroute-api.onrender.com/v1",
-});
-```
+Leave the `apiKey` field empty to use at no cost with limits. If you need more usage, pls reach [xroute@muwa.io](mailto:xroute@muwa.io) to discuss usage.
 
 ## Wallet Connection
 
@@ -127,6 +77,11 @@ const { intent, quote } = await client.quote({
   },
 });
 ```
+
+All asset amount fields are base-unit integers as strings.
+
+- DOT: `1 DOT` -> `"10000000000"`
+- USDT (6 decimals): `49 USDT` -> `"49000000"`
 
 ## Transfer
 
@@ -281,6 +236,8 @@ import {
   listAssets,
   getChainWalletType,
   getAssetDecimals,
+  parseAssetAmount,
+  formatAssetAmount,
 } from "@xroute/sdk/chains";
 import {
   getTransferOptions,
@@ -289,34 +246,119 @@ import {
 } from "@xroute/sdk/routes";
 ```
 
-These helpers are the intended source of truth for your UI option state.
+These helpers are the intended source of truth for UI option state.
 
-## Other Exports
+`listChains()` returns the chain catalog.
 
-- `createStatusClient(...)`
-- `createXRouteOperatorClient(...)`
-- `createHttpQuoteProvider(...)`
-- `createHttpExecutorRelayerClient(...)`
-- `normalizeQuote(...)`
-- `NATIVE_ASSET_ADDRESS`
-- `DEFAULT_XROUTE_API_BASE_URL`
-
-## Build And Pack
-
-Build:
-
-```bash
-npm --prefix packages/xroute-sdk run build
+```js
+[
+  { key: "moonbeam", label: "Moonbeam", ... },
+  { key: "hydration", label: "Hydration", ... },
+]
 ```
 
-Dry-run the npm tarball:
+`listAssets()` returns the asset catalog, not route-filtered form options.
 
-```bash
-npm --cache ./.npm-cache pack --dry-run ./packages/xroute-sdk
+```js
+[
+  { symbol: "DOT", decimals: 10, supportedChains: ["polkadot-hub", "hydration", "moonbeam"] },
+]
 ```
 
-Publish:
+`getChainWalletType(chainKey)` tells you which wallet UX to show for a selected source chain.
 
-```bash
-npm publish ./packages/xroute-sdk --access public
+```js
+getChainWalletType("moonbeam"); // "evm"
+getChainWalletType("hydration"); // "substrate"
 ```
+
+`getAssetDecimals(assetKey)` gives you the asset precision. `parseAssetAmount(...)` and `formatAssetAmount(...)` are the SDK helpers for converting between human form values and base units.
+
+`getTransferOptions(sourceChain)` returns transfer-valid destinations for the selected source chain.
+
+```js
+[
+  {
+    chain: "hydration",
+    label: "Hydration",
+    assets: ["DOT", "USDT"],
+  },
+]
+```
+
+`getSwapOptions(sourceChain)` returns swap-valid destinations and pairs.
+
+```js
+[
+  {
+    chain: "hydration",
+    label: "Hydration",
+    pairs: [
+      {
+        assetIn: "DOT",
+        assetOut: "USDT",
+        settlementChains: ["polkadot-hub"],
+      },
+    ],
+  },
+]
+```
+
+`getExecuteOptions(sourceChain)` returns execute-valid destinations and capabilities.
+
+```js
+[
+  {
+    chain: "moonbeam",
+    label: "Moonbeam",
+    capabilities: [
+      {
+        executionType: "call",
+        assets: ["DOT"],
+      },
+    ],
+  },
+]
+```
+
+Typical form flow:
+
+```js
+const chains = listChains();
+const sourceChain = chains[0].key;
+const walletType = getChainWalletType(sourceChain);
+
+const transferDestinations = getTransferOptions(sourceChain);
+const destinationChain = transferDestinations[0].chain;
+const transferAssets =
+  transferDestinations.find((option) => option.chain === destinationChain)?.assets ?? [];
+
+const decimals = getAssetDecimals(transferAssets[0]);
+```
+
+Use `listAssets()` when you need general asset metadata.
+Use `getTransferOptions(...)`, `getSwapOptions(...)`, and `getExecuteOptions(...)` when you need route-valid dependent selects.
+
+## Amount Conversion
+
+The wire format still uses base-unit integers. If your UI collects human decimal input, use the SDK helpers to convert before calling the client.
+
+Example:
+
+```js
+import { parseAssetAmount, formatAssetAmount } from "@xroute/sdk/chains";
+
+const amount = parseAssetAmount("DOT", "25");
+
+await client.transfer({
+  sourceChain: "moonbeam",
+  destinationChain: "hydration",
+  asset: "DOT",
+  amount,
+  recipient: "5Frecipient",
+});
+
+const received = formatAssetAmount("USDT", "49000000"); // "49"
+```
+
+Made with love ❤️ by Muwa Team.

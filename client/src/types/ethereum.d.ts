@@ -1,6 +1,27 @@
 export {};
 
 declare global {
+  interface InjectedSubstrateAccount {
+    address: string;
+    name?: string;
+    meta?: {
+      name?: string;
+    };
+  }
+
+  interface InjectedSubstrateAccountsSource {
+    get?(): Promise<InjectedSubstrateAccount[]>;
+  }
+
+  interface InjectedSubstrateExtension {
+    accounts?: unknown;
+    signer?: unknown;
+  }
+
+  interface InjectedSubstrateExtensionSource {
+    enable(originName?: string): Promise<unknown>;
+  }
+
   interface EthereumProvider {
     request(args: {
       method: string;
@@ -18,5 +39,6 @@ declare global {
 
   interface Window {
     ethereum?: EthereumProvider;
+    injectedWeb3?: Record<string, InjectedSubstrateExtensionSource | undefined>;
   }
 }

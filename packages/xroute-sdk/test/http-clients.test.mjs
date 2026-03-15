@@ -1,15 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import * as publicSdk from "../index.mjs";
 import {
   createWallet,
   createEvmWalletAdapter,
-  createHttpExecutorRelayerClient,
   createHttpQuoteProvider,
   createHttpStatusProvider,
-  createXRouteOperatorClient,
   createXRouteClient,
 } from "../index.mjs";
+import { createHttpExecutorRelayerClient } from "../internal.mjs";
 
 test("createHttpStatusProvider fetches hosted status and timeline", async () => {
   const seen = [];
@@ -417,28 +417,9 @@ test("hosted createXRouteClient tracks status changes until settlement", async (
   assert.deepEqual(seenUpdates, ["submitted", "executing", "settled"]);
 });
 
-test("createXRouteOperatorClient exposes relayer operations outside the public browser client", async () => {
-  const seen = [];
-  const client = createXRouteOperatorClient({
-    authToken: "secret-token",
-    baseUrl: "https://example.test/v1",
-    fetchImpl: async (url, request) => {
-      seen.push([url, request]);
-      return {
-        ok: true,
-        async json() {
-          return {
-            jobs: [],
-          };
-        },
-      };
-    },
-  });
-
-  const payload = await client.listJobs();
-  assert.deepEqual(payload.jobs, []);
-  assert.equal(seen[0][0], "https://example.test/v1/jobs");
-  assert.equal(seen[0][1].headers.authorization, "Bearer secret-token");
+test("public SDK root does not expose relayer admin helpers", () => {
+  assert.equal("createHttpExecutorRelayerClient" in publicSdk, false);
+  assert.equal("createXRouteOperatorClient" in publicSdk, false);
 });
 
 test("createEvmWalletAdapter submits intents with approval and extracts intent id from receipt", async () => {
