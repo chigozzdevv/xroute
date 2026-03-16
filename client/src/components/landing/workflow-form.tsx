@@ -7,7 +7,6 @@ import {
   type ChainKey,
   type ExecuteType,
   EXAMPLE_ADAPTER_ADDRESS,
-  EXAMPLE_EVM_ADDRESS,
   type FlowRequest,
   type FlowResponse,
   chainOptions,
@@ -16,7 +15,6 @@ import {
   createExecuteQuoteRequest,
   createSwapQuoteRequest,
   createTransferQuoteRequest,
-  exampleRecipientForChain,
   getExecuteAssetOptions,
   getExecuteDestinationOptions,
   getExecuteSourceChainOptions,
@@ -28,6 +26,7 @@ import {
   getSwapSettlementChainOptions,
   getTransferAssetOptions,
   getTransferDestinationOptions,
+  recipientPlaceholderForChain,
   recipientLabelForChain,
   resolveWalletAccountForChain,
   swapSourceChainOptions,
@@ -117,7 +116,7 @@ function createTransferStep(): TransferWorkflowStep {
     destinationChain: "hydration",
     asset: "DOT",
     amount: "25",
-    recipient: exampleRecipientForChain("hydration"),
+    recipient: "",
   };
 }
 
@@ -132,7 +131,7 @@ function createSwapStep(): SwapWorkflowStep {
     amountIn: "10",
     minAmountOut: "49",
     settlementChain: "polkadot-hub",
-    recipient: exampleRecipientForChain("polkadot-hub"),
+    recipient: "",
   };
 }
 
@@ -148,7 +147,7 @@ function createExecuteStep(): ExecuteWorkflowStep {
     calldata:
       "0xdeadbeef0000000000000000000000001111111111111111111111111111111111111111",
     amount: "10000000000",
-    recipient: EXAMPLE_EVM_ADDRESS,
+    recipient: "",
     adapterAddress: EXAMPLE_ADAPTER_ADDRESS,
     value: "0",
     gasLimit: "250000",
@@ -417,7 +416,8 @@ export function WorkflowForm() {
                                 asset:
                                   coerceOptionValue(step.asset, nextAssetOptions) ??
                                   nextAssetOptions[0].value,
-                                recipient: exampleRecipientForChain(destinationChain),
+                                recipient:
+                                  resolveWalletAccountForChain(sessions, destinationChain) ?? "",
                               });
                             }}
                           >
@@ -447,7 +447,8 @@ export function WorkflowForm() {
                                     step.asset,
                                     getTransferAssetOptions(step.sourceChain, destinationChain),
                                   ) ?? step.asset,
-                                recipient: exampleRecipientForChain(destinationChain),
+                                recipient:
+                                  resolveWalletAccountForChain(sessions, destinationChain) ?? "",
                               });
                             }}
                           >
@@ -508,7 +509,7 @@ export function WorkflowForm() {
                           <input
                             className={inputClass}
                             value={step.recipient}
-                            placeholder={exampleRecipientForChain(step.destinationChain)}
+                            placeholder={recipientPlaceholderForChain(step.destinationChain)}
                             onChange={(event) =>
                               replaceStep(step.id, {
                                 ...step,
@@ -638,7 +639,8 @@ export function WorkflowForm() {
                             assetIn,
                             assetOut,
                             settlementChain,
-                            recipient: exampleRecipientForChain(settlementChain),
+                            recipient:
+                              resolveWalletAccountForChain(sessions, settlementChain) ?? "",
                           });
                         }}
                       >
@@ -690,7 +692,8 @@ export function WorkflowForm() {
                             assetIn,
                             assetOut,
                             settlementChain,
-                            recipient: exampleRecipientForChain(settlementChain),
+                            recipient:
+                              resolveWalletAccountForChain(sessions, settlementChain) ?? "",
                           });
                         }}
                       >
@@ -734,7 +737,8 @@ export function WorkflowForm() {
                             assetIn,
                             assetOut,
                             settlementChain,
-                            recipient: exampleRecipientForChain(settlementChain),
+                            recipient:
+                              resolveWalletAccountForChain(sessions, settlementChain) ?? "",
                           });
                         }}
                       >
@@ -770,7 +774,8 @@ export function WorkflowForm() {
                             ...step,
                             assetOut,
                             settlementChain: nextSettlementChain,
-                            recipient: exampleRecipientForChain(nextSettlementChain),
+                            recipient:
+                              resolveWalletAccountForChain(sessions, nextSettlementChain) ?? "",
                           });
                         }}
                       >
@@ -825,9 +830,11 @@ export function WorkflowForm() {
                             ...step,
                             settlementChain:
                               event.target.value as SwapWorkflowStep["settlementChain"],
-                            recipient: exampleRecipientForChain(
-                              event.target.value as SwapWorkflowStep["settlementChain"],
-                            ),
+                            recipient:
+                              resolveWalletAccountForChain(
+                                sessions,
+                                event.target.value as SwapWorkflowStep["settlementChain"],
+                              ) ?? "",
                           })
                         }
                       >
@@ -850,6 +857,7 @@ export function WorkflowForm() {
                       <input
                         className={inputClass}
                         value={step.recipient}
+                        placeholder={recipientPlaceholderForChain(step.settlementChain)}
                         onChange={(event) =>
                           replaceStep(step.id, {
                             ...step,

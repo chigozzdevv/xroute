@@ -20,9 +20,9 @@ import {
   chainOptions,
   coerceOptionValue,
   createTransferQuoteRequest,
-  exampleRecipientForChain,
   getTransferAssetOptions,
   getTransferDestinationOptions,
+  recipientPlaceholderForChain,
   recipientLabelForChain,
   resolveWalletAccountForChain,
   submitTransferWithWallet,
@@ -48,7 +48,7 @@ function createInitialTransferForm(): TransferFormState {
     destinationChain: "hydration",
     asset: "DOT",
     amount: "25",
-    recipient: exampleRecipientForChain("hydration"),
+    recipient: "",
   };
 }
 
@@ -121,7 +121,7 @@ export function TransferForm() {
                       asset:
                         coerceOptionValue(current.asset, nextAssetOptions) ??
                         nextAssetOptions[0].value,
-                      recipient: exampleRecipientForChain(destinationChain),
+                      recipient: resolveWalletAccountForChain(sessions, destinationChain) ?? "",
                     };
                   })
                 }
@@ -154,7 +154,11 @@ export function TransferForm() {
                           event.target.value as ChainKey,
                         ),
                       ) ?? current.asset,
-                    recipient: exampleRecipientForChain(event.target.value as ChainKey),
+                    recipient:
+                      resolveWalletAccountForChain(
+                        sessions,
+                        event.target.value as ChainKey,
+                      ) ?? "",
                   }))
                 }
               >
@@ -215,7 +219,7 @@ export function TransferForm() {
               <input
                 className={inputClass}
                 value={form.recipient}
-                placeholder={exampleRecipientForChain(form.destinationChain)}
+                placeholder={recipientPlaceholderForChain(form.destinationChain)}
                 onChange={(event) =>
                   setForm((current) => ({
                     ...current,
@@ -229,11 +233,11 @@ export function TransferForm() {
       <QuoteFooter quote={quote} />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="m-0 text-sm leading-6 text-muted">
-          {walletReady
-            ? "Quote ready. Submit to execute the transfer."
-            : `Connect a ${walletRequirementLabel(form.sourceChain).toLowerCase()} to quote and execute from ${form.sourceChain}.`}
-        </p>
+        {!walletReady ? (
+          <p className="m-0 text-sm leading-6 text-muted">
+            {`Connect a ${walletRequirementLabel(form.sourceChain).toLowerCase()} to quote and execute from ${form.sourceChain}.`}
+          </p>
+        ) : <span />}
         <button
           type="button"
           className={actionButtonClass}

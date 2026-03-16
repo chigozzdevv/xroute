@@ -31,8 +31,39 @@ export type Option<T extends string = string> = {
   disabled?: boolean;
 };
 
+const XROUTE_HOSTED_API_BASE_URL = "https://xroute-api.onrender.com/v1";
+const XROUTE_BROWSER_PROXY_BASE_PATH = "/api/xroute";
+
+function rewriteXRouteRequestUrl(url: string) {
+  return url.startsWith(XROUTE_HOSTED_API_BASE_URL)
+    ? `${XROUTE_BROWSER_PROXY_BASE_PATH}${url.slice(XROUTE_HOSTED_API_BASE_URL.length)}`
+    : url;
+}
+
+async function xrouteBrowserFetch(input: RequestInfo | URL, init?: RequestInit) {
+  if (typeof input === "string") {
+    return fetch(rewriteXRouteRequestUrl(input), init);
+  }
+
+  if (input instanceof URL) {
+    return fetch(rewriteXRouteRequestUrl(input.toString()), init);
+  }
+
+  if (input instanceof Request) {
+    const rewrittenUrl = rewriteXRouteRequestUrl(input.url);
+    if (rewrittenUrl === input.url) {
+      return fetch(input, init);
+    }
+
+    return fetch(new Request(rewrittenUrl, input), init);
+  }
+
+  return fetch(input, init);
+}
+
 export const xrouteClient = createXRouteClient({
   apiKey: process.env.NEXT_PUBLIC_XROUTE_API_KEY?.trim() || undefined,
+  fetchImpl: xrouteBrowserFetch,
 });
 
 const TX_EXPLORER_BASE_URLS = Object.freeze({
@@ -745,8 +776,8 @@ export function getExecuteDestinationOptions(
   return createDisabledOptions(chainOptions, supportedDestinations, sourceChain);
 }
 
-export const EXAMPLE_EVM_ADDRESS = "0x1111111111111111111111111111111111111111";
-export const EXAMPLE_SS58_ADDRESS = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
+export const EVM_RECIPIENT_PLACEHOLDER = "0x...";
+export const SS58_RECIPIENT_PLACEHOLDER = "5...";
 export const EXAMPLE_ADAPTER_ADDRESS = "0x2222222222222222222222222222222222222222";
 
 export function chainLabel(chainKey: ChainKey) {
@@ -832,8 +863,8 @@ export function recipientLabelForChain(chainKey: ChainKey) {
     : "Recipient (SS58 address)";
 }
 
-export function exampleRecipientForChain(chainKey: ChainKey) {
-  return isEvmChain(chainKey) ? EXAMPLE_EVM_ADDRESS : EXAMPLE_SS58_ADDRESS;
+export function recipientPlaceholderForChain(chainKey: ChainKey) {
+  return isEvmChain(chainKey) ? EVM_RECIPIENT_PLACEHOLDER : SS58_RECIPIENT_PLACEHOLDER;
 }
 
 export function coerceOptionValue<T extends string>(currentValue: T, options: readonly Option<T>[]) {

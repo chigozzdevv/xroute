@@ -387,11 +387,11 @@ export function ExecuteForm() {
       <QuoteFooter quote={quote} />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="m-0 text-sm leading-6 text-muted">
-          {walletReady
-            ? "Quote ready. Submit to execute the contract call."
-            : `Connect a ${walletRequirementLabel(form.sourceChain).toLowerCase()} to quote and execute from ${form.sourceChain}.`}
-        </p>
+        {!walletReady ? (
+          <p className="m-0 text-sm leading-6 text-muted">
+            {`Connect a ${walletRequirementLabel(form.sourceChain).toLowerCase()} to quote and execute from ${form.sourceChain}.`}
+          </p>
+        ) : <span />}
         <button
           type="button"
           className={actionButtonClass}

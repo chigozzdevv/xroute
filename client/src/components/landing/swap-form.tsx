@@ -19,11 +19,11 @@ import {
   type ChainKey,
   coerceOptionValue,
   createSwapQuoteRequest,
-  exampleRecipientForChain,
   getSwapAssetInOptions,
   getSwapAssetOutOptions,
   getSwapDestinationOptions,
   getSwapSettlementChainOptions,
+  recipientPlaceholderForChain,
   recipientLabelForChain,
   resolveWalletAccountForChain,
   submitSwapWithWallet,
@@ -56,7 +56,7 @@ function createInitialSwapForm(): SwapFormState {
     amountIn: "10",
     minAmountOut: "49",
     settlementChain: "polkadot-hub",
-    recipient: exampleRecipientForChain("polkadot-hub"),
+    recipient: "",
   };
 }
 
@@ -173,7 +173,7 @@ export function SwapForm() {
                       assetIn,
                       assetOut,
                       settlementChain,
-                      recipient: exampleRecipientForChain(settlementChain),
+                      recipient: resolveWalletAccountForChain(sessions, settlementChain) ?? "",
                     };
                   })
                 }
@@ -226,7 +226,7 @@ export function SwapForm() {
                       assetIn,
                       assetOut,
                       settlementChain,
-                      recipient: exampleRecipientForChain(settlementChain),
+                      recipient: resolveWalletAccountForChain(sessions, settlementChain) ?? "",
                     };
                   })
                 }
@@ -272,7 +272,7 @@ export function SwapForm() {
                       assetIn,
                       assetOut,
                       settlementChain,
-                      recipient: exampleRecipientForChain(settlementChain),
+                      recipient: resolveWalletAccountForChain(sessions, settlementChain) ?? "",
                     };
                   })
                 }
@@ -310,7 +310,8 @@ export function SwapForm() {
                       ...current,
                       assetOut,
                       settlementChain: nextSettlementChain,
-                      recipient: exampleRecipientForChain(nextSettlementChain),
+                      recipient:
+                        resolveWalletAccountForChain(sessions, nextSettlementChain) ?? "",
                     };
                   })
                 }
@@ -365,9 +366,11 @@ export function SwapForm() {
                   setForm((current) => ({
                     ...current,
                     settlementChain: event.target.value as SwapFormState["settlementChain"],
-                    recipient: exampleRecipientForChain(
-                      event.target.value as SwapFormState["settlementChain"],
-                    ),
+                    recipient:
+                      resolveWalletAccountForChain(
+                        sessions,
+                        event.target.value as SwapFormState["settlementChain"],
+                      ) ?? "",
                   }))
                 }
               >
@@ -390,6 +393,7 @@ export function SwapForm() {
               <input
                 className={inputClass}
                 value={form.recipient}
+                placeholder={recipientPlaceholderForChain(form.settlementChain)}
                 onChange={(event) =>
                   setForm((current) => ({
                     ...current,
@@ -403,11 +407,11 @@ export function SwapForm() {
       <QuoteFooter quote={quote} />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="m-0 text-sm leading-6 text-muted">
-          {walletReady
-            ? "Quote ready. Submit to execute the swap."
-            : `Connect a ${walletRequirementLabel(form.sourceChain).toLowerCase()} to quote and execute from ${form.sourceChain}.`}
-        </p>
+        {!walletReady ? (
+          <p className="m-0 text-sm leading-6 text-muted">
+            {`Connect a ${walletRequirementLabel(form.sourceChain).toLowerCase()} to quote and execute from ${form.sourceChain}.`}
+          </p>
+        ) : <span />}
         <button
           type="button"
           className={actionButtonClass}
