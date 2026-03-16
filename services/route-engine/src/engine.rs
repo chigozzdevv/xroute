@@ -1,9 +1,8 @@
 use crate::destination_calls::build_execute_call_data;
 use crate::error::RouteError;
 use crate::model::{
-    AssetAmount, AssetKey, ChainKey, DeploymentProfile, ExecuteIntent, ExecutionType,
-    FeeBreakdown, FeeType,
-    Intent, IntentAction, PlanStep, Quote, RouteSegment, RouteSegmentKind,
+    AssetAmount, AssetKey, ChainKey, DeploymentProfile, ExecuteIntent, ExecutionType, FeeBreakdown,
+    FeeType, Intent, IntentAction, PlanStep, Quote, RouteSegment, RouteSegmentKind,
     RuntimeCallOriginKind, SubmissionAction, SubmissionTerms, XcmInstruction,
 };
 use crate::registry::{RouteRegistry, SwapRoute, TransferPath};

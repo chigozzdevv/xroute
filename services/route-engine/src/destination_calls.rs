@@ -94,7 +94,10 @@ fn encode_vdot_order_call(
     let mut encoded = Vec::with_capacity(4 + (32 * 6));
     encoded.extend(selector);
     encoded.extend(encode_abi_u256(intent.amount));
-    encoded.extend(encode_address_word(&parse_h160(&intent.recipient, recipient_field)?));
+    encoded.extend(encode_address_word(&parse_h160(
+        &intent.recipient,
+        recipient_field,
+    )?));
     encoded.extend(encode_abi_u256(128));
     encoded.extend(encode_abi_u256(u128::from(intent.channel_id)));
     encoded.extend(encode_abi_u256(remark.len() as u128));

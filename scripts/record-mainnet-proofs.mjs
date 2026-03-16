@@ -57,29 +57,21 @@ const report = {
   scenarios: [],
 };
 
-let quoteService;
-let relayerService;
+let apiService;
 
 try {
   const serviceEnv = buildServiceEnv(settings, runtimeDir);
-  quoteService = await spawnRustService({
-    packageName: "quote-service",
-    cwd: workspaceRoot,
-    env: serviceEnv,
-  });
-  relayerService = await spawnRustService({
-    packageName: "executor-relayer",
+  apiService = await spawnRustService({
+    packageName: "xroute-api",
     cwd: workspaceRoot,
     env: serviceEnv,
   });
 
-  report.quoteService = quoteService.url;
-  report.relayerService = relayerService.url;
-  report.quoteHealth = await requestJson(`${quoteService.url}/healthz`);
-  report.relayerHealth = await requestJson(`${relayerService.url}/healthz`);
+  report.apiService = apiService.url;
+  report.apiHealth = await requestJson(`${apiService.url}/healthz`);
 
   const relayer = createHttpExecutorRelayerClient({
-    endpoint: relayerService.url,
+    endpoint: apiService.url,
     authToken: settings.relayerAuthToken,
   });
   const statusProvider = new FileBackedStatusIndexer({
@@ -90,7 +82,7 @@ try {
   });
   const client = createConfiguredXRouteClient({
     quoteProvider: createHttpQuoteProvider({
-      endpoint: `${quoteService.url}/quote`,
+      endpoint: `${apiService.url}/quote`,
       headers: {
         "x-xroute-deployment-profile": deploymentProfile,
       },
@@ -113,8 +105,7 @@ try {
   mkdirSync(proofsDir, { recursive: true });
   const reportPath = join(proofsDir, `${proofLabel}-${timestampLabel()}.json`);
   writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
-  await quoteService?.close();
-  await relayerService?.close();
+  await apiService?.close();
   rmSync(runtimeDir, { recursive: true, force: true });
 
   console.log(

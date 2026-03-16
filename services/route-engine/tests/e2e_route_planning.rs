@@ -31,9 +31,14 @@ fn quotes_hub_to_hydration_transfer_on_mainnet() {
         deadline: 1_773_185_200,
     };
 
-    let quote = engine.quote(intent).expect("mainnet transfer quote should build");
+    let quote = engine
+        .quote(intent)
+        .expect("mainnet transfer quote should build");
     assert_eq!(quote.deployment_profile, DeploymentProfile::Mainnet);
-    assert_eq!(quote.route, vec![ChainKey::PolkadotHub, ChainKey::Hydration]);
+    assert_eq!(
+        quote.route,
+        vec![ChainKey::PolkadotHub, ChainKey::Hydration]
+    );
     assert_eq!(quote.submission.asset, AssetKey::Dot);
 }
 
@@ -43,25 +48,25 @@ fn quotes_bifrost_as_a_hub_centered_source_spoke() {
     let intent = Intent {
         source_chain: ChainKey::Bifrost,
         destination_chain: ChainKey::Moonbeam,
-        action: IntentAction::Execute(ExecuteIntent::Call(
-            CallExecuteIntent {
-                asset: AssetKey::Dot,
-                max_payment_amount: 250_000_000,
-                contract_address: "0x1111111111111111111111111111111111111111".to_owned(),
-                calldata: "0xdeadbeef".to_owned(),
-                value: 0,
-                gas_limit: 250_000,
-                fallback_weight: XcmWeight {
-                    ref_time: 650_000_000,
-                    proof_size: 12_288,
-                },
+        action: IntentAction::Execute(ExecuteIntent::Call(CallExecuteIntent {
+            asset: AssetKey::Dot,
+            max_payment_amount: 250_000_000,
+            contract_address: "0x1111111111111111111111111111111111111111".to_owned(),
+            calldata: "0xdeadbeef".to_owned(),
+            value: 0,
+            gas_limit: 250_000,
+            fallback_weight: XcmWeight {
+                ref_time: 650_000_000,
+                proof_size: 12_288,
             },
-        )),
+        })),
         refund_address: REFUND_ADDRESS.to_owned(),
         deadline: 1_773_185_200,
     };
 
-    let quote = engine.quote(intent).expect("bifrost execute quote should build");
+    let quote = engine
+        .quote(intent)
+        .expect("bifrost execute quote should build");
     assert_eq!(
         quote.route,
         vec![ChainKey::Bifrost, ChainKey::PolkadotHub, ChainKey::Moonbeam]
@@ -84,10 +89,16 @@ fn quotes_multihop_transfer_from_moonbeam_to_hydration() {
         deadline: 1_773_185_200,
     };
 
-    let quote = engine.quote(intent).expect("multihop transfer should build");
+    let quote = engine
+        .quote(intent)
+        .expect("multihop transfer should build");
     assert_eq!(
         quote.route,
-        vec![ChainKey::Moonbeam, ChainKey::PolkadotHub, ChainKey::Hydration]
+        vec![
+            ChainKey::Moonbeam,
+            ChainKey::PolkadotHub,
+            ChainKey::Hydration
+        ]
     );
 }
 
@@ -128,28 +139,32 @@ fn quotes_multihop_execute_evm_contract_call_on_moonbeam() {
     let intent = Intent {
         source_chain: ChainKey::Hydration,
         destination_chain: ChainKey::Moonbeam,
-        action: IntentAction::Execute(ExecuteIntent::Call(
-            CallExecuteIntent {
-                asset: AssetKey::Dot,
-                max_payment_amount: 200_000_000,
-                contract_address: "0x1111111111111111111111111111111111111111".to_owned(),
-                calldata: "0xdeadbeef".to_owned(),
-                value: 0,
-                gas_limit: 250_000,
-                fallback_weight: XcmWeight {
-                    ref_time: 650_000_000,
-                    proof_size: 12_288,
-                },
+        action: IntentAction::Execute(ExecuteIntent::Call(CallExecuteIntent {
+            asset: AssetKey::Dot,
+            max_payment_amount: 200_000_000,
+            contract_address: "0x1111111111111111111111111111111111111111".to_owned(),
+            calldata: "0xdeadbeef".to_owned(),
+            value: 0,
+            gas_limit: 250_000,
+            fallback_weight: XcmWeight {
+                ref_time: 650_000_000,
+                proof_size: 12_288,
             },
-        )),
+        })),
         refund_address: REFUND_ADDRESS.to_owned(),
         deadline: 1_773_185_200,
     };
 
-    let quote = engine.quote(intent).expect("mainnet evm execute should build");
+    let quote = engine
+        .quote(intent)
+        .expect("mainnet evm execute should build");
     assert_eq!(
         quote.route,
-        vec![ChainKey::Hydration, ChainKey::PolkadotHub, ChainKey::Moonbeam]
+        vec![
+            ChainKey::Hydration,
+            ChainKey::PolkadotHub,
+            ChainKey::Moonbeam
+        ]
     );
 
     match &quote.execution_plan.steps[4] {
@@ -166,21 +181,19 @@ fn rejects_mint_vdot_order_submission_without_live_pricing() {
     let intent = Intent {
         source_chain: ChainKey::Hydration,
         destination_chain: ChainKey::Moonbeam,
-        action: IntentAction::Execute(ExecuteIntent::MintVdot(
-            VdotOrderExecuteIntent {
-                amount: AssetKey::Dot.units(1),
-                max_payment_amount: 200_000_000,
-                recipient: "0x1111111111111111111111111111111111111111".to_owned(),
-                adapter_address: "0x2222222222222222222222222222222222222222".to_owned(),
-                gas_limit: 500_000,
-                fallback_weight: XcmWeight {
-                    ref_time: 650_000_000,
-                    proof_size: 12_288,
-                },
-                remark: "xroute".to_owned(),
-                channel_id: 0,
+        action: IntentAction::Execute(ExecuteIntent::MintVdot(VdotOrderExecuteIntent {
+            amount: AssetKey::Dot.units(1),
+            max_payment_amount: 200_000_000,
+            recipient: "0x1111111111111111111111111111111111111111".to_owned(),
+            adapter_address: "0x2222222222222222222222222222222222222222".to_owned(),
+            gas_limit: 500_000,
+            fallback_weight: XcmWeight {
+                ref_time: 650_000_000,
+                proof_size: 12_288,
             },
-        )),
+            remark: "xroute".to_owned(),
+            channel_id: 0,
+        })),
         refund_address: REFUND_ADDRESS.to_owned(),
         deadline: 1_773_185_200,
     };
@@ -200,21 +213,19 @@ fn rejects_redeem_vdot_without_a_supported_execution_budget_asset() {
     let intent = Intent {
         source_chain: ChainKey::Bifrost,
         destination_chain: ChainKey::Moonbeam,
-        action: IntentAction::Execute(ExecuteIntent::RedeemVdot(
-            VdotOrderExecuteIntent {
-                amount: AssetKey::Vdot.units(1),
-                max_payment_amount: 200_000_000,
-                recipient: "0x1111111111111111111111111111111111111111".to_owned(),
-                adapter_address: "0x2222222222222222222222222222222222222222".to_owned(),
-                gas_limit: 500_000,
-                fallback_weight: XcmWeight {
-                    ref_time: 650_000_000,
-                    proof_size: 12_288,
-                },
-                remark: "xroute".to_owned(),
-                channel_id: 0,
+        action: IntentAction::Execute(ExecuteIntent::RedeemVdot(VdotOrderExecuteIntent {
+            amount: AssetKey::Vdot.units(1),
+            max_payment_amount: 200_000_000,
+            recipient: "0x1111111111111111111111111111111111111111".to_owned(),
+            adapter_address: "0x2222222222222222222222222222222222222222".to_owned(),
+            gas_limit: 500_000,
+            fallback_weight: XcmWeight {
+                ref_time: 650_000_000,
+                proof_size: 12_288,
             },
-        )),
+            remark: "xroute".to_owned(),
+            channel_id: 0,
+        })),
         refund_address: REFUND_ADDRESS.to_owned(),
         deadline: 1_773_185_200,
     };

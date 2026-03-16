@@ -4,6 +4,7 @@ members = [
   "services/shared",
   "services/quote-service",
   "services/executor-relayer",
+  "services/xroute-api",
 ]
 resolver = "2"
 

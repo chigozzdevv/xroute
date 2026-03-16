@@ -1,9 +1,9 @@
 use crate::http::HttpError;
 use route_engine::{
-    AssetAmount, AssetKey, CallExecuteIntent, ChainKey, DeploymentProfile,
-    ExecuteIntent, ExecutionPlan, ExecutionType, FeeBreakdown, FeeType, Intent, IntentAction,
-    PlanStep, Quote, RouteHop, RouteSegment, RouteSegmentKind, SubmissionAction, SwapIntent,
-    TransferIntent, VdotOrderExecuteIntent, XcmInstruction, XcmWeight,
+    AssetAmount, AssetKey, CallExecuteIntent, ChainKey, DeploymentProfile, ExecuteIntent,
+    ExecutionPlan, ExecutionType, FeeBreakdown, FeeType, Intent, IntentAction, PlanStep, Quote,
+    RouteHop, RouteSegment, RouteSegmentKind, SubmissionAction, SwapIntent, TransferIntent,
+    VdotOrderExecuteIntent, XcmInstruction, XcmWeight,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -407,41 +407,30 @@ fn parse_execute_intent(
         "call" => {
             let params: CallParams = serde_json::from_value(params.clone())
                 .map_err(|error| format!("invalid call params: {error}"))?;
-            ensure_supported_execute_destination(
-                destination_chain,
-                ExecutionType::Call,
-            )?;
-            Ok(ExecuteIntent::Call(
-                CallExecuteIntent {
-                    asset: parse_asset(&params.asset)?,
-                    max_payment_amount: parse_u128(
-                        &params.max_payment_amount,
-                        "action.params.maxPaymentAmount",
-                    )?,
-                    contract_address: normalize_address(
-                        &params.contract_address,
-                        "action.params.contractAddress",
-                    )?,
-                    calldata: normalize_hex(&params.calldata, "action.params.calldata")?,
-                    value: parse_u128(&params.value, "action.params.value")?,
-                    gas_limit: parse_u64(&params.gas_limit, "action.params.gasLimit")?,
-                    fallback_weight: XcmWeight {
-                        ref_time: params.fallback_weight.ref_time,
-                        proof_size: params.fallback_weight.proof_size,
-                    },
+            ensure_supported_execute_destination(destination_chain, ExecutionType::Call)?;
+            Ok(ExecuteIntent::Call(CallExecuteIntent {
+                asset: parse_asset(&params.asset)?,
+                max_payment_amount: parse_u128(
+                    &params.max_payment_amount,
+                    "action.params.maxPaymentAmount",
+                )?,
+                contract_address: normalize_address(
+                    &params.contract_address,
+                    "action.params.contractAddress",
+                )?,
+                calldata: normalize_hex(&params.calldata, "action.params.calldata")?,
+                value: parse_u128(&params.value, "action.params.value")?,
+                gas_limit: parse_u64(&params.gas_limit, "action.params.gasLimit")?,
+                fallback_weight: XcmWeight {
+                    ref_time: params.fallback_weight.ref_time,
+                    proof_size: params.fallback_weight.proof_size,
                 },
-            ))
+            }))
         }
-        "mint-vdot" => parse_vdot_order_intent(
-            params,
-            destination_chain,
-            ExecutionType::MintVdot,
-        ),
-        "redeem-vdot" => parse_vdot_order_intent(
-            params,
-            destination_chain,
-            ExecutionType::RedeemVdot,
-        ),
+        "mint-vdot" => parse_vdot_order_intent(params, destination_chain, ExecutionType::MintVdot),
+        "redeem-vdot" => {
+            parse_vdot_order_intent(params, destination_chain, ExecutionType::RedeemVdot)
+        }
         other => Err(format!("unsupported execution type: {other}")),
     }
 }
@@ -802,8 +791,11 @@ fn normalize_source_intent_metadata(
     Ok(SourceIntentMetadata {
         kind: normalize_source_intent_kind(&metadata.kind)?,
         refund_asset: metadata.refund_asset.trim().to_owned(),
-        refundable_amount: parse_u128(&metadata.refundable_amount, "sourceIntent.refundableAmount")?
-            .to_string(),
+        refundable_amount: parse_u128(
+            &metadata.refundable_amount,
+            "sourceIntent.refundableAmount",
+        )?
+        .to_string(),
         min_output_amount: parse_u128(&metadata.min_output_amount, "sourceIntent.minOutputAmount")?
             .to_string(),
     })
@@ -964,7 +956,8 @@ mod tests {
         }))
         .expect("request body should encode");
 
-        let parsed = quote_request_from_slice(&body).expect("hydration refund address should parse");
+        let parsed =
+            quote_request_from_slice(&body).expect("hydration refund address should parse");
         assert_eq!(parsed.intent.source_chain, ChainKey::Hydration);
         assert_eq!(
             parsed.intent.refund_address,
@@ -992,7 +985,8 @@ mod tests {
         }))
         .expect("request body should encode");
 
-        let error = quote_request_from_slice(&body).expect_err("moonbeam refund address must stay evm");
+        let error =
+            quote_request_from_slice(&body).expect_err("moonbeam refund address must stay evm");
         assert!(
             error
                 .message

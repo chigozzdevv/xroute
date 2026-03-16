@@ -2,10 +2,10 @@ use std::collections::HashMap;
 
 use route_engine::{
     AssetAmount, AssetKey, CallExecuteIntent, ChainKey, DeploymentProfile, EngineSettings,
-    ExecuteIntent, ExecutionPlan, ExecutionType, FeeBreakdown,
-    FeeType, Intent, IntentAction, PlanStep, Quote, RouteEngine, RouteHop, RouteRegistry,
-    RouteSegment, RouteSegmentKind, SubmissionAction, SwapIntent, TransferIntent,
-    VdotOrderExecuteIntent, XcmInstruction, XcmWeight,
+    ExecuteIntent, ExecutionPlan, ExecutionType, FeeBreakdown, FeeType, Intent, IntentAction,
+    PlanStep, Quote, RouteEngine, RouteHop, RouteRegistry, RouteSegment, RouteSegmentKind,
+    SubmissionAction, SwapIntent, TransferIntent, VdotOrderExecuteIntent, XcmInstruction,
+    XcmWeight,
 };
 
 pub fn run() -> Result<(), String> {
@@ -196,28 +196,26 @@ fn build_execute_intent(options: &HashMap<String, String>) -> Result<ExecuteInte
     };
 
     match execution_type {
-        ExecutionType::Call => Ok(ExecuteIntent::Call(
-            CallExecuteIntent {
-                asset: parse_asset(required(options, "asset")?)?,
-                max_payment_amount: parse_u128(
-                    required(options, "max-payment-amount")?,
-                    "max-payment-amount",
-                )?,
-                contract_address: parse_h160_string(
-                    required(options, "contract-address")?,
-                    "contract-address",
-                )?,
-                calldata: parse_hex_string(required(options, "calldata")?, "calldata")?,
-                value: options
-                    .get("value")
-                    .map(String::as_str)
-                    .map(|value| parse_u128(value, "value"))
-                    .transpose()?
-                    .unwrap_or(0),
-                gas_limit: parse_u64(required(options, "gas-limit")?, "gas-limit")?,
-                fallback_weight,
-            },
-        )),
+        ExecutionType::Call => Ok(ExecuteIntent::Call(CallExecuteIntent {
+            asset: parse_asset(required(options, "asset")?)?,
+            max_payment_amount: parse_u128(
+                required(options, "max-payment-amount")?,
+                "max-payment-amount",
+            )?,
+            contract_address: parse_h160_string(
+                required(options, "contract-address")?,
+                "contract-address",
+            )?,
+            calldata: parse_hex_string(required(options, "calldata")?, "calldata")?,
+            value: options
+                .get("value")
+                .map(String::as_str)
+                .map(|value| parse_u128(value, "value"))
+                .transpose()?
+                .unwrap_or(0),
+            gas_limit: parse_u64(required(options, "gas-limit")?, "gas-limit")?,
+            fallback_weight,
+        })),
         ExecutionType::MintVdot | ExecutionType::RedeemVdot => {
             let order = VdotOrderExecuteIntent {
                 amount: parse_u128(required(options, "amount")?, "amount")?,

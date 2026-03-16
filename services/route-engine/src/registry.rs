@@ -148,15 +148,12 @@ impl RouteRegistry {
                     dex_fee_bps: 25,
                 },
             ],
-            execute_routes: vec![
-            ],
-            execute_capabilities: vec![
-                ExecuteCapability {
-                    destination: ChainKey::Moonbeam,
-                    asset: AssetKey::Dot,
-                    execution_type: ExecutionType::Call,
-                },
-            ],
+            execute_routes: vec![],
+            execute_capabilities: vec![ExecuteCapability {
+                destination: ChainKey::Moonbeam,
+                asset: AssetKey::Dot,
+                execution_type: ExecutionType::Call,
+            }],
             vdot_order_pricing: None,
         }
     }
@@ -172,7 +169,11 @@ impl RouteRegistry {
 
         while let Some(candidate) = frontier.pop() {
             if candidate.chain == destination {
-                return Some(transfer_path_from_hops(asset, &candidate.route, &candidate.hops));
+                return Some(transfer_path_from_hops(
+                    asset,
+                    &candidate.route,
+                    &candidate.hops,
+                ));
             }
 
             if candidate.chain != source
@@ -218,14 +219,11 @@ impl RouteRegistry {
         asset_in: AssetKey,
         asset_out: AssetKey,
     ) -> Option<SwapRoute> {
-        self.swap_routes
-            .iter()
-            .copied()
-            .find(|route| {
-                route.destination == destination
-                    && route.asset_in == asset_in
-                    && route.asset_out == asset_out
-            })
+        self.swap_routes.iter().copied().find(|route| {
+            route.destination == destination
+                && route.asset_in == asset_in
+                && route.asset_out == asset_out
+        })
     }
 
     pub fn supports_execute(
@@ -271,12 +269,12 @@ impl RouteRegistry {
         };
         let net_amount = amount.saturating_sub(amount.saturating_mul(fee_bps) / 10_000);
         let quoted_amount = match execution_type {
-            ExecutionType::MintVdot => net_amount
-                .saturating_mul(pricing.pool_vasset_amount)
-                / pricing.pool_asset_amount,
-            ExecutionType::RedeemVdot => net_amount
-                .saturating_mul(pricing.pool_asset_amount)
-                / pricing.pool_vasset_amount,
+            ExecutionType::MintVdot => {
+                net_amount.saturating_mul(pricing.pool_vasset_amount) / pricing.pool_asset_amount
+            }
+            ExecutionType::RedeemVdot => {
+                net_amount.saturating_mul(pricing.pool_asset_amount) / pricing.pool_vasset_amount
+            }
             _ => unreachable!(),
         };
 
@@ -298,7 +296,9 @@ impl RouteRegistry {
         let existing = self
             .transfer_edges
             .iter_mut()
-            .find(|edge| edge.source == source && edge.destination == destination && edge.asset == asset)
+            .find(|edge| {
+                edge.source == source && edge.destination == destination && edge.asset == asset
+            })
             .ok_or_else(|| {
                 format!(
                     "missing transfer edge {source} -> {destination} for {}",
@@ -386,7 +386,11 @@ impl RouteRegistry {
     }
 }
 
-fn transfer_path_from_hops(asset: AssetKey, route: &[ChainKey], hops: &[TransferEdge]) -> TransferPath {
+fn transfer_path_from_hops(
+    asset: AssetKey,
+    route: &[ChainKey],
+    hops: &[TransferEdge],
+) -> TransferPath {
     let xcm_fee = hops
         .iter()
         .map(|hop| hop.transport_fee.amount)

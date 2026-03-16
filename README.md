@@ -60,13 +60,15 @@ Onchain:
 
 Backend:
 
+- `services/xroute-api`
+  - single public HTTP API surface
+  - mounts quote, status, timeline, and relayer job routes under one `/v1`
 - `services/route-engine`
   - Rust route planning and fee construction
 - `services/quote-service`
-  - Rust quote API
-  - mainnet requires live quote inputs
+  - internal quote module used by `xroute-api`
 - `services/executor-relayer`
-  - Rust relayer API for dispatch, settle, fail, refund
+  - internal relayer/status module used by `xroute-api`
 - `services/shared`
   - request parsing, deployment loading, policy handling
 
@@ -128,8 +130,7 @@ npm run proof:mainnet
 Services:
 
 ```bash
-npm run serve:quote
-npm run serve:executor-relayer
+npm run serve:api
 ```
 
 ## Deployment Artifacts
@@ -173,20 +174,12 @@ The deployer/admin key is not the executor. Deployments derive the router execut
 
 ## Service Configuration
 
-`quote-service` requirements:
+`xroute-api` requirements:
 
 - `XROUTE_WORKSPACE_ROOT`
 - one of:
   - `XROUTE_LIVE_QUOTE_INPUTS_PATH`
   - `XROUTE_LIVE_QUOTE_INPUTS_COMMAND`
-- optional:
-  - `XROUTE_EVM_POLICY_PATH`
-
-The quote service is fail-closed. `XROUTE_LIVE_QUOTE_INPUTS_FAIL_OPEN=true` is rejected.
-
-`executor-relayer` requirements:
-
-- `XROUTE_WORKSPACE_ROOT`
 - `XROUTE_RELAYER_AUTH_TOKEN`
 - Hub execution context:
   - `XROUTE_HUB_RPC_URL`
@@ -204,20 +197,13 @@ The quote service is fail-closed. `XROUTE_LIVE_QUOTE_INPUTS_FAIL_OPEN=true` is r
   - `XROUTE_EVM_POLICY_PATH`
   - `XROUTE_SUBSTRATE_DISPATCH_SCRIPT`
 
-## Example Service Runs
+The quote path is fail-closed. `XROUTE_LIVE_QUOTE_INPUTS_FAIL_OPEN=true` is rejected.
 
-Quote service:
+## Example Service Run
 
 ```bash
 XROUTE_WORKSPACE_ROOT="$(pwd)" \
 XROUTE_LIVE_QUOTE_INPUTS_COMMAND="node $(pwd)/scripts/fetch-live-quote-inputs.mjs" \
-cargo run -q -p quote-service --
-```
-
-Executor relayer:
-
-```bash
-XROUTE_WORKSPACE_ROOT="$(pwd)" \
 XROUTE_RELAYER_AUTH_TOKEN="<RELAYER_TOKEN>" \
 XROUTE_HUB_RPC_URL="<POLKADOT_HUB_RPC>" \
 XROUTE_HUB_PRIVATE_KEY="<HUB_OPERATOR_KEY>" \
@@ -227,7 +213,7 @@ XROUTE_HYDRATION_RPC_URL="<HYDRATION_RPC>" \
 XROUTE_HYDRATION_PRIVATE_KEY="<HYDRATION_OPERATOR_KEY>" \
 XROUTE_BIFROST_RPC_URL="<BIFROST_RPC>" \
 XROUTE_BIFROST_PRIVATE_KEY="<BIFROST_OPERATOR_KEY>" \
-cargo run -q -p executor-relayer --
+cargo run -q -p xroute-api --
 ```
 
 ## Operational Notes

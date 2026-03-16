@@ -127,9 +127,10 @@ impl JobStore {
             match serde_json::from_str::<StoreSnapshot>(&raw) {
                 Ok(snapshot) => snapshot,
                 Err(_) => {
-                    let legacy = serde_json::from_str::<LegacyStoreSnapshot>(&raw).map_err(|error| {
-                        format!("invalid job store {}: {error}", path.display())
-                    })?;
+                    let legacy =
+                        serde_json::from_str::<LegacyStoreSnapshot>(&raw).map_err(|error| {
+                            format!("invalid job store {}: {error}", path.display())
+                        })?;
                     StoreSnapshot {
                         jobs: legacy.jobs,
                         source_intents: BTreeMap::new(),

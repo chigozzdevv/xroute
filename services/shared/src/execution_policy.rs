@@ -137,8 +137,7 @@ pub fn assert_intent_allowed_by_execution_policy(
         .get(&address)
         .ok_or_else(|| format!("moonbeam contract {address} is not allowlisted"))?;
     let selector = normalize_selector(
-        call
-            .calldata
+        call.calldata
             .get(..10)
             .ok_or_else(|| "action.params.calldata must contain a selector".to_owned())?,
     )?;
@@ -245,20 +244,18 @@ mod tests {
             destination_chain: ChainKey::Moonbeam,
             refund_address: "0x1111111111111111111111111111111111111111".to_owned(),
             deadline: 1_773_185_200,
-            action: IntentAction::Execute(ExecuteIntent::Call(
-                CallExecuteIntent {
-                    asset: route_engine::AssetKey::Dot,
-                    max_payment_amount: 100_000_000,
-                    contract_address: "0x2222222222222222222222222222222222222222".to_owned(),
-                    calldata: "0xdeadbeef00000000".to_owned(),
-                    value: 0,
-                    gas_limit: 200_000,
-                    fallback_weight: XcmWeight {
-                        ref_time: 650_000_000,
-                        proof_size: 12_288,
-                    },
+            action: IntentAction::Execute(ExecuteIntent::Call(CallExecuteIntent {
+                asset: route_engine::AssetKey::Dot,
+                max_payment_amount: 100_000_000,
+                contract_address: "0x2222222222222222222222222222222222222222".to_owned(),
+                calldata: "0xdeadbeef00000000".to_owned(),
+                value: 0,
+                gas_limit: 200_000,
+                fallback_weight: XcmWeight {
+                    ref_time: 650_000_000,
+                    proof_size: 12_288,
                 },
-            )),
+            })),
         };
 
         assert!(assert_intent_allowed_by_execution_policy(&intent, Some(&policy)).is_ok());

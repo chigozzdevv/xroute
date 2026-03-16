@@ -156,7 +156,9 @@ fn read_chain_deployment_artifact(
 ) -> Result<(PathBuf, String), String> {
     let mut attempted_paths = Vec::new();
 
-    for artifact_path in deployment_artifact_candidate_paths(workspace_root, deployment_profile, chain_key) {
+    for artifact_path in
+        deployment_artifact_candidate_paths(workspace_root, deployment_profile, chain_key)
+    {
         attempted_paths.push(artifact_path.display().to_string());
         match read_to_string(&artifact_path) {
             Ok(raw) => return Ok((artifact_path, raw)),
@@ -238,10 +240,8 @@ mod tests {
 
     #[test]
     fn loads_chain_deployment_artifact_from_canonical_path() {
-        let temp_root = std::env::temp_dir().join(format!(
-            "xroute-deployments-chain-{}",
-            std::process::id()
-        ));
+        let temp_root =
+            std::env::temp_dir().join(format!("xroute-deployments-chain-{}", std::process::id()));
         let artifact_path =
             get_chain_deployment_artifact_path(&temp_root, DeploymentProfile::Mainnet, "moonbeam");
         create_dir_all(artifact_path.parent().unwrap()).unwrap();
