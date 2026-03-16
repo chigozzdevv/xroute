@@ -6,7 +6,6 @@ import {
   connectInjectedWallet,
   createQuote,
   createStatusClient,
-  createWallet,
   createXRouteClient,
   getBrowserWalletAvailability,
 } from "../index.mjs";
@@ -16,6 +15,7 @@ import {
   createHttpExecutorRelayerClient,
   createHttpQuoteProvider,
   createHttpStatusProvider,
+  createWallet,
 } from "../internal.mjs";
 
 test("createHttpStatusProvider fetches hosted status and timeline", async () => {
@@ -498,6 +498,7 @@ test("public SDK root does not expose internal transport or relayer helpers", ()
   assert.equal("createHttpStatusProvider" in publicSdk, false);
   assert.equal("createEvmWalletAdapter" in publicSdk, false);
   assert.equal("createSubstrateWalletAdapter" in publicSdk, false);
+  assert.equal("createWallet" in publicSdk, false);
   assert.equal("FileBackedStatusIndexer" in publicSdk, false);
   assert.equal("InMemoryStatusIndexer" in publicSdk, false);
   assert.equal("DEFAULT_XROUTE_API_BASE_URL" in publicSdk, false);

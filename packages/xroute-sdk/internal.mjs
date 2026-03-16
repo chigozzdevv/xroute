@@ -14,6 +14,7 @@ import {
 export { createConfiguredXRouteClient } from "./internal/client-core.mjs";
 export { DEFAULT_XROUTE_API_BASE_URL } from "./internal/constants.mjs";
 export { createHttpExecutorRelayerClient } from "./internal/relayer-client.mjs";
+export { createWallet } from "./wallet/index.mjs";
 export { createHttpQuoteProvider } from "./quote/index.mjs";
 export { createHttpStatusProvider } from "./status/index.mjs";
 export { normalizeQuote } from "./quote/normalize.mjs";

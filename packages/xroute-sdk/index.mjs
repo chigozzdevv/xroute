@@ -37,7 +37,6 @@ import {
 import { createHttpExecutorRelayerClient } from "./internal/relayer-client.mjs";
 
 export {
-  createWallet,
   connectInjectedWallet,
   getBrowserWalletAvailability,
 } from "./wallet/index.mjs";
