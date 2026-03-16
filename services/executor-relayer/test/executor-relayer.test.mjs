@@ -9,8 +9,6 @@ import { spawn } from "node:child_process";
 import { createTransferIntent, createExecuteIntent } from "../../../packages/xroute-intents/index.mjs";
 import {
   normalizeQuote,
-} from "../../../packages/xroute-sdk/index.mjs";
-import {
   createHttpExecutorRelayerClient,
   createRouteEngineQuoteProvider,
 } from "../../../packages/xroute-sdk/internal.mjs";

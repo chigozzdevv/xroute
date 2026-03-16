@@ -59,6 +59,19 @@ const textCopies = [
     ],
   },
   {
+    from: resolve(packageRoot, "internal/constants.mjs"),
+    to: resolve(distRoot, "internal/constants.mjs"),
+    replacements: [],
+  },
+  {
+    from: resolve(packageRoot, "internal/client-core.mjs"),
+    to: resolve(distRoot, "internal/client-core.mjs"),
+    replacements: [
+      ["../../xroute-types/index.mjs", "../vendor/xroute-types/index.mjs"],
+      ["../../xroute-xcm/index.mjs", "../vendor/xroute-xcm/index.mjs"],
+    ],
+  },
+  {
     from: resolve(packageRoot, "chains/index.mjs"),
     to: resolve(distRoot, "chains/index.mjs"),
     replacements: [

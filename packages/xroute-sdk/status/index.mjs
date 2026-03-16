@@ -1,24 +1,15 @@
 import { assertNonEmptyString } from "../../xroute-types/index.mjs";
+import {
+  DEFAULT_XROUTE_API_BASE_URL,
+  assertNoBaseUrlOverride,
+} from "../internal/constants.mjs";
 
-export const DEFAULT_XROUTE_API_BASE_URL = "https://xroute-api.onrender.com/v1";
-
-export {
-  InMemoryStatusIndexer,
-  FileBackedStatusIndexer,
-  createIntentSubmittedEvent,
-  createIntentDispatchedEvent,
-  createDestinationExecutionStartedEvent,
-  createDestinationExecutionSucceededEvent,
-  createDestinationExecutionFailedEvent,
-  createIntentCancelledEvent,
-  createRefundIssuedEvent,
-} from "../indexers/status-indexer.mjs";
-
-export function createStatusClient(options = {}) {
+export function createStatusClient({ apiKey, fetchImpl, ...options } = {}) {
+  assertNoBaseUrlOverride("createStatusClient", options);
   return createHttpStatusProvider({
-    endpoint: options.baseUrl ?? DEFAULT_XROUTE_API_BASE_URL,
-    apiKey: options.apiKey,
-    fetchImpl: options.fetchImpl,
+    endpoint: DEFAULT_XROUTE_API_BASE_URL,
+    apiKey,
+    fetchImpl,
   });
 }
 

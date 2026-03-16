@@ -10,27 +10,30 @@ import {
   DEFAULT_DEPLOYMENT_PROFILE,
   normalizeDeploymentProfile,
 } from "../../xroute-precompile-interfaces/index.mjs";
+import {
+  DEFAULT_XROUTE_API_BASE_URL,
+  assertNoBaseUrlOverride,
+} from "../internal/constants.mjs";
 import { normalizeQuote } from "./normalize.mjs";
 
-export const DEFAULT_XROUTE_API_BASE_URL = "https://xroute-api.onrender.com/v1";
 export const DEFAULT_INTENT_DEADLINE_SECONDS = 60 * 60;
 
 export { normalizeQuote } from "./normalize.mjs";
 
 export function createQuote({
-  baseUrl = DEFAULT_XROUTE_API_BASE_URL,
   apiKey,
   deploymentProfile = DEFAULT_DEPLOYMENT_PROFILE,
   fetchImpl = globalThis.fetch,
+  ...options
 } = {}) {
-  const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+  assertNoBaseUrlOverride("createQuote", options);
   const normalizedApiKey =
     apiKey === undefined || apiKey === null
       ? undefined
       : assertNonEmptyString("apiKey", apiKey);
   const normalizedDeploymentProfile = normalizeDeploymentProfile(deploymentProfile);
   const quoteProvider = createHttpQuoteProvider({
-    endpoint: `${normalizedBaseUrl}/quote`,
+    endpoint: `${DEFAULT_XROUTE_API_BASE_URL}/quote`,
     apiKey: normalizedApiKey,
     fetchImpl,
     headers: {
@@ -39,7 +42,6 @@ export function createQuote({
   });
 
   return {
-    baseUrl: normalizedBaseUrl,
     deploymentProfile: normalizedDeploymentProfile,
 
     async quote(input, requestOptions = {}) {
@@ -241,15 +243,4 @@ function inferQuoteIntentKind(input) {
 
 function hasAnyDefined(input, keys) {
   return keys.some((key) => input[key] !== undefined && input[key] !== null);
-}
-
-function normalizeBaseUrl(baseUrl) {
-  const normalized = String(baseUrl ?? DEFAULT_XROUTE_API_BASE_URL)
-    .trim()
-    .replace(/\/+$/, "");
-  if (normalized === "") {
-    throw new Error("baseUrl is required");
-  }
-
-  return normalized;
 }

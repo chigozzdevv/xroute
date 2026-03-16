@@ -11,8 +11,28 @@ import {
   normalizeDeploymentProfile,
 } from "../xroute-precompile-interfaces/index.mjs";
 
-export { createConfiguredXRouteClient } from "./index.mjs";
+export { createConfiguredXRouteClient } from "./internal/client-core.mjs";
+export { DEFAULT_XROUTE_API_BASE_URL } from "./internal/constants.mjs";
 export { createHttpExecutorRelayerClient } from "./internal/relayer-client.mjs";
+export { createHttpQuoteProvider } from "./quote/index.mjs";
+export { createHttpStatusProvider } from "./status/index.mjs";
+export { normalizeQuote } from "./quote/normalize.mjs";
+export {
+  createEvmWalletAdapter,
+  createSubstrateWalletAdapter,
+} from "./wallets/wallet-adapters.mjs";
+export { NATIVE_ASSET_ADDRESS } from "./routers/router-adapters.mjs";
+export {
+  InMemoryStatusIndexer,
+  FileBackedStatusIndexer,
+  createIntentSubmittedEvent,
+  createIntentDispatchedEvent,
+  createDestinationExecutionStartedEvent,
+  createDestinationExecutionSucceededEvent,
+  createDestinationExecutionFailedEvent,
+  createIntentCancelledEvent,
+  createRefundIssuedEvent,
+} from "./indexers/status-indexer.mjs";
 
 const execFileAsync = promisify(execFile);
 let serializedCommandQueue = Promise.resolve();

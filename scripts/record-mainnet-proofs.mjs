@@ -18,19 +18,17 @@ import {
   createTransferIntent,
 } from "../packages/xroute-intents/index.mjs";
 import {
-  createHttpQuoteProvider,
-  NATIVE_ASSET_ADDRESS,
-} from "../packages/xroute-sdk/index.mjs";
-import {
   createConfiguredXRouteClient,
+  createHttpQuoteProvider,
   createHttpExecutorRelayerClient,
+  FileBackedStatusIndexer,
+  NATIVE_ASSET_ADDRESS,
 } from "../packages/xroute-sdk/internal.mjs";
 import {
   createCastRouterAdapter,
   createSourceAwareRouterAdapter,
   createSubstrateXcmAdapter,
 } from "../packages/xroute-sdk/routers/router-adapters.mjs";
-import { FileBackedStatusIndexer } from "../packages/xroute-sdk/indexers/status-indexer.mjs";
 import { resolveRouterAddressFromArtifact } from "./lib/deployment-artifacts.mjs";
 import { spawnRustService } from "./lib/spawn-rust-service.mjs";
 

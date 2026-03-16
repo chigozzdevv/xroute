@@ -4,14 +4,19 @@ import assert from "node:assert/strict";
 import * as publicSdk from "../index.mjs";
 import {
   connectInjectedWallet,
+  createQuote,
+  createStatusClient,
   createWallet,
-  createEvmWalletAdapter,
-  createHttpQuoteProvider,
-  createHttpStatusProvider,
   createXRouteClient,
   getBrowserWalletAvailability,
 } from "../index.mjs";
-import { createHttpExecutorRelayerClient } from "../internal.mjs";
+import {
+  DEFAULT_XROUTE_API_BASE_URL,
+  createEvmWalletAdapter,
+  createHttpExecutorRelayerClient,
+  createHttpQuoteProvider,
+  createHttpStatusProvider,
+} from "../internal.mjs";
 
 test("createHttpStatusProvider fetches hosted status and timeline", async () => {
   const seen = [];
@@ -75,7 +80,6 @@ test("hosted createXRouteClient resolves status without wallet connection", asyn
   const seen = [];
   const client = createXRouteClient({
     apiKey: "public-test-key",
-    baseUrl: "https://example.test/v1",
     fetchImpl: async (url, request) => {
       seen.push([url, request]);
       if (url.endsWith("/status")) {
@@ -124,18 +128,17 @@ test("hosted createXRouteClient resolves status without wallet connection", asyn
   assert.equal(timeline.length, 1);
   assert.equal(
     seen[0][0],
-    "https://example.test/v1/intents/0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/status",
+    `${DEFAULT_XROUTE_API_BASE_URL}/intents/0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/status`,
   );
   assert.equal(
     seen[1][0],
-    "https://example.test/v1/intents/0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/timeline",
+    `${DEFAULT_XROUTE_API_BASE_URL}/intents/0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/timeline`,
   );
 });
 
 test("hosted createXRouteClient works without apiKey", async () => {
   const seen = [];
   const client = createXRouteClient({
-    baseUrl: "https://example.test/v1",
     fetchImpl: async (url, request) => {
       seen.push([url, request]);
       if (url.endsWith("/status")) {
@@ -169,6 +172,10 @@ test("hosted createXRouteClient works without apiKey", async () => {
   );
 
   assert.equal(status.status, "settled");
+  assert.equal(
+    seen[0][0],
+    `${DEFAULT_XROUTE_API_BASE_URL}/intents/0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/status`,
+  );
   assert.equal(seen[0][1].headers["x-api-key"], undefined);
 });
 
@@ -248,7 +255,6 @@ test("hosted createXRouteClient executes hydration-source transfers through cust
   const dispatched = [];
   const client = createXRouteClient({
     apiKey: "public-test-key",
-    baseUrl: "https://example.test/v1",
     fetchImpl: async (url, request) => {
       seen.push([url, request]);
       if (url.endsWith("/status")) {
@@ -386,7 +392,7 @@ test("hosted createXRouteClient executes hydration-source transfers through cust
   const relayerBody = JSON.parse(seen[1][1].body);
   assert.equal(quoteBody.intent.sourceChain, "hydration");
   assert.equal(quoteBody.intent.refundAddress, walletAddress);
-  assert.equal(seen[1][0], "https://example.test/v1/jobs/dispatch");
+  assert.equal(seen[1][0], `${DEFAULT_XROUTE_API_BASE_URL}/jobs/dispatch`);
   assert.equal(relayerBody.intent.refundAddress, walletAddress);
   assert.equal(relayerBody.sourceIntent.kind, "substrate-source");
   assert.equal(relayerBody.sourceDispatch.txHash, dispatchTxHash);
@@ -397,7 +403,6 @@ test("hosted createXRouteClient waits for terminal status via the hosted status 
   const seen = [];
   const client = createXRouteClient({
     apiKey: "public-test-key",
-    baseUrl: "https://example.test/v1",
     fetchImpl: async (url, request) => {
       seen.push([url, request]);
       if (!url.endsWith("/status")) {
@@ -435,7 +440,6 @@ test("hosted createXRouteClient tracks status changes until settlement", async (
   const seenUpdates = [];
   const client = createXRouteClient({
     apiKey: "public-test-key",
-    baseUrl: "https://example.test/v1",
     fetchImpl: async (url) => {
       if (url.endsWith("/timeline")) {
         return {
@@ -486,9 +490,20 @@ test("hosted createXRouteClient tracks status changes until settlement", async (
   assert.deepEqual(seenUpdates, ["submitted", "executing", "settled"]);
 });
 
-test("public SDK root does not expose relayer admin helpers", () => {
+test("public SDK root does not expose internal transport or relayer helpers", () => {
   assert.equal("createHttpExecutorRelayerClient" in publicSdk, false);
   assert.equal("createXRouteOperatorClient" in publicSdk, false);
+  assert.equal("createConfiguredXRouteClient" in publicSdk, false);
+  assert.equal("createHttpQuoteProvider" in publicSdk, false);
+  assert.equal("createHttpStatusProvider" in publicSdk, false);
+  assert.equal("createEvmWalletAdapter" in publicSdk, false);
+  assert.equal("createSubstrateWalletAdapter" in publicSdk, false);
+  assert.equal("FileBackedStatusIndexer" in publicSdk, false);
+  assert.equal("InMemoryStatusIndexer" in publicSdk, false);
+  assert.equal("DEFAULT_XROUTE_API_BASE_URL" in publicSdk, false);
+  assert.equal("normalizeQuote" in publicSdk, false);
+  assert.equal("NATIVE_ASSET_ADDRESS" in publicSdk, false);
+  assert.equal("trackStatus" in publicSdk, false);
 });
 
 test("createEvmWalletAdapter submits intents with approval and extracts intent id from receipt", async () => {
@@ -740,7 +755,6 @@ test("hosted createXRouteClient runs mixed-source flows across registered wallet
   };
   const client = createXRouteClient({
     apiKey: "public-test-key",
-    baseUrl: "https://example.test/v1",
     fetchImpl: async (url, request) => {
       if (url.endsWith("/quote")) {
         const body = JSON.parse(request.body);
@@ -967,11 +981,10 @@ test("hosted createXRouteClient runs mixed-source flows across registered wallet
   assert.equal(flow.steps[1].dispatched.txHash.startsWith("0x03"), true);
 });
 
-test("createXRouteClient uses the hosted base url for quote requests", async () => {
+test("createXRouteClient uses the hosted endpoint for quote requests", async () => {
   const seen = [];
   const client = createXRouteClient({
     apiKey: "public-test-key",
-    baseUrl: "https://example.test/v1",
     fetchImpl: async (url, request) => {
       seen.push([url, request]);
       return {
@@ -1020,8 +1033,23 @@ test("createXRouteClient uses the hosted base url for quote requests", async () 
   });
 
   assert.equal(quoted.quote.submission.action, "transfer");
-  assert.equal(seen[0][0], "https://example.test/v1/quote");
+  assert.equal(seen[0][0], `${DEFAULT_XROUTE_API_BASE_URL}/quote`);
   assert.equal(seen[0][1].headers["x-api-key"], "public-test-key");
+});
+
+test("public hosted helpers reject base url overrides", async () => {
+  assert.throws(
+    () => createXRouteClient({ baseUrl: "https://example.test/v1" }),
+    /does not support baseUrl overrides/,
+  );
+  assert.throws(
+    () => createQuote({ baseUrl: "https://example.test/v1" }),
+    /does not support baseUrl overrides/,
+  );
+  assert.throws(
+    () => createStatusClient({ baseUrl: "https://example.test/v1" }),
+    /does not support baseUrl overrides/,
+  );
 });
 
 test("createHttpQuoteProvider returns the nested quote payload", async () => {
