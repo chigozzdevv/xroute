@@ -50,7 +50,6 @@ or:
 client.connectWallet("substrate", {
   extension: injectedExtension,
   chainKey: "hydration",
-  rpcUrl: "wss://hydration-rpc.example",
 });
 ```
 
@@ -58,23 +57,19 @@ You can still pass an XRoute-compatible wallet connector object directly when ne
 
 ## Quote
 
+`quote(...)` accepts the same high-level request shapes used by `transfer(...)`, `swap(...)`, and `call(...)`.
+
 ```js
 const { intent, quote } = await client.quote({
   sourceChain: "moonbeam",
   destinationChain: "hydration",
-  refundAddress: "0x1111111111111111111111111111111111111111",
-  deadline: 1773185200,
-  action: {
-    type: "swap",
-    params: {
-      assetIn: "DOT",
-      assetOut: "USDT",
-      amountIn: "1000000000000",
-      minAmountOut: "490000000",
-      settlementChain: "polkadot-hub",
-      recipient: "0x1111111111111111111111111111111111111111",
-    },
-  },
+  ownerAddress: "0x1111111111111111111111111111111111111111",
+  assetIn: "DOT",
+  assetOut: "USDT",
+  amountIn: "1000000000000",
+  minAmountOut: "490000000",
+  settlementChain: "polkadot-hub",
+  recipient: "0x1111111111111111111111111111111111111111",
 });
 ```
 

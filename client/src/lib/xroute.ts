@@ -18,7 +18,7 @@ import {
   getSwapOptions,
   getTransferOptions,
 } from "@xroute/sdk/routes";
-import type { WalletKind, WalletSession } from "@/hooks/use-wallet";
+import type { WalletKind, WalletSession, WalletSessions } from "@/hooks/use-wallet";
 
 export type ChainKey = string;
 export type AssetKey = string;
@@ -35,12 +35,19 @@ export const xrouteClient = createXRouteClient({
   apiKey: process.env.NEXT_PUBLIC_XROUTE_API_KEY?.trim() || undefined,
 });
 
-const DEFAULT_INTENT_DEADLINE_SECONDS = 60 * 60;
-const SUBSTRATE_RPC_URLS = Object.freeze({
+const TX_EXPLORER_BASE_URLS = Object.freeze({
+  "polkadot-hub":
+    process.env.NEXT_PUBLIC_XROUTE_POLKADOT_HUB_EXPLORER_TX_URL?.trim()
+    || "https://assethub-polkadot.subscan.io/extrinsic/",
   hydration:
-    process.env.NEXT_PUBLIC_XROUTE_HYDRATION_RPC_URL?.trim() || "wss://rpc.hydradx.cloud",
+    process.env.NEXT_PUBLIC_XROUTE_HYDRATION_EXPLORER_TX_URL?.trim()
+    || "https://hydration.subscan.io/extrinsic/",
+  moonbeam:
+    process.env.NEXT_PUBLIC_XROUTE_MOONBEAM_EXPLORER_TX_URL?.trim()
+    || "https://moonbeam.moonscan.io/tx/",
   bifrost:
-    process.env.NEXT_PUBLIC_XROUTE_BIFROST_RPC_URL?.trim() || "wss://hk.p.bifrost-rpc.liebi.com/ws",
+    process.env.NEXT_PUBLIC_XROUTE_BIFROST_EXPLORER_TX_URL?.trim()
+    || "https://bifrost-polkadot.subscan.io/extrinsic/",
 });
 
 export type QuoteClient = typeof xrouteClient;
@@ -117,26 +124,33 @@ export function waitForXRouteIntent(intentId: string, options?: Parameters<Quote
   return xrouteClient.wait(intentId, options);
 }
 
-export function defaultIntentDeadline() {
-  return Math.floor(Date.now() / 1000) + DEFAULT_INTENT_DEADLINE_SECONDS;
-}
-
 export function walletKindForChain(chainKey: ChainKey): XRouteWalletKind {
   return getChainWalletType(chainKey, DEFAULT_DEPLOYMENT_PROFILE);
 }
 
+export function getWalletSessionForChain(
+  sessions: WalletSessions | null | undefined,
+  chainKey: ChainKey,
+): WalletSession | null {
+  if (!sessions) {
+    return null;
+  }
+
+  return sessions[walletKindForChain(chainKey)] ?? null;
+}
+
 export function walletMatchesChain(
-  session: WalletSession | null | undefined,
+  sessions: WalletSessions | null | undefined,
   chainKey: ChainKey,
 ) {
-  return session?.kind === walletKindForChain(chainKey);
+  return Boolean(getWalletSessionForChain(sessions, chainKey));
 }
 
 export function resolveWalletAccountForChain(
-  session: WalletSession | null | undefined,
+  sessions: WalletSessions | null | undefined,
   chainKey: ChainKey,
 ) {
-  return walletMatchesChain(session, chainKey) ? session?.account ?? null : null;
+  return getWalletSessionForChain(sessions, chainKey)?.account ?? null;
 }
 
 export function walletRequirementLabel(chainKey: ChainKey) {
@@ -144,11 +158,12 @@ export function walletRequirementLabel(chainKey: ChainKey) {
 }
 
 export function connectWalletSessionForChain(
-  session: WalletSession,
+  sessions: WalletSessions,
   sourceChain: ChainKey,
 ) {
+  const session = getWalletSessionForChain(sessions, sourceChain);
   const requiredKind = walletKindForChain(sourceChain);
-  if (session.kind !== requiredKind) {
+  if (!session || session.kind !== requiredKind) {
     throw new Error(`Connect a ${walletRequirementLabel(sourceChain).toLowerCase()} for ${chainLabel(sourceChain)}.`);
   }
 
@@ -163,8 +178,6 @@ export function connectWalletSessionForChain(
     extension: session.extensionSource,
     accountAddress: session.account,
     chainKey: sourceChain,
-    rpcUrl: resolveSubstrateRpcUrl(sourceChain),
-    extensionDappName: "xroute",
   });
 }
 
@@ -183,7 +196,7 @@ export function createTransferQuoteRequest({
   amount,
   recipient,
   ownerAddress,
-  deadline = defaultIntentDeadline(),
+  deadline,
 }: {
   sourceChain: ChainKey;
   destinationChain: ChainKey;
@@ -197,15 +210,10 @@ export function createTransferQuoteRequest({
     sourceChain,
     destinationChain,
     ownerAddress,
-    deadline,
-    action: {
-      type: "transfer",
-      params: {
-        asset,
-        amount: toAssetUnits(asset, amount),
-        recipient,
-      },
-    },
+    ...(deadline === undefined ? {} : { deadline }),
+    asset,
+    amount: toAssetUnits(asset, amount),
+    recipient,
   };
 }
 
@@ -219,7 +227,7 @@ export function createSwapQuoteRequest({
   settlementChain,
   recipient,
   ownerAddress,
-  deadline = defaultIntentDeadline(),
+  deadline,
 }: {
   sourceChain: ChainKey;
   destinationChain: ChainKey;
@@ -236,18 +244,13 @@ export function createSwapQuoteRequest({
     sourceChain,
     destinationChain,
     ownerAddress,
-    deadline,
-    action: {
-      type: "swap",
-      params: {
-        assetIn,
-        assetOut,
-        amountIn: toAssetUnits(assetIn, amountIn),
-        minAmountOut: toAssetUnits(assetOut, minAmountOut),
-        settlementChain,
-        recipient,
-      },
-    },
+    ...(deadline === undefined ? {} : { deadline }),
+    assetIn,
+    assetOut,
+    amountIn: toAssetUnits(assetIn, amountIn),
+    minAmountOut: toAssetUnits(assetOut, minAmountOut),
+    settlementChain,
+    recipient,
   };
 }
 
@@ -264,7 +267,7 @@ export function createExecuteQuoteRequest({
   fallbackRefTime,
   fallbackProofSize,
   ownerAddress,
-  deadline = defaultIntentDeadline(),
+  deadline,
 }: {
   sourceChain: ChainKey;
   destinationChain: ChainKey;
@@ -284,28 +287,21 @@ export function createExecuteQuoteRequest({
     sourceChain,
     destinationChain,
     ownerAddress,
-    deadline,
-    action: {
-      type: "execute",
-      params: {
-        executionType,
-        asset,
-        maxPaymentAmount: toAssetUnits(asset, maxPaymentAmount),
-        contractAddress,
-        calldata,
-        value,
-        gasLimit,
-        fallbackWeight: {
-          refTime: Number.parseInt(fallbackRefTime, 10),
-          proofSize: Number.parseInt(fallbackProofSize, 10),
-        },
-      },
-    },
+    ...(deadline === undefined ? {} : { deadline }),
+    executionType,
+    asset,
+    maxPaymentAmount: toAssetUnits(asset, maxPaymentAmount),
+    contractAddress,
+    calldata,
+    value,
+    gasLimit,
+    fallbackRefTime: Number.parseInt(fallbackRefTime, 10),
+    fallbackProofSize: Number.parseInt(fallbackProofSize, 10),
   };
 }
 
 export async function submitTransferWithWallet(
-  session: WalletSession,
+  sessions: WalletSessions,
   input: {
     sourceChain: ChainKey;
     destinationChain: ChainKey;
@@ -314,7 +310,7 @@ export async function submitTransferWithWallet(
     recipient: string;
   },
 ) {
-  connectWalletSessionForChain(session, input.sourceChain);
+  connectWalletSessionForChain(sessions, input.sourceChain);
   return requestXRouteTransfer({
     ...input,
     amount: toAssetUnits(input.asset, input.amount),
@@ -322,7 +318,7 @@ export async function submitTransferWithWallet(
 }
 
 export async function submitSwapWithWallet(
-  session: WalletSession,
+  sessions: WalletSessions,
   input: {
     sourceChain: ChainKey;
     destinationChain: ChainKey;
@@ -334,7 +330,7 @@ export async function submitSwapWithWallet(
     recipient: string;
   },
 ) {
-  connectWalletSessionForChain(session, input.sourceChain);
+  connectWalletSessionForChain(sessions, input.sourceChain);
   return requestXRouteSwap({
     ...input,
     amountIn: toAssetUnits(input.assetIn, input.amountIn),
@@ -343,7 +339,7 @@ export async function submitSwapWithWallet(
 }
 
 export async function submitCallWithWallet(
-  session: WalletSession,
+  sessions: WalletSessions,
   input: {
     sourceChain: ChainKey;
     destinationChain: ChainKey;
@@ -358,7 +354,7 @@ export async function submitCallWithWallet(
     fallbackProofSize: string;
   },
 ) {
-  connectWalletSessionForChain(session, input.sourceChain);
+  connectWalletSessionForChain(sessions, input.sourceChain);
   return requestXRouteCall({
     sourceChain: input.sourceChain,
     destinationChain: input.destinationChain,
@@ -849,13 +845,13 @@ export function coerceOptionValue<T extends string>(currentValue: T, options: re
   return options.find((candidate) => !candidate.disabled)?.value ?? options[0]?.value;
 }
 
-function resolveSubstrateRpcUrl(chainKey: ChainKey) {
-  const rpcUrl = SUBSTRATE_RPC_URLS[chainKey as keyof typeof SUBSTRATE_RPC_URLS];
-  if (!rpcUrl) {
-    throw new Error(`Missing RPC URL configuration for ${chainLabel(chainKey)}.`);
+export function getTransactionExplorerUrl(chainKey: ChainKey, txHash: string) {
+  const baseUrl = TX_EXPLORER_BASE_URLS[chainKey as keyof typeof TX_EXPLORER_BASE_URLS];
+  if (!baseUrl) {
+    return null;
   }
 
-  return rpcUrl;
+  return `${baseUrl}${txHash}`;
 }
 
 export {

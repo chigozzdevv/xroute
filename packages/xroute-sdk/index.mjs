@@ -23,6 +23,7 @@ import {
 import {
   createHttpQuoteProvider,
   createQuote,
+  createQuoteIntent,
   normalizeQuote,
 } from "./quote/index.mjs";
 import {
@@ -84,7 +85,7 @@ export function createConfiguredXRouteClient({
   async function quoteIntent(intentInput) {
     const intent = intentInput.quoteId
       ? intentInput
-      : createIntent({
+      : createQuoteIntent({
           ...intentInput,
           deploymentProfile:
             intentInput.deploymentProfile ?? quoteProvider.deploymentProfile,
@@ -101,7 +102,7 @@ export function createConfiguredXRouteClient({
   async function submitIntent({ intent, quote, envelope, owner }) {
     const normalizedIntent = intent.quoteId
       ? intent
-      : createIntent({
+      : createQuoteIntent({
           ...intent,
           deploymentProfile: intent.deploymentProfile ?? quoteProvider.deploymentProfile,
         });
@@ -148,7 +149,7 @@ export function createConfiguredXRouteClient({
       ? {
           intent: intent.quoteId
             ? intent
-            : createIntent({
+            : createQuoteIntent({
                 ...intent,
                 deploymentProfile:
                   intent.deploymentProfile ?? quoteProvider.deploymentProfile,
@@ -368,47 +369,121 @@ function createHostedXRouteClient({
     fetchImpl,
   });
 
-  let walletConnector = null;
-  let connectedClient = null;
+  const walletEntriesByChain = new Map();
+  let defaultWalletEntry = null;
+
+  function createConnectedClientForWallet(walletConnector) {
+    return createConfiguredXRouteClient({
+      quoteProvider,
+      routerAdapter: createRelayerAwareRouterAdapter({
+        walletConnector,
+        relayer,
+      }),
+      statusProvider: hostedStatusProvider,
+      assetAddressResolver: walletConnector.assetAddressResolver,
+      submitRequestBuilder: walletConnector.submitRequestBuilder,
+      xcmEnvelopeBuilder:
+        walletConnector.xcmEnvelopeBuilder ?? buildExecutionEnvelope,
+      castBin: walletConnector.castBin ?? "cast",
+    });
+  }
+
+  function registerWalletEntry(walletConnector, explicitChainKey = null) {
+    const connectedClient = createConnectedClientForWallet(walletConnector);
+    const normalizedChainKey =
+      typeof explicitChainKey === "string" && explicitChainKey.trim() !== ""
+        ? explicitChainKey.trim()
+        : walletConnector.chainKey ?? null;
+    const entry = {
+      walletConnector,
+      connectedClient,
+    };
+
+    if (normalizedChainKey) {
+      walletEntriesByChain.set(normalizedChainKey, entry);
+    } else {
+      defaultWalletEntry = entry;
+    }
+
+    return entry;
+  }
+
+  function resolveWalletEntry(sourceChain) {
+    return walletEntriesByChain.get(sourceChain) ?? defaultWalletEntry;
+  }
+
+  function requireWalletEntry(sourceChain) {
+    const entry = resolveWalletEntry(assertNonEmptyString("sourceChain", sourceChain));
+    if (!entry) {
+      throw new Error(`connectWallet(...) is required for ${sourceChain} source-chain execution`);
+    }
+    return entry;
+  }
+
+  async function resolveExecutionContext(sourceChain) {
+    const entry = requireWalletEntry(sourceChain);
+    return {
+      walletConnector: entry.walletConnector,
+      connectedClient: entry.connectedClient,
+      owner: await resolveConnectedWalletOwner(entry.walletConnector),
+    };
+  }
+
+  async function executeHostedIntent({ intent, quote, envelope, owner }) {
+    const normalizedIntent = intent.quoteId
+      ? intent
+      : createQuoteIntent({
+          ...intent,
+          deploymentProfile: intent.deploymentProfile ?? normalizedDeploymentProfile,
+        });
+    const entry = requireWalletEntry(normalizedIntent.sourceChain);
+    const resolvedOwner = owner ?? await resolveConnectedWalletOwner(entry.walletConnector);
+
+    return entry.connectedClient.execute({
+      intent: normalizedIntent,
+      quote,
+      envelope,
+      owner: resolvedOwner,
+    });
+  }
 
   const api = {
     connectWallet(typeOrWallet, walletOptions) {
+      const explicitChainKey =
+        typeof walletOptions?.chainKey === "string" && walletOptions.chainKey.trim() !== ""
+          ? walletOptions.chainKey.trim()
+          : null;
+
       if (typeof typeOrWallet === "string") {
-        walletConnector = normalizeWalletConnector(
+        const walletConnector = normalizeWalletConnector(
           createWallet(typeOrWallet, {
             ...walletOptions,
             deploymentProfile: normalizedDeploymentProfile,
           }),
         );
-      } else {
-        walletConnector = normalizeWalletConnector(typeOrWallet);
+        registerWalletEntry(walletConnector, explicitChainKey);
+        return api;
       }
-      connectedClient = createConfiguredXRouteClient({
-        quoteProvider,
-        routerAdapter: createRelayerAwareRouterAdapter({
-          walletConnector,
-          relayer,
-        }),
-        statusProvider: hostedStatusProvider,
-        assetAddressResolver: walletConnector.assetAddressResolver,
-        submitRequestBuilder: walletConnector.submitRequestBuilder,
-        xcmEnvelopeBuilder:
-          walletConnector.xcmEnvelopeBuilder ?? buildExecutionEnvelope,
-        castBin: walletConnector.castBin ?? "cast",
-      });
+
+      registerWalletEntry(normalizeWalletConnector(typeOrWallet), explicitChainKey);
       return api;
     },
 
-    disconnectWallet() {
-      walletConnector = null;
-      connectedClient = null;
+    disconnectWallet(chainKey = null) {
+      if (typeof chainKey === "string" && chainKey.trim() !== "") {
+        walletEntriesByChain.delete(chainKey.trim());
+        return api;
+      }
+
+      walletEntriesByChain.clear();
+      defaultWalletEntry = null;
       return api;
     },
 
     async quote(intentInput) {
       const intent = intentInput.quoteId
         ? intentInput
-        : createIntent({
+        : createQuoteIntent({
             ...intentInput,
             deploymentProfile:
               intentInput.deploymentProfile ?? normalizedDeploymentProfile,
@@ -423,7 +498,7 @@ function createHostedXRouteClient({
     },
 
     async transfer(input) {
-      const owner = await resolveConnectedWalletOwner(requireWalletConnection(walletConnector));
+      const { connectedClient, owner } = await resolveExecutionContext(input.sourceChain);
       const intent = createTransferIntent({
         deploymentProfile: input.deploymentProfile ?? normalizedDeploymentProfile,
         sourceChain: input.sourceChain,
@@ -437,14 +512,14 @@ function createHostedXRouteClient({
         },
       });
 
-      return requireConnectedClient(connectedClient).execute({
+      return connectedClient.execute({
         intent,
         owner,
       });
     },
 
     async swap(input) {
-      const owner = await resolveConnectedWalletOwner(requireWalletConnection(walletConnector));
+      const { connectedClient, owner } = await resolveExecutionContext(input.sourceChain);
       const intent = createSwapIntent({
         deploymentProfile: input.deploymentProfile ?? normalizedDeploymentProfile,
         sourceChain: input.sourceChain,
@@ -461,14 +536,14 @@ function createHostedXRouteClient({
         },
       });
 
-      return requireConnectedClient(connectedClient).execute({
+      return connectedClient.execute({
         intent,
         owner,
       });
     },
 
     async execute(input) {
-      const owner = await resolveConnectedWalletOwner(requireWalletConnection(walletConnector));
+      const { connectedClient, owner } = await resolveExecutionContext(input.sourceChain);
       const intent = createExecuteIntent({
         deploymentProfile: input.deploymentProfile ?? normalizedDeploymentProfile,
         sourceChain: input.sourceChain,
@@ -499,7 +574,7 @@ function createHostedXRouteClient({
         },
       });
 
-      return requireConnectedClient(connectedClient).execute({
+      return connectedClient.execute({
         intent,
         owner,
       });
@@ -512,13 +587,81 @@ function createHostedXRouteClient({
       });
     },
 
-    async runFlow(options = {}) {
-      const owner =
-        options.owner ??
-        await resolveConnectedWalletOwner(requireWalletConnection(walletConnector));
-      return requireConnectedClient(connectedClient).runFlow({
-        ...options,
-        owner,
+    async runFlow({
+      steps,
+      owner,
+      timeoutMs = 300_000,
+      pollIntervalMs = 1_000,
+    } = {}) {
+      if (!Array.isArray(steps) || steps.length === 0) {
+        throw new Error("steps must contain at least one flow step");
+      }
+
+      const results = [];
+
+      for (const [stepIndex, step] of steps.entries()) {
+        const context = Object.freeze({
+          stepIndex,
+          previousStep: results.at(-1) ?? null,
+          previousSteps: Object.freeze(results.slice()),
+        });
+        const resolvedIntentInput = await resolveFlowValue(
+          step?.intent ?? step?.buildIntent,
+          context,
+          `steps[${stepIndex}].intent`,
+        );
+        const normalizedIntent = resolvedIntentInput?.quoteId
+          ? resolvedIntentInput
+          : createQuoteIntent({
+              ...resolvedIntentInput,
+              deploymentProfile:
+                resolvedIntentInput?.deploymentProfile ?? normalizedDeploymentProfile,
+            });
+        const resolvedQuote = await resolveOptionalFlowValue(step?.quote, context);
+        const resolvedEnvelope = await resolveOptionalFlowValue(step?.envelope, context);
+        const entry = requireWalletEntry(normalizedIntent.sourceChain);
+        const resolvedOwner =
+          await resolveOptionalFlowValue(step?.owner ?? owner, context)
+          ?? await resolveConnectedWalletOwner(entry.walletConnector);
+        const execution = await executeHostedIntent({
+          intent: normalizedIntent,
+          quote: resolvedQuote ?? undefined,
+          envelope: resolvedEnvelope ?? undefined,
+          owner: resolvedOwner,
+        });
+        const finalStatus = await waitForIntentStatus(hostedStatusProvider, execution.submitted.intentId, {
+          timeoutMs,
+          pollIntervalMs,
+        });
+        const stepResult = Object.freeze({
+          name:
+            typeof step?.name === "string" && step.name.trim() !== ""
+              ? step.name.trim()
+              : `step-${stepIndex + 1}`,
+          stepIndex,
+          intent: execution.intent,
+          quote: execution.quote,
+          submitted: execution.submitted,
+          dispatched: execution.dispatched,
+          initialStatus: execution.status,
+          finalStatus,
+        });
+
+        results.push(stepResult);
+
+        if (finalStatus.status !== INTENT_STATUSES.SETTLED) {
+          const error = new Error(
+            `flow step ${stepIndex + 1} (${stepResult.name}) ended with status ${finalStatus.status}`,
+          );
+          error.step = stepResult;
+          error.steps = results.slice();
+          throw error;
+        }
+      }
+
+      return Object.freeze({
+        steps: Object.freeze(results),
+        finalStep: results.at(-1) ?? null,
       });
     },
 

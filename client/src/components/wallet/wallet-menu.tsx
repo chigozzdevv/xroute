@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { truncateAddress } from "@/lib/format";
 import { useWallet } from "@/hooks/use-wallet";
 import { cn } from "@/lib/cn";
+import { disconnectXRouteWallet } from "@/lib/xroute";
 
 export function WalletMenu() {
   const {
@@ -15,7 +16,7 @@ export function WalletMenu() {
     disconnect,
     error,
     isConnecting,
-    kind,
+    sessions,
   } = useWallet();
   const [isOpen, setIsOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -50,14 +51,18 @@ export function WalletMenu() {
 
   function handleDisconnect() {
     disconnect();
+    disconnectXRouteWallet();
     setIsOpen(false);
   }
 
-  const walletLabel = account
-    ? truncateAddress(account)
-    : isConnecting
-      ? "Connecting..."
-      : "Connect Wallet";
+  const connectedSessions = Object.values(sessions);
+  const walletLabel = connectedSessions.length > 1
+    ? `${connectedSessions.length} wallets connected`
+    : account
+      ? truncateAddress(account)
+      : isConnecting
+        ? "Connecting..."
+        : "Connect Wallet";
 
   return (
     <div className="relative grid justify-items-stretch gap-2 sm:justify-items-end" ref={wrapperRef}>
@@ -97,14 +102,23 @@ export function WalletMenu() {
           className="w-full min-w-[220px] rounded-[24px] border border-line bg-surface-strong p-3 shadow-panel backdrop-blur-xl sm:absolute sm:right-0 sm:top-full sm:mt-2 sm:w-[240px]"
           role="menu"
         >
-          {account ? (
+          {connectedSessions.length > 0 ? (
             <>
               <p className="mb-1 text-[0.72rem] uppercase tracking-[0.12em] text-muted">
-                Connected {kind === "substrate" ? "Substrate" : "EVM"} account
+                Connected wallets
               </p>
-              <p className="mb-3.5 font-extrabold tracking-[-0.03em]">
-                {truncateAddress(account, 8, 6)}
-              </p>
+              <div className="mb-3.5 grid gap-2">
+                {connectedSessions.map((session) => (
+                  <div key={session.kind} className="grid gap-0.5">
+                    <span className="text-[0.72rem] uppercase tracking-[0.12em] text-muted">
+                      {session.kind === "substrate" ? "Substrate" : "EVM"}
+                    </span>
+                    <span className="font-extrabold tracking-[-0.03em]">
+                      {truncateAddress(session.account, 8, 6)}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </>
           ) : (
             <p className="mb-3 text-[0.72rem] uppercase tracking-[0.12em] text-muted">
@@ -120,7 +134,7 @@ export function WalletMenu() {
                 onClick={handleConnectEvm}
                 role="menuitem"
               >
-                {kind === "evm" ? "Reconnect EVM" : "Connect EVM"}
+                {sessions.evm ? "Reconnect EVM" : "Connect EVM"}
               </button>
             ) : null}
 
@@ -131,18 +145,18 @@ export function WalletMenu() {
                 onClick={handleConnectSubstrate}
                 role="menuitem"
               >
-                {kind === "substrate" ? "Reconnect Substrate" : "Connect Substrate"}
+                {sessions.substrate ? "Reconnect Substrate" : "Connect Substrate"}
               </button>
             ) : null}
 
-            {account ? (
+            {connectedSessions.length > 0 ? (
               <button
                 type="button"
                 className="w-full rounded-2xl bg-white px-4 py-3 text-left font-bold transition duration-150 hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/30 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
                 onClick={handleDisconnect}
                 role="menuitem"
               >
-                Disconnect
+                Disconnect all
               </button>
             ) : null}
           </div>

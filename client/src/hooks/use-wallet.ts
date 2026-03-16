@@ -18,8 +18,10 @@ export type WalletSession =
       accountLabel: string | null;
     };
 
+export type WalletSessions = Partial<Record<WalletKind, WalletSession>>;
+
 type WalletState = {
-  session: WalletSession | null;
+  sessions: WalletSessions;
   isConnecting: boolean;
   error: string | null;
   availableWallets: {
@@ -32,7 +34,7 @@ const DAPP_NAME = "xroute";
 const listeners = new Set<() => void>();
 
 let state: WalletState = {
-  session: null,
+  sessions: {},
   isConnecting: false,
   error: null,
   availableWallets: {
@@ -104,18 +106,23 @@ function bindEvmProvider(provider: EthereumProvider) {
     const nextAccount = accounts[0] ?? null;
 
     if (!nextAccount) {
+      const sessions = { ...state.sessions };
+      delete sessions.evm;
       setState({
-        session: null,
+        sessions,
         error: null,
       });
       return;
     }
 
     setState({
-      session: {
-        kind: "evm",
-        account: nextAccount,
-        provider,
+      sessions: {
+        ...state.sessions,
+        evm: {
+          kind: "evm",
+          account: nextAccount,
+          provider,
+        },
       },
       error: null,
     });
@@ -147,10 +154,13 @@ async function connectEvmWallet() {
 
     bindEvmProvider(window.ethereum);
     setState({
-      session: {
-        kind: "evm",
-        account,
-        provider: window.ethereum,
+      sessions: {
+        ...state.sessions,
+        evm: {
+          kind: "evm",
+          account,
+          provider: window.ethereum,
+        },
       },
       error: null,
     });
@@ -193,12 +203,15 @@ async function connectSubstrateWallet() {
     }
 
     setState({
-      session: {
-        kind: "substrate",
-        account: account.address,
-        extensionName,
-        extensionSource,
-        accountLabel: account.meta?.name ?? account.name ?? null,
+      sessions: {
+        ...state.sessions,
+        substrate: {
+          kind: "substrate",
+          account: account.address,
+          extensionName,
+          extensionSource,
+          accountLabel: account.meta?.name ?? account.name ?? null,
+        },
       },
       error: null,
     });
@@ -255,9 +268,19 @@ async function connect(kind: WalletKind) {
   }
 }
 
-function disconnect() {
+function disconnect(kind: WalletKind | null = null) {
+  if (kind) {
+    const sessions = { ...state.sessions };
+    delete sessions[kind];
+    setState({
+      sessions,
+      error: null,
+    });
+    return;
+  }
+
   setState({
-    session: null,
+    sessions: {},
     error: null,
   });
 }
@@ -279,6 +302,7 @@ function initializeStore() {
 
 export function useWallet() {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const primarySession = snapshot.sessions.evm ?? snapshot.sessions.substrate ?? null;
 
   useEffect(() => {
     initializeStore();
@@ -286,8 +310,11 @@ export function useWallet() {
 
   return {
     ...snapshot,
-    account: snapshot.session?.account ?? null,
-    kind: snapshot.session?.kind ?? null,
+    session: primarySession,
+    account: primarySession?.account ?? null,
+    kind: primarySession?.kind ?? null,
+    evmSession: snapshot.sessions.evm ?? null,
+    substrateSession: snapshot.sessions.substrate ?? null,
     connect,
     connectEvm() {
       return connect("evm");

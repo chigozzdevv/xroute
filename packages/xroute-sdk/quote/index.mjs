@@ -64,7 +64,9 @@ export function createQuoteIntent(input, deploymentProfile = DEFAULT_DEPLOYMENT_
     return input;
   }
 
-  if (input?.kind === "transfer") {
+  const inferredKind = input?.kind ?? inferQuoteIntentKind(input);
+
+  if (inferredKind === "transfer") {
     return createTransferIntent({
       ...buildBaseIntentInput(input, normalizedDeploymentProfile),
       params: input.action?.params ?? input.params ?? {
@@ -75,7 +77,7 @@ export function createQuoteIntent(input, deploymentProfile = DEFAULT_DEPLOYMENT_
     });
   }
 
-  if (input?.kind === "swap") {
+  if (inferredKind === "swap") {
     return createSwapIntent({
       ...buildBaseIntentInput(input, normalizedDeploymentProfile),
       params: input.action?.params ?? input.params ?? {
@@ -89,7 +91,7 @@ export function createQuoteIntent(input, deploymentProfile = DEFAULT_DEPLOYMENT_
     });
   }
 
-  if (input?.kind === "execute") {
+  if (inferredKind === "execute") {
     const executionType =
       input.executionType ??
       input.action?.params?.executionType ??
@@ -201,6 +203,44 @@ function buildBaseIntentInput(input, deploymentProfile) {
 
 function defaultIntentDeadline() {
   return Math.floor(Date.now() / 1000) + DEFAULT_INTENT_DEADLINE_SECONDS;
+}
+
+function inferQuoteIntentKind(input) {
+  if (!input || typeof input !== "object" || input.action?.type) {
+    return null;
+  }
+
+  if (hasAnyDefined(input, [
+    "contractAddress",
+    "calldata",
+    "maxPaymentAmount",
+    "executionType",
+    "adapterAddress",
+    "remark",
+    "channelId",
+  ])) {
+    return "execute";
+  }
+
+  if (hasAnyDefined(input, [
+    "assetIn",
+    "assetOut",
+    "amountIn",
+    "minAmountOut",
+    "settlementChain",
+  ])) {
+    return "swap";
+  }
+
+  if (hasAnyDefined(input, ["asset", "amount", "recipient"])) {
+    return "transfer";
+  }
+
+  return null;
+}
+
+function hasAnyDefined(input, keys) {
+  return keys.some((key) => input[key] !== undefined && input[key] !== null);
 }
 
 function normalizeBaseUrl(baseUrl) {

@@ -37,6 +37,17 @@ const HOSTED_EVM_WALLET_DEFAULTS = Object.freeze({
   }),
 });
 
+const HOSTED_SUBSTRATE_WALLET_DEFAULTS = Object.freeze({
+  mainnet: Object.freeze({
+    hydration: Object.freeze({
+      rpcUrl: "wss://rpc.hydradx.cloud",
+    }),
+    bifrost: Object.freeze({
+      rpcUrl: "wss://hk.p.bifrost-rpc.liebi.com/ws",
+    }),
+  }),
+});
+
 export function createWallet(type, options = {}) {
   const normalizedType = assertNonEmptyString("type", type).toLowerCase();
 
@@ -98,6 +109,7 @@ function createSubstrateWallet({
   accountAddress,
   chainKey,
   rpcUrl,
+  deploymentProfile = DEFAULT_DEPLOYMENT_PROFILE,
   statusProvider,
   assetAddresses,
   codecContext,
@@ -111,14 +123,19 @@ function createSubstrateWallet({
       'createWallet("substrate") requires an extension or account',
     );
   }
+  const normalizedDeploymentProfile = normalizeDeploymentProfile(deploymentProfile);
   const normalizedChainKey = assertNonEmptyString("chainKey", chainKey);
+  const defaultConfig = resolveHostedSubstrateWalletDefaults(
+    normalizedChainKey,
+    normalizedDeploymentProfile,
+  );
 
   return createSubstrateWalletAdapter({
     extension,
     account,
     accountAddress,
     chainKey: normalizedChainKey,
-    rpcUrl,
+    rpcUrl: rpcUrl ?? defaultConfig?.rpcUrl,
     statusProvider,
     assetAddresses,
     codecContext,
@@ -131,6 +148,11 @@ function createSubstrateWallet({
 
 function resolveHostedEvmWalletDefaults(chainKey, deploymentProfile) {
   const profileConfig = HOSTED_EVM_WALLET_DEFAULTS[deploymentProfile];
+  return profileConfig?.[chainKey] ?? null;
+}
+
+function resolveHostedSubstrateWalletDefaults(chainKey, deploymentProfile) {
+  const profileConfig = HOSTED_SUBSTRATE_WALLET_DEFAULTS[deploymentProfile];
   return profileConfig?.[chainKey] ?? null;
 }
 

@@ -6,6 +6,7 @@ import type {
   IntentStatus,
   IntentTimeline,
 } from "@/lib/xroute";
+import { TxHashLink } from "./tx-hash-link";
 
 type IntentStatusCardProps = {
   execution: IntentExecutionResult | null;
@@ -38,7 +39,9 @@ export function IntentStatusCard({
   idleMessage = null,
 }: IntentStatusCardProps) {
   const intentId = execution?.submitted?.intentId ?? status?.intentId ?? null;
-  const txHash = execution?.dispatched?.txHash ?? null;
+  const sourceChain = execution?.intent?.sourceChain ?? execution?.dispatched?.sourceChain ?? null;
+  const submittedTxHash = execution?.submitted?.txHash ?? null;
+  const dispatchTxHash = execution?.dispatched?.txHash ?? null;
 
   if (!execution && !status && !error && !isSubmitting && !idleMessage) {
     return null;
@@ -85,13 +88,20 @@ export function IntentStatusCard({
         </div>
       ) : null}
 
-      {txHash ? (
-        <div className="grid gap-1 text-sm">
-          <span className="text-muted">Dispatch tx</span>
-          <code className="break-all rounded-[14px] bg-surface px-3 py-2 text-[0.8rem] text-ink">
-            {txHash}
-          </code>
-        </div>
+      {sourceChain && submittedTxHash ? (
+        <TxHashLink
+          chainKey={sourceChain}
+          txHash={submittedTxHash}
+          label="Submit tx"
+        />
+      ) : null}
+
+      {sourceChain && dispatchTxHash && dispatchTxHash !== submittedTxHash ? (
+        <TxHashLink
+          chainKey={sourceChain}
+          txHash={dispatchTxHash}
+          label="Dispatch tx"
+        />
       ) : null}
 
       {execution?.dispatched?.relayerJob?.id ? (

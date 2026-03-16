@@ -8,6 +8,7 @@ import {
   type ExecuteType,
   EXAMPLE_ADAPTER_ADDRESS,
   EXAMPLE_EVM_ADDRESS,
+  type FlowRequest,
   type FlowResponse,
   chainOptions,
   coerceOptionValue,
@@ -28,9 +29,9 @@ import {
   getTransferAssetOptions,
   getTransferDestinationOptions,
   recipientLabelForChain,
+  resolveWalletAccountForChain,
   swapSourceChainOptions,
   walletMatchesChain,
-  walletRequirementLabel,
 } from "@/lib/xroute";
 import {
   actionButtonClass,
@@ -43,6 +44,7 @@ import {
   textareaClass,
 } from "./form-classes";
 import { PoweredBy } from "./powered-by";
+import { TxHashLink } from "./tx-hash-link";
 import { Select } from "@/components/ui/select";
 import { useWallet } from "@/hooks/use-wallet";
 
@@ -251,17 +253,12 @@ export function WorkflowForm() {
   const [isRunning, setIsRunning] = useState(false);
   const [flowError, setFlowError] = useState<string | null>(null);
   const [flowResult, setFlowResult] = useState<FlowResponse | null>(null);
-  const { session } = useWallet();
+  const { sessions } = useWallet();
   const isEditable = true;
-  const workflowSourceChain = steps[0]?.sourceChain ?? null;
-  const hasSingleSourceChain =
-    steps.length > 0 && steps.every((step) => step.sourceChain === workflowSourceChain);
-  const walletReady = Boolean(
-    session
-    && workflowSourceChain
-    && hasSingleSourceChain
-    && walletMatchesChain(session, workflowSourceChain),
-  );
+  const workflowSourceChains = [...new Set(steps.map((step) => step.sourceChain))];
+  const walletReady =
+    workflowSourceChains.length > 0
+    && workflowSourceChains.every((sourceChain) => walletMatchesChain(sessions, sourceChain));
 
   const replaceStep = (stepId: string, nextStep: WorkflowStep) => {
     setSteps((current) =>
@@ -292,7 +289,7 @@ export function WorkflowForm() {
   };
 
   async function handleRunWorkflow() {
-    if (!session || !workflowSourceChain || !hasSingleSourceChain) {
+    if (!walletReady || workflowSourceChains.length === 0) {
       return;
     }
 
@@ -301,13 +298,23 @@ export function WorkflowForm() {
     setFlowResult(null);
 
     try {
-      connectWalletSessionForChain(session, workflowSourceChain);
+      for (const sourceChain of workflowSourceChains) {
+        connectWalletSessionForChain(sessions, sourceChain);
+      }
+
       const result = await requestXRouteFlow({
-        steps: steps.map((step, index) => ({
-          name: `${step.kind}-${index + 1}`,
-          intent: buildWorkflowIntent(step, session.account),
-        })),
-      });
+        steps: steps.map((step, index) => {
+          const ownerAddress = resolveWalletAccountForChain(sessions, step.sourceChain);
+          if (!ownerAddress) {
+            throw new Error(`Connect the required wallet for ${step.sourceChain} before running the workflow.`);
+          }
+
+          return {
+            name: `${step.kind}-${index + 1}`,
+            intent: buildWorkflowIntent(step, ownerAddress),
+          };
+        }),
+      } as FlowRequest);
       setFlowResult(result);
     } catch (error) {
       setFlowError(error instanceof Error ? error.message : "Workflow execution failed.");
@@ -1327,15 +1334,9 @@ export function WorkflowForm() {
             </p>
           ) : null}
 
-          {steps.length > 0 && !hasSingleSourceChain ? (
-            <p className="m-0 text-sm leading-6 text-danger">
-              Workflow execution currently requires every step to use the same source chain.
-            </p>
-          ) : null}
-
-          {steps.length > 0 && hasSingleSourceChain && !walletReady ? (
+          {steps.length > 0 && !walletReady ? (
             <p className="m-0 text-sm leading-6 text-muted">
-              Connect a {walletRequirementLabel(workflowSourceChain!).toLowerCase()} to run this workflow.
+              Connect the required source wallets for every step in this workflow.
             </p>
           ) : null}
 
@@ -1360,12 +1361,23 @@ export function WorkflowForm() {
                 {flowResult.steps.map((step: FlowResponse["steps"][number]) => (
                   <div
                     key={`${step.name}-${step.intent.quoteId}`}
-                    className="flex items-center justify-between gap-4 text-sm"
+                    className="grid gap-2 rounded-[16px] border border-line/70 bg-white/70 px-3 py-3 text-sm"
                   >
-                    <span className="font-semibold capitalize tracking-tight text-ink">
-                      {step.name.replace(/-/g, " ")}
-                    </span>
-                    <span className="text-muted">{step.finalStatus.status}</span>
+                    <div className="flex items-center justify-between gap-4">
+                      <span className="font-semibold capitalize tracking-tight text-ink">
+                        {step.name.replace(/-/g, " ")}
+                      </span>
+                      <span className="text-muted">{step.finalStatus.status}</span>
+                    </div>
+
+                    {step.intent.sourceChain && step.dispatched?.txHash ? (
+                      <TxHashLink
+                        chainKey={step.intent.sourceChain}
+                        txHash={step.dispatched.txHash}
+                        label="Dispatch tx"
+                        compact
+                      />
+                    ) : null}
                   </div>
                 ))}
               </div>

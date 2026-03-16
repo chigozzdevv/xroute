@@ -80,7 +80,7 @@ function canBuildQuote(form: ExecuteFormState, ownerAddress?: string) {
 
 export function ExecuteForm() {
   const [form, setForm] = useState<ExecuteFormState>(createInitialExecuteForm);
-  const { session } = useWallet();
+  const { sessions } = useWallet();
   const [showAdvanced, setShowAdvanced] = useState(false);
   const executionTypeOptions = useMemo(
     () => getExecuteTypeOptions(form.sourceChain, form.destinationChain),
@@ -100,7 +100,7 @@ export function ExecuteForm() {
   );
   const executionAsset =
     executionAssetOptions.find((candidate) => !candidate.disabled)?.value ?? "DOT";
-  const ownerAddress = resolveWalletAccountForChain(session, form.sourceChain) ?? undefined;
+  const ownerAddress = resolveWalletAccountForChain(sessions, form.sourceChain) ?? undefined;
   const quoteRequest = useMemo(
     () => {
       const walletAddress = canBuildQuote(form, ownerAddress);
@@ -118,16 +118,16 @@ export function ExecuteForm() {
   );
   const { quote, error: quoteError } = useXRouteQuote(quoteRequest);
   const execution = useXRouteExecution();
-  const walletReady = walletMatchesChain(session, form.sourceChain);
+  const walletReady = walletMatchesChain(sessions, form.sourceChain);
 
   async function handleSubmit() {
-    if (!session || !walletReady || form.executionType !== "call") {
+    if (!walletReady || form.executionType !== "call") {
       return;
     }
 
     try {
       await execution.execute(() =>
-        submitCallWithWallet(session, {
+        submitCallWithWallet(sessions, {
           ...form,
           asset: executionAsset,
         }),

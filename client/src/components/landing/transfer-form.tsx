@@ -61,10 +61,10 @@ function canBuildQuote(form: TransferFormState, ownerAddress?: string) {
 
 export function TransferForm() {
   const [form, setForm] = useState(createInitialTransferForm);
-  const { session } = useWallet();
+  const { sessions } = useWallet();
   const destinationOptions = getTransferDestinationOptions(form.sourceChain);
   const assetOptions = getTransferAssetOptions(form.sourceChain, form.destinationChain);
-  const ownerAddress = resolveWalletAccountForChain(session, form.sourceChain) ?? undefined;
+  const ownerAddress = resolveWalletAccountForChain(sessions, form.sourceChain) ?? undefined;
   const quoteRequest = useMemo(
     () => {
       const walletAddress = canBuildQuote(form, ownerAddress);
@@ -81,16 +81,16 @@ export function TransferForm() {
   );
   const { quote, error: quoteError } = useXRouteQuote(quoteRequest);
   const execution = useXRouteExecution();
-  const walletReady = walletMatchesChain(session, form.sourceChain);
+  const walletReady = walletMatchesChain(sessions, form.sourceChain);
 
   async function handleSubmit() {
-    if (!session || !walletReady) {
+    if (!walletReady) {
       return;
     }
 
     try {
       await execution.execute(() =>
-        submitTransferWithWallet(session, {
+        submitTransferWithWallet(sessions, {
           ...form,
         }),
       );

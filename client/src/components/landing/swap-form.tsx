@@ -74,7 +74,7 @@ function canBuildQuote(form: SwapFormState, ownerAddress?: string) {
 
 export function SwapForm() {
   const [form, setForm] = useState<SwapFormState>(createInitialSwapForm);
-  const { session } = useWallet();
+  const { sessions } = useWallet();
   const destinationOptions = useMemo(
     () => getSwapDestinationOptions(form.sourceChain),
     [form.sourceChain],
@@ -97,7 +97,7 @@ export function SwapForm() {
       ),
     [form.assetIn, form.assetOut, form.destinationChain, form.sourceChain],
   );
-  const ownerAddress = resolveWalletAccountForChain(session, form.sourceChain) ?? undefined;
+  const ownerAddress = resolveWalletAccountForChain(sessions, form.sourceChain) ?? undefined;
   const quoteRequest = useMemo(
     () => {
       const walletAddress = canBuildQuote(form, ownerAddress);
@@ -114,16 +114,16 @@ export function SwapForm() {
   );
   const { quote, error: quoteError } = useXRouteQuote(quoteRequest);
   const execution = useXRouteExecution();
-  const walletReady = walletMatchesChain(session, form.sourceChain);
+  const walletReady = walletMatchesChain(sessions, form.sourceChain);
 
   async function handleSubmit() {
-    if (!session || !walletReady) {
+    if (!walletReady) {
       return;
     }
 
     try {
       await execution.execute(() =>
-        submitSwapWithWallet(session, {
+        submitSwapWithWallet(sessions, {
           ...form,
         }),
       );
