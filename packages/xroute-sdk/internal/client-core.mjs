@@ -284,10 +284,6 @@ export function createConfiguredXRouteClient({
     getTimeline(intentId) {
       return statusProvider.getTimeline(intentId);
     },
-
-    subscribe(listener) {
-      return statusProvider.subscribe(listener);
-    },
   };
 }
 

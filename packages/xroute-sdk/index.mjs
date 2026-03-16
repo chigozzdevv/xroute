@@ -394,10 +394,6 @@ function createHostedXRouteClient({
     track(intentId, options) {
       return trackIntentStatus(hostedStatusProvider, intentId, options);
     },
-
-    subscribe(listener) {
-      return hostedStatusProvider.subscribe(listener);
-    },
   };
 
   if (wallet) {
