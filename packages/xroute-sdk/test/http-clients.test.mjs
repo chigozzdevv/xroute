@@ -3,11 +3,13 @@ import assert from "node:assert/strict";
 
 import * as publicSdk from "../index.mjs";
 import {
+  connectInjectedWallet,
   createWallet,
   createEvmWalletAdapter,
   createHttpQuoteProvider,
   createHttpStatusProvider,
   createXRouteClient,
+  getBrowserWalletAvailability,
 } from "../index.mjs";
 import { createHttpExecutorRelayerClient } from "../internal.mjs";
 
@@ -168,6 +170,73 @@ test("hosted createXRouteClient works without apiKey", async () => {
 
   assert.equal(status.status, "settled");
   assert.equal(seen[0][1].headers["x-api-key"], undefined);
+});
+
+test("getBrowserWalletAvailability inspects injected browser wallets", () => {
+  const availability = getBrowserWalletAvailability({
+    browserWindow: {
+      ethereum: {
+        request: async () => [],
+      },
+      injectedWeb3: {
+        talisman: {
+          async enable() {
+            return {};
+          },
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(availability, {
+    evm: true,
+    substrate: true,
+  });
+});
+
+test("connectInjectedWallet resolves an injected evm account", async () => {
+  const session = await connectInjectedWallet("evm", {
+    browserWindow: {
+      ethereum: {
+        async request({ method }) {
+          assert.equal(method, "eth_requestAccounts");
+          return ["0x1111111111111111111111111111111111111111"];
+        },
+      },
+    },
+  });
+
+  assert.equal(session.kind, "evm");
+  assert.equal(session.account, "0x1111111111111111111111111111111111111111");
+});
+
+test("connectInjectedWallet resolves an injected substrate account", async () => {
+  const session = await connectInjectedWallet("substrate", {
+    extensionDappName: "xroute-test",
+    browserWindow: {
+      injectedWeb3: {
+        talisman: {
+          async enable(originName) {
+            assert.equal(originName, "xroute-test");
+            return {
+              accounts: [
+                {
+                  address: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+                  meta: {
+                    name: "Alice",
+                  },
+                },
+              ],
+            };
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(session.kind, "substrate");
+  assert.equal(session.extensionName, "talisman");
+  assert.equal(session.account, "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY");
 });
 
 test("hosted createXRouteClient executes hydration-source transfers through custom wallet submit builders", async () => {

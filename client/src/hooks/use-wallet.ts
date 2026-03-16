@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useSyncExternalStore } from "react";
+import {
+  connectInjectedWallet,
+  getBrowserWalletAvailability,
+} from "@xroute/sdk";
 
 export type WalletKind = "evm" | "substrate";
 
@@ -73,17 +77,7 @@ function getSnapshot() {
 }
 
 function resolveAvailableWallets() {
-  if (typeof window === "undefined") {
-    return {
-      evm: false,
-      substrate: false,
-    };
-  }
-
-  return {
-    evm: Boolean(window.ethereum),
-    substrate: Object.keys(window.injectedWeb3 ?? {}).length > 0,
-  };
+  return getBrowserWalletAvailability();
 }
 
 function syncAvailableWallets() {
@@ -133,34 +127,21 @@ function bindEvmProvider(provider: EthereumProvider) {
 }
 
 async function connectEvmWallet() {
-  if (typeof window === "undefined" || !window.ethereum) {
-    throw new Error("Install an injected EVM wallet to connect.");
-  }
-
   setState({
     isConnecting: true,
     error: null,
   });
 
   try {
-    const accounts = await window.ethereum.request({
-      method: "eth_requestAccounts",
-    });
-    const nextAccounts = Array.isArray(accounts) ? (accounts as string[]) : [];
-    const account = nextAccounts[0] ?? null;
-    if (!account) {
-      throw new Error("No EVM account was returned by the wallet.");
+    const session = await connectInjectedWallet("evm");
+    if (session.kind !== "evm") {
+      throw new Error("Expected an EVM wallet session.");
     }
-
-    bindEvmProvider(window.ethereum);
+    bindEvmProvider(session.provider);
     setState({
       sessions: {
         ...state.sessions,
-        evm: {
-          kind: "evm",
-          account,
-          provider: window.ethereum,
-        },
+        evm: session,
       },
       error: null,
     });
@@ -172,46 +153,22 @@ async function connectEvmWallet() {
 }
 
 async function connectSubstrateWallet() {
-  if (typeof window === "undefined") {
-    throw new Error("Substrate wallet extensions are only available in the browser.");
-  }
-
-  const entries = Object.entries(window.injectedWeb3 ?? {}).filter(
-    ([, source]) => Boolean(source) && typeof source?.enable === "function",
-  );
-  if (entries.length === 0) {
-    throw new Error("Install a Substrate wallet extension to connect.");
-  }
-
   setState({
     isConnecting: true,
     error: null,
   });
 
   try {
-    const [extensionName, rawExtensionSource] = entries[0];
-    if (!rawExtensionSource || typeof rawExtensionSource.enable !== "function") {
-      throw new Error("No Substrate wallet extension is available.");
+    const session = await connectInjectedWallet("substrate", {
+      extensionDappName: DAPP_NAME,
+    });
+    if (session.kind !== "substrate") {
+      throw new Error("Expected a Substrate wallet session.");
     }
-
-    const extensionSource = rawExtensionSource as InjectedSubstrateExtensionSource;
-    const injected = await extensionSource.enable(DAPP_NAME);
-    const accounts = await readSubstrateAccounts(injected);
-    const account = accounts[0];
-    if (!account?.address) {
-      throw new Error("No Substrate accounts were returned by the extension.");
-    }
-
     setState({
       sessions: {
         ...state.sessions,
-        substrate: {
-          kind: "substrate",
-          account: account.address,
-          extensionName,
-          extensionSource,
-          accountLabel: account.meta?.name ?? account.name ?? null,
-        },
+        substrate: session,
       },
       error: null,
     });
@@ -220,37 +177,6 @@ async function connectSubstrateWallet() {
       isConnecting: false,
     });
   }
-}
-
-async function readSubstrateAccounts(injected: unknown) {
-  const accountsSource =
-    injected && typeof injected === "object" && "accounts" in injected
-      ? (injected as InjectedSubstrateExtension).accounts
-      : undefined;
-  if (!accountsSource) {
-    return [];
-  }
-
-  if (Array.isArray(accountsSource)) {
-    return accountsSource;
-  }
-
-  if (typeof accountsSource === "function") {
-    const accounts = await accountsSource();
-    return Array.isArray(accounts) ? accounts : [];
-  }
-
-  if (
-    accountsSource
-    && typeof accountsSource === "object"
-    && "get" in accountsSource
-    && typeof (accountsSource as InjectedSubstrateAccountsSource).get === "function"
-  ) {
-    const accounts = await (accountsSource as InjectedSubstrateAccountsSource).get?.();
-    return Array.isArray(accounts) ? accounts : [];
-  }
-
-  return [];
 }
 
 async function connect(kind: WalletKind) {

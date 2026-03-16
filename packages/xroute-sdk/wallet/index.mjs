@@ -1,4 +1,4 @@
-import { assertNonEmptyString } from "../../xroute-types/index.mjs";
+import { assertAddress, assertNonEmptyString } from "../../xroute-types/index.mjs";
 import {
   DEFAULT_DEPLOYMENT_PROFILE,
   normalizeDeploymentProfile,
@@ -56,6 +56,30 @@ export function createWallet(type, options = {}) {
       return createEvmWallet(options);
     case WALLET_TYPES.SUBSTRATE:
       return createSubstrateWallet(options);
+    default:
+      throw new Error(
+        `unsupported wallet type: ${normalizedType}; expected "evm" or "substrate"`,
+      );
+  }
+}
+
+export function getBrowserWalletAvailability({
+  browserWindow = globalThis.window,
+} = {}) {
+  return {
+    evm: Boolean(browserWindow?.ethereum),
+    substrate: Object.keys(browserWindow?.injectedWeb3 ?? {}).length > 0,
+  };
+}
+
+export async function connectInjectedWallet(type, options = {}) {
+  const normalizedType = assertNonEmptyString("type", type).toLowerCase();
+
+  switch (normalizedType) {
+    case WALLET_TYPES.EVM:
+      return connectInjectedEvmWallet(options);
+    case WALLET_TYPES.SUBSTRATE:
+      return connectInjectedSubstrateWallet(options);
     default:
       throw new Error(
         `unsupported wallet type: ${normalizedType}; expected "evm" or "substrate"`,
@@ -146,6 +170,63 @@ function createSubstrateWallet({
   });
 }
 
+async function connectInjectedEvmWallet({
+  provider,
+  browserWindow = globalThis.window,
+} = {}) {
+  const resolvedProvider = provider ?? browserWindow?.ethereum;
+  if (!resolvedProvider) {
+    throw new Error("Install an injected EVM wallet to connect.");
+  }
+
+  const accounts = await resolvedProvider.request({
+    method: "eth_requestAccounts",
+  });
+  const nextAccounts = Array.isArray(accounts) ? accounts : [];
+  const account = nextAccounts[0];
+  if (!account) {
+    throw new Error("No EVM account was returned by the wallet.");
+  }
+
+  return {
+    kind: WALLET_TYPES.EVM,
+    account: assertAddress("evmAccount", account).toLowerCase(),
+    provider: resolvedProvider,
+  };
+}
+
+async function connectInjectedSubstrateWallet({
+  extension,
+  extensionName = null,
+  accountAddress = null,
+  extensionDappName = "xroute",
+  browserWindow = globalThis.window,
+} = {}) {
+  const resolved = resolveInjectedSubstrateExtension({
+    extension,
+    extensionName,
+    browserWindow,
+  });
+  const injected =
+    typeof resolved.extensionSource.enable === "function"
+      ? await resolved.extensionSource.enable(extensionDappName)
+      : resolved.extensionSource;
+  const accounts = await readInjectedExtensionAccounts(injected);
+  if (accounts.length === 0) {
+    throw new Error("No Substrate accounts were returned by the extension.");
+  }
+
+  const selected = selectInjectedSubstrateAccount(accounts, accountAddress);
+
+  return {
+    kind: WALLET_TYPES.SUBSTRATE,
+    account: assertNonEmptyString("account.address", selected.address),
+    extensionName: resolved.extensionName,
+    extensionSource: resolved.extensionSource,
+    accountLabel: selected.meta?.name ?? selected.name ?? null,
+  };
+}
+
 function resolveHostedEvmWalletDefaults(chainKey, deploymentProfile) {
   const profileConfig = HOSTED_EVM_WALLET_DEFAULTS[deploymentProfile];
   return profileConfig?.[chainKey] ?? null;
@@ -154,6 +235,82 @@ function resolveHostedEvmWalletDefaults(chainKey, deploymentProfile) {
 function resolveHostedSubstrateWalletDefaults(chainKey, deploymentProfile) {
   const profileConfig = HOSTED_SUBSTRATE_WALLET_DEFAULTS[deploymentProfile];
   return profileConfig?.[chainKey] ?? null;
+}
+
+function resolveInjectedSubstrateExtension({
+  extension,
+  extensionName,
+  browserWindow,
+}) {
+  if (extension) {
+    return {
+      extensionName:
+        typeof extensionName === "string" && extensionName.trim() !== ""
+          ? extensionName.trim()
+          : "injected-substrate",
+      extensionSource: extension,
+    };
+  }
+
+  const entries = Object.entries(browserWindow?.injectedWeb3 ?? {}).filter(
+    ([, source]) => Boolean(source) && typeof source?.enable === "function",
+  );
+  if (entries.length === 0) {
+    throw new Error("Install a Substrate wallet extension to connect.");
+  }
+
+  const matched =
+    typeof extensionName === "string" && extensionName.trim() !== ""
+      ? entries.find(([name]) => name === extensionName.trim())
+      : entries[0];
+  if (!matched) {
+    throw new Error(`No Substrate wallet extension named ${extensionName} is available.`);
+  }
+
+  const [resolvedName, extensionSource] = matched;
+  return {
+    extensionName: resolvedName,
+    extensionSource,
+  };
+}
+
+async function readInjectedExtensionAccounts(injected) {
+  const accountsSource =
+    injected && typeof injected === "object" && "accounts" in injected
+      ? injected.accounts
+      : undefined;
+  if (!accountsSource) {
+    return [];
+  }
+
+  if (Array.isArray(accountsSource)) {
+    return accountsSource;
+  }
+
+  if (typeof accountsSource === "function") {
+    const accounts = await accountsSource();
+    return Array.isArray(accounts) ? accounts : [];
+  }
+
+  if (typeof accountsSource?.get === "function") {
+    const accounts = await accountsSource.get();
+    return Array.isArray(accounts) ? accounts : [];
+  }
+
+  return [];
+}
+
+function selectInjectedSubstrateAccount(accounts, requestedAddress) {
+  if (!requestedAddress) {
+    return accounts[0];
+  }
+
+  const matched = accounts.find((account) => account?.address === requestedAddress);
+  if (!matched) {
+    throw new Error(`No Substrate account ${requestedAddress} was returned by the extension.`);
+  }
+
+  return matched;
 }
 
 function normalizeAssetAddressOverrides(assetAddresses, chainKey) {

@@ -40,7 +40,11 @@ export {
 } from "./wallets/wallet-adapters.mjs";
 
 export { NATIVE_ASSET_ADDRESS } from "./routers/router-adapters.mjs";
-export { createWallet } from "./wallet/index.mjs";
+export {
+  createWallet,
+  connectInjectedWallet,
+  getBrowserWalletAvailability,
+} from "./wallet/index.mjs";
 export { createQuote, createHttpQuoteProvider, normalizeQuote } from "./quote/index.mjs";
 export { createHttpStatusProvider, createStatusClient, trackStatus } from "./status/index.mjs";
 
