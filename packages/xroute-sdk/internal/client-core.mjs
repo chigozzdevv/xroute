@@ -29,7 +29,7 @@ export function createConfiguredXRouteClient({
   if (!routerAdapter?.submitIntent || !routerAdapter?.dispatchIntent) {
     throw new Error("routerAdapter submitIntent and dispatchIntent are required");
   }
-  if (!statusProvider?.getStatus || !statusProvider?.getTimeline || !statusProvider?.subscribe) {
+  if (!statusProvider?.getStatus || !statusProvider?.getTimeline) {
     throw new Error("statusProvider is incomplete");
   }
   if (

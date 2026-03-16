@@ -13,8 +13,6 @@ export function createStatusClient({ apiKey, fetchImpl, ...options } = {}) {
   });
 }
 
-export const trackStatus = createStatusClient;
-
 export function createHttpStatusProvider({
   endpoint,
   apiKey,
@@ -67,10 +65,6 @@ export function createHttpStatusProvider({
 
       const payload = await response.json();
       return payload?.timeline ?? payload ?? [];
-    },
-
-    subscribe(_listener) {
-      return () => {};
     },
   };
 }

@@ -11,12 +11,14 @@ import {
 } from "../index.mjs";
 import {
   DEFAULT_XROUTE_API_BASE_URL,
-  createEvmWalletAdapter,
+} from "../internal/constants.mjs";
+import {
   createHttpExecutorRelayerClient,
   createHttpQuoteProvider,
   createHttpStatusProvider,
-  createWallet,
-} from "../internal.mjs";
+} from "../internal/http.mjs";
+import { createEvmWalletAdapter } from "../wallets/wallet-adapters.mjs";
+import { createWallet } from "../wallet/index.mjs";
 
 test("createHttpStatusProvider fetches hosted status and timeline", async () => {
   const seen = [];
