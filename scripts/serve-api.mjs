@@ -7,6 +7,10 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = resolve(scriptDir, "..");
 const dotEnvPath = resolve(workspaceRoot, ".env");
 const liveQuoteInputsScript = resolve(workspaceRoot, "scripts/fetch-live-quote-inputs.mjs");
+const deploymentRoot = resolve(
+  workspaceRoot,
+  "contracts/polkadot-hub-router/deployments/mainnet",
+);
 
 export function resolveServeApiLaunch() {
   const loadedEnv = loadDotEnv(dotEnvPath);
@@ -26,6 +30,8 @@ export function resolveServeApiLaunch() {
   ) {
     env.XROUTE_LIVE_QUOTE_INPUTS_COMMAND = `node ${liveQuoteInputsScript}`;
   }
+
+  applyDeploymentDefaults(env);
 
   return {
     command: "cargo",
@@ -99,4 +105,50 @@ function normalizeEnvValue(value) {
   }
 
   return value;
+}
+
+function applyDeploymentDefaults(env) {
+  const hubDeployment = loadDeploymentArtifact("polkadot-hub");
+  const moonbeamDeployment = loadDeploymentArtifact("moonbeam");
+
+  if (!env.XROUTE_ROUTER_ADDRESS?.trim()) {
+    const routerAddress = hubDeployment?.contracts?.XRouteHubRouter;
+    if (typeof routerAddress === "string" && routerAddress.trim() !== "") {
+      env.XROUTE_ROUTER_ADDRESS = routerAddress.trim();
+    }
+  }
+
+  if (!env.XROUTE_MOONBEAM_ROUTER_ADDRESS?.trim()) {
+    const routerAddress = moonbeamDeployment?.contracts?.XRouteHubRouter;
+    if (typeof routerAddress === "string" && routerAddress.trim() !== "") {
+      env.XROUTE_MOONBEAM_ROUTER_ADDRESS = routerAddress.trim();
+    }
+  }
+
+  if (!env.XROUTE_XCM_ADDRESS?.trim()) {
+    const xcmAddress = hubDeployment?.settings?.xcmAddress;
+    if (typeof xcmAddress === "string" && xcmAddress.trim() !== "") {
+      env.XROUTE_XCM_ADDRESS = xcmAddress.trim();
+    }
+  }
+
+  if (!env.XROUTE_MOONBEAM_XCM_ADDRESS?.trim()) {
+    const xcmAddress = moonbeamDeployment?.settings?.xcmAddress;
+    if (typeof xcmAddress === "string" && xcmAddress.trim() !== "") {
+      env.XROUTE_MOONBEAM_XCM_ADDRESS = xcmAddress.trim();
+    }
+  }
+}
+
+function loadDeploymentArtifact(chainKey) {
+  const artifactPath = resolve(deploymentRoot, `${chainKey}.json`);
+  if (!existsSync(artifactPath)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(readFileSync(artifactPath, "utf8"));
+  } catch {
+    return null;
+  }
 }
