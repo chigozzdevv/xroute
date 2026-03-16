@@ -27,6 +27,10 @@ const EVM_BALANCE_OF_SELECTOR = "0x70a08231";
 const EVM_APPROVE_SELECTOR = "0x095ea7b3";
 const EVM_INTENT_SUBMITTED_TOPIC =
   "0x958ded10bf7c27600499d19f87c591832d502b52c7439827fabc5c4fe5d7d028";
+const DEFAULT_EVM_SUBMIT_GAS_LIMITS = Object.freeze({
+  "polkadot-hub": 250000n,
+  moonbeam: 250000n,
+});
 
 export function createEvmWalletAdapter({
   provider,
@@ -39,6 +43,7 @@ export function createEvmWalletAdapter({
   autoApprove = true,
   receiptPollIntervalMs = 1_000,
   receiptTimeoutMs = 120_000,
+  fetchImpl = globalThis.fetch,
 } = {}) {
   if (!provider) {
     throw new Error("provider is required (window.ethereum or EIP-1193 compatible provider)");
@@ -62,6 +67,11 @@ export function createEvmWalletAdapter({
     "receiptTimeoutMs",
     receiptTimeoutMs,
   );
+  const normalizedFetchImpl =
+    typeof fetchImpl === "function"
+      ? fetchImpl
+      : null;
+  const readOnlyRpcUrl = normalizedExpectedNetwork?.rpcUrls?.[0] ?? null;
   const assetAddressResolver = createWalletAssetAddressResolver(assetAddresses);
 
   let cachedAddress = null;
@@ -173,10 +183,22 @@ export function createEvmWalletAdapter({
   }
 
   async function readUintFromRouter(calldata) {
-    if (ensuredChainId !== normalizedExpectedNetwork?.chainIdHex) {
-      await ensureExpectedChain();
-    }
-    const response = await provider.request({
+    const response = await requestViaWalletProvider({
+      method: "eth_call",
+      params: [
+        {
+          to: normalizedRouterAddress,
+          data: assertHexString("eth_call.data", calldata),
+        },
+        "latest",
+      ],
+    });
+
+    return parseRpcUint256(response, "eth_call result");
+  }
+
+  async function readUintFromRouterWith(requestImpl, calldata) {
+    const response = await requestImpl({
       method: "eth_call",
       params: [
         {
@@ -247,10 +269,16 @@ export function createEvmWalletAdapter({
   }
 
   async function readGasPrice() {
-    if (ensuredChainId !== normalizedExpectedNetwork?.chainIdHex) {
-      await ensureExpectedChain();
-    }
-    const result = await provider.request({
+    const result = await requestViaWalletProvider({
+      method: "eth_gasPrice",
+      params: [],
+    });
+
+    return parseRpcUint256(result, "eth_gasPrice");
+  }
+
+  async function readGasPriceWith(requestImpl) {
+    const result = await requestImpl({
       method: "eth_gasPrice",
       params: [],
     });
@@ -289,7 +317,22 @@ export function createEvmWalletAdapter({
   async function estimateGasWithHeadroom(txParams) {
     try {
       const estimate = parseRpcUint256(
-        await provider.request({
+        await requestViaWalletProvider({
+          method: "eth_estimateGas",
+          params: [txParams],
+        }),
+        "eth_estimateGas",
+      );
+      return (estimate * 12n + 9n) / 10n;
+    } catch (error) {
+      throw describeRpcPreflightError(error, normalizedChainKey);
+    }
+  }
+
+  async function estimateGasWithHeadroomUsing(requestImpl, txParams) {
+    try {
+      const estimate = parseRpcUint256(
+        await requestImpl({
           method: "eth_estimateGas",
           params: [txParams],
         }),
@@ -363,6 +406,65 @@ export function createEvmWalletAdapter({
     }
   }
 
+  function resolveDefaultSubmitGasLimit() {
+    return DEFAULT_EVM_SUBMIT_GAS_LIMITS[normalizedChainKey] ?? 250000n;
+  }
+
+  async function requestViaWalletProvider({ method, params }) {
+    if (ensuredChainId !== normalizedExpectedNetwork?.chainIdHex) {
+      await ensureExpectedChain();
+    }
+
+    return provider.request({
+      method,
+      params,
+    });
+  }
+
+  async function requestViaReadonlyRpc({ method, params }) {
+    if (!readOnlyRpcUrl || !normalizedFetchImpl) {
+      throw new Error("readonly RPC transport is unavailable");
+    }
+
+    const response = await normalizedFetchImpl(readOnlyRpcUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method,
+        params,
+      }),
+    });
+
+    if (!response?.ok) {
+      throw new Error(`readonly RPC ${method} request failed with status ${response?.status ?? "unknown"}`);
+    }
+
+    const payload = await response.json();
+    if (payload?.error) {
+      throw new Error(payload.error.message ?? `readonly RPC ${method} request failed`);
+    }
+
+    return payload?.result;
+  }
+
+  function createEstimationRequestTransport() {
+    if (!readOnlyRpcUrl || !normalizedFetchImpl) {
+      return requestViaWalletProvider;
+    }
+
+    return async ({ method, params }) => {
+      try {
+        return await requestViaReadonlyRpc({ method, params });
+      } catch {
+        return requestViaWalletProvider({ method, params });
+      }
+    };
+  }
+
   const routerAdapter = {
     async estimateSubmissionCost({ owner, request }) {
       const normalizedRequest = normalizeRouterIntentRequest(request);
@@ -374,17 +476,27 @@ export function createEvmWalletAdapter({
         }
       }
 
-      const lockedAmount = await previewLockedAmount(normalizedRequest);
+      const estimateRequest = createEstimationRequestTransport();
+      const lockedAmount = await readUintFromRouterWith(
+        estimateRequest,
+        encodePreviewLockedAmountCalldata(normalizedRequest),
+      );
       const value = isNativeAddress(normalizedRequest.asset) ? lockedAmount : 0n;
       const gasLimit =
         normalizedGasLimit
-        ?? await estimateGasWithHeadroom({
-          from: signerAddress,
-          to: normalizedRouterAddress,
-          data: encodeSubmitIntentCalldata(normalizedRequest),
-          ...(value > 0n ? { value: toRpcQuantity(value, "value") } : {}),
-        });
-      const gasPrice = await readGasPrice();
+        ?? await (async () => {
+          try {
+            return await estimateGasWithHeadroomUsing(estimateRequest, {
+              from: signerAddress,
+              to: normalizedRouterAddress,
+              data: encodeSubmitIntentCalldata(normalizedRequest),
+              ...(value > 0n ? { value: toRpcQuantity(value, "value") } : {}),
+            });
+          } catch {
+            return resolveDefaultSubmitGasLimit();
+          }
+        })();
+      const gasPrice = await readGasPriceWith(estimateRequest);
       const gasAsset = resolveGasAssetMetadata();
 
       return Object.freeze({
