@@ -1,13 +1,13 @@
 import { assertNonEmptyString } from "../../xroute-types/index.mjs";
 import {
-  DEFAULT_XROUTE_API_BASE_URL,
   assertNoBaseUrlOverride,
+  resolveDefaultXRouteApiBaseUrl,
 } from "../internal/constants.mjs";
 
 export function createStatusClient({ apiKey, fetchImpl, ...options } = {}) {
   assertNoBaseUrlOverride("createStatusClient", options);
   return createHttpStatusProvider({
-    endpoint: DEFAULT_XROUTE_API_BASE_URL,
+    endpoint: resolveDefaultXRouteApiBaseUrl(),
     apiKey,
     fetchImpl,
   });

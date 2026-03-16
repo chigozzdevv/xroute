@@ -1,6 +1,7 @@
-const FALLBACK_XROUTE_API_BASE_URL = "https://xroute-api.onrender.com/v1";
+const HOSTED_XROUTE_API_BASE_URL = "https://xroute-api.onrender.com/v1";
+const LOCAL_XROUTE_API_BASE_URL = "http://127.0.0.1:8788/v1";
 
-export const DEFAULT_XROUTE_API_BASE_URL = resolveDefaultXRouteApiBaseUrl();
+export const DEFAULT_XROUTE_API_BASE_URL = HOSTED_XROUTE_API_BASE_URL;
 
 export function assertNoBaseUrlOverride(apiName, options = {}) {
   if (options?.baseUrl === undefined || options?.baseUrl === null) {
@@ -10,11 +11,13 @@ export function assertNoBaseUrlOverride(apiName, options = {}) {
   throw new Error(`${apiName} does not support baseUrl overrides`);
 }
 
-function resolveDefaultXRouteApiBaseUrl() {
+export function resolveDefaultXRouteApiBaseUrl({
+  env = typeof process === "undefined" ? undefined : process.env,
+  location = globalThis.location,
+} = {}) {
   const candidates = [
-    process.env.NEXT_PUBLIC_XROUTE_API_BASE_URL,
-    process.env.XROUTE_API_BASE_URL,
-    process.env.XROUTE_API_SERVER_BASE_URL,
+    env?.XROUTE_API_BASE_URL,
+    env?.XROUTE_API_SERVER_BASE_URL,
   ];
 
   for (const candidate of candidates) {
@@ -24,5 +27,19 @@ function resolveDefaultXRouteApiBaseUrl() {
     }
   }
 
-  return FALLBACK_XROUTE_API_BASE_URL;
+  if (isLocalBrowserLocation(location)) {
+    return LOCAL_XROUTE_API_BASE_URL;
+  }
+
+  return HOSTED_XROUTE_API_BASE_URL;
+}
+
+function isLocalBrowserLocation(location) {
+  const hostname = location?.hostname?.trim().toLowerCase();
+  return (
+    hostname === "localhost"
+    || hostname === "127.0.0.1"
+    || hostname === "0.0.0.0"
+    || hostname === "::1"
+  );
 }

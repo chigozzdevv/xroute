@@ -24,8 +24,8 @@ import {
 import { createHttpStatusProvider } from "./status/index.mjs";
 import { createWallet } from "./wallet/index.mjs";
 import {
-  DEFAULT_XROUTE_API_BASE_URL,
   assertNoBaseUrlOverride,
+  resolveDefaultXRouteApiBaseUrl,
 } from "./internal/constants.mjs";
 import {
   createConfiguredXRouteClient,
@@ -63,8 +63,9 @@ function createHostedXRouteClient({
   const normalizedDeploymentProfile = normalizeDeploymentProfile(
     environment ?? deploymentProfile,
   );
+  const apiBaseUrl = resolveDefaultXRouteApiBaseUrl();
   const quoteProvider = createHttpQuoteProvider({
-    endpoint: `${DEFAULT_XROUTE_API_BASE_URL}/quote`,
+    endpoint: `${apiBaseUrl}/quote`,
     apiKey: normalizedApiKey,
     fetchImpl,
     headers: {
@@ -72,12 +73,12 @@ function createHostedXRouteClient({
     },
   });
   const relayer = createHttpExecutorRelayerClient({
-    endpoint: DEFAULT_XROUTE_API_BASE_URL,
+    endpoint: apiBaseUrl,
     apiKey: normalizedApiKey,
     fetchImpl,
   });
   const hostedStatusProvider = createHttpStatusProvider({
-    endpoint: DEFAULT_XROUTE_API_BASE_URL,
+    endpoint: apiBaseUrl,
     apiKey: normalizedApiKey,
     fetchImpl,
   });

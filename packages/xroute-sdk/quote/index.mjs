@@ -11,8 +11,8 @@ import {
   normalizeDeploymentProfile,
 } from "../../xroute-precompile-interfaces/index.mjs";
 import {
-  DEFAULT_XROUTE_API_BASE_URL,
   assertNoBaseUrlOverride,
+  resolveDefaultXRouteApiBaseUrl,
 } from "../internal/constants.mjs";
 import { normalizeQuote } from "./normalize.mjs";
 
@@ -32,8 +32,9 @@ export function createQuote({
       ? undefined
       : assertNonEmptyString("apiKey", apiKey);
   const normalizedDeploymentProfile = normalizeDeploymentProfile(deploymentProfile);
+  const apiBaseUrl = resolveDefaultXRouteApiBaseUrl();
   const quoteProvider = createHttpQuoteProvider({
-    endpoint: `${DEFAULT_XROUTE_API_BASE_URL}/quote`,
+    endpoint: `${apiBaseUrl}/quote`,
     apiKey: normalizedApiKey,
     fetchImpl,
     headers: {

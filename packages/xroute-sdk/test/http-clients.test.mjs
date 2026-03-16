@@ -11,6 +11,7 @@ import {
 } from "../index.mjs";
 import {
   DEFAULT_XROUTE_API_BASE_URL,
+  resolveDefaultXRouteApiBaseUrl,
 } from "../internal/constants.mjs";
 import {
   createHttpExecutorRelayerClient,
@@ -179,6 +180,28 @@ test("hosted createXRouteClient works without apiKey", async () => {
     `${DEFAULT_XROUTE_API_BASE_URL}/intents/0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/status`,
   );
   assert.equal(seen[0][1].headers["x-api-key"], undefined);
+});
+
+test("sdk resolves the local api base url automatically for localhost browsers", () => {
+  assert.equal(
+    resolveDefaultXRouteApiBaseUrl({
+      env: {},
+      location: { hostname: "localhost" },
+    }),
+    "http://127.0.0.1:8788/v1",
+  );
+});
+
+test("sdk resolves the configured server api base url without public client env", () => {
+  assert.equal(
+    resolveDefaultXRouteApiBaseUrl({
+      env: {
+        XROUTE_API_BASE_URL: "http://127.0.0.1:8788/v1/",
+      },
+      location: undefined,
+    }),
+    "http://127.0.0.1:8788/v1",
+  );
 });
 
 test("getBrowserWalletAvailability inspects injected browser wallets", () => {
