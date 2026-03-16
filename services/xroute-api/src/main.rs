@@ -25,13 +25,19 @@ impl ApiApp {
     }
 
     async fn handle(&self, request: Request<Body>) -> Response<Body> {
+        if request.method() == Method::OPTIONS {
+            return cors_preflight_response();
+        }
+
         let normalized_path = normalize_public_path(request.uri().path());
 
-        match (request.method(), normalized_path.as_str()) {
+        let response = match (request.method(), normalized_path.as_str()) {
             (&Method::GET, "/healthz") => self.handle_health().await,
             (_, "/quote") => self.quote.handle(request).await,
             _ => self.relayer.handle(request).await,
-        }
+        };
+
+        with_cors(response)
     }
 
     async fn handle_health(&self) -> Response<Body> {
@@ -192,4 +198,28 @@ async fn read_json_response(response: Response<Body>) -> Result<Value, String> {
     }
 
     Ok(parsed)
+}
+
+fn cors_preflight_response() -> Response<Body> {
+    with_cors(
+        Response::builder()
+            .status(StatusCode::NO_CONTENT)
+            .body(Body::empty())
+            .expect("cors preflight response should be valid"),
+    )
+}
+
+fn with_cors(mut response: Response<Body>) -> Response<Body> {
+    let headers = response.headers_mut();
+    headers.insert("access-control-allow-origin", "*".parse().unwrap());
+    headers.insert(
+        "access-control-allow-methods",
+        "GET,POST,PUT,PATCH,DELETE,OPTIONS".parse().unwrap(),
+    );
+    headers.insert(
+        "access-control-allow-headers",
+        "content-type,x-api-key,x-xroute-deployment-profile".parse().unwrap(),
+    );
+    headers.insert("access-control-max-age", "86400".parse().unwrap());
+    response
 }

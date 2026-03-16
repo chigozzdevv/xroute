@@ -31,50 +31,8 @@ export type Option<T extends string = string> = {
   disabled?: boolean;
 };
 
-const XROUTE_API_PATH_PREFIX = "/v1";
-const XROUTE_BROWSER_PROXY_BASE_PATH = "/api/xroute";
-
-function rewriteXRouteRequestUrl(url: string) {
-  try {
-    const parsed = new URL(url, globalThis.location?.origin);
-    if (
-      parsed.pathname !== XROUTE_API_PATH_PREFIX
-      && !parsed.pathname.startsWith(`${XROUTE_API_PATH_PREFIX}/`)
-    ) {
-      return url;
-    }
-
-    const proxiedPath = parsed.pathname.slice(XROUTE_API_PATH_PREFIX.length);
-    return `${XROUTE_BROWSER_PROXY_BASE_PATH}${proxiedPath}${parsed.search}`;
-  } catch {
-    return url;
-  }
-}
-
-async function xrouteBrowserFetch(input: RequestInfo | URL, init?: RequestInit) {
-  if (typeof input === "string") {
-    return fetch(rewriteXRouteRequestUrl(input), init);
-  }
-
-  if (input instanceof URL) {
-    return fetch(rewriteXRouteRequestUrl(input.toString()), init);
-  }
-
-  if (input instanceof Request) {
-    const rewrittenUrl = rewriteXRouteRequestUrl(input.url);
-    if (rewrittenUrl === input.url) {
-      return fetch(input, init);
-    }
-
-    return fetch(new Request(rewrittenUrl, input), init);
-  }
-
-  return fetch(input, init);
-}
-
 export const xrouteClient = createXRouteClient({
   apiKey: process.env.NEXT_PUBLIC_XROUTE_API_KEY?.trim() || undefined,
-  fetchImpl: xrouteBrowserFetch,
 });
 
 const TX_EXPLORER_BASE_URLS = Object.freeze({
