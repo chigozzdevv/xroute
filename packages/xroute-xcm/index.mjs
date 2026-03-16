@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-
 import {
   AccountId,
   Binary,
@@ -11,6 +9,7 @@ import { getDynamicBuilder, getLookupFn } from "@polkadot-api/metadata-builders"
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { bytesToHex, hexToBytes as hexToBytesRaw } from "@noble/hashes/utils.js";
 
+import { DEFAULT_METADATA_HEX } from "./metadata/polkadot-asset-hub.hex.mjs";
 import { getAssetLocation, getParachainId } from "../xroute-chain-registry/index.mjs";
 import {
   DISPATCH_MODES,
@@ -31,10 +30,6 @@ import {
 
 const VERSIONED_LOCATION_TYPE_ID = 164;
 const VERSIONED_XCM_TYPE_ID = 270;
-const DEFAULT_METADATA_HEX = readFileSync(
-  new URL("./metadata/polkadot-asset-hub.hex", import.meta.url),
-  "utf8",
-).trim();
 
 let defaultCodecContext;
 
@@ -824,5 +819,5 @@ function buildJunction(junction) {
 }
 
 function hexToBytes(value) {
-  return Uint8Array.from(Buffer.from(assertHexString("hex", value).slice(2), "hex"));
+  return hexToBytesRaw(assertHexString("hex", value));
 }

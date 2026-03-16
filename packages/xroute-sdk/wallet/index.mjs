@@ -7,7 +7,7 @@ import {
   createEvmWalletAdapter,
   createSubstrateWalletAdapter,
 } from "../wallets/wallet-adapters.mjs";
-import { NATIVE_ASSET_ADDRESS } from "../routers/router-adapters.mjs";
+import { NATIVE_ASSET_ADDRESS } from "../routers/constants.mjs";
 
 const WALLET_TYPES = Object.freeze({
   EVM: "evm",

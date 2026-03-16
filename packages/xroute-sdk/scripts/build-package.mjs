@@ -52,8 +52,36 @@ const textCopies = [
     ],
   },
   {
+    from: resolve(packageRoot, "wallets/wallet-adapters.mjs"),
+    to: resolve(distRoot, "wallets/wallet-adapters.mjs"),
+    replacements: [
+      ["../../xroute-types/index.mjs", "../vendor/xroute-types/index.mjs"],
+      ["../../xroute-xcm/index.mjs", "../vendor/xroute-xcm/index.mjs"],
+    ],
+  },
+  {
+    from: resolve(packageRoot, "routers/constants.mjs"),
+    to: resolve(distRoot, "routers/constants.mjs"),
+    replacements: [],
+  },
+  {
+    from: resolve(packageRoot, "routers/substrate-xcm-adapter.mjs"),
+    to: resolve(distRoot, "routers/substrate-xcm-adapter.mjs"),
+    replacements: [
+      ["../../xroute-types/index.mjs", "../vendor/xroute-types/index.mjs"],
+      ["../../xroute-xcm/index.mjs", "../vendor/xroute-xcm/index.mjs"],
+    ],
+  },
+  {
     from: resolve(packageRoot, "status/index.mjs"),
     to: resolve(distRoot, "status/index.mjs"),
+    replacements: [
+      ["../../xroute-types/index.mjs", "../vendor/xroute-types/index.mjs"],
+    ],
+  },
+  {
+    from: resolve(packageRoot, "indexers/status-events.mjs"),
+    to: resolve(distRoot, "indexers/status-events.mjs"),
     replacements: [
       ["../../xroute-types/index.mjs", "../vendor/xroute-types/index.mjs"],
     ],
@@ -86,14 +114,6 @@ const textCopies = [
       ["../../xroute-chain-registry/index.mjs", "../vendor/xroute-chain-registry/index.mjs"],
       ["../../xroute-types/index.mjs", "../vendor/xroute-types/index.mjs"],
       ["../../xroute-precompile-interfaces/index.mjs", "../vendor/xroute-precompile-interfaces/index.mjs"],
-    ],
-  },
-  {
-    from: resolve(packageRoot, "wallets/wallet-adapters.mjs"),
-    to: resolve(distRoot, "wallets/wallet-adapters.mjs"),
-    replacements: [
-      ["../../xroute-types/index.mjs", "../vendor/xroute-types/index.mjs"],
-      ["../../xroute-xcm/index.mjs", "../vendor/xroute-xcm/index.mjs"],
     ],
   },
   {
@@ -156,6 +176,11 @@ const textCopies = [
       ["../xroute-precompile-interfaces/index.mjs", "../xroute-precompile-interfaces/index.mjs"],
     ],
   },
+  {
+    from: resolve(workspaceRoot, "packages/xroute-xcm/metadata/polkadot-asset-hub.hex.mjs"),
+    to: resolve(distRoot, "vendor/xroute-xcm/metadata/polkadot-asset-hub.hex.mjs"),
+    replacements: [],
+  },
 ];
 
 for (const file of textCopies) {
@@ -168,15 +193,7 @@ for (const file of textCopies) {
   writeFileSync(file.to, contents);
 }
 
-const binaryCopies = [
-  {
-    from: resolve(
-      workspaceRoot,
-      "packages/xroute-xcm/metadata/polkadot-asset-hub.hex",
-    ),
-    to: resolve(distRoot, "vendor/xroute-xcm/metadata/polkadot-asset-hub.hex"),
-  },
-];
+const binaryCopies = [];
 
 for (const file of binaryCopies) {
   mkdirSync(dirname(file.to), { recursive: true });

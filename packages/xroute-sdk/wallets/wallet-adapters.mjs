@@ -12,10 +12,8 @@ import {
   assertNonEmptyString,
 } from "../../xroute-types/index.mjs";
 import { computeExecutionHash } from "../../xroute-xcm/index.mjs";
-import {
-  createSubstrateXcmAdapter,
-  NATIVE_ASSET_ADDRESS as ROUTER_NATIVE_ASSET_ADDRESS,
-} from "../routers/router-adapters.mjs";
+import { NATIVE_ASSET_ADDRESS as ROUTER_NATIVE_ASSET_ADDRESS } from "../routers/constants.mjs";
+import { createSubstrateXcmAdapter } from "../routers/substrate-xcm-adapter.mjs";
 
 const EVM_SUBMIT_INTENT_SELECTOR = "0xdf260bc0";
 const EVM_DISPATCH_INTENT_SELECTOR = "0xa65e5b7d";
