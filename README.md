@@ -133,6 +133,8 @@ Services:
 npm run serve:api
 ```
 
+`npm run serve:api` loads `.env`, defaults `XROUTE_WORKSPACE_ROOT` to the repo root, and falls back to `scripts/fetch-live-quote-inputs.mjs` when no live quote input source is set.
+
 ## Deployment Artifacts
 
 Canonical artifact paths are:
@@ -202,19 +204,23 @@ The quote path is fail-closed. `XROUTE_LIVE_QUOTE_INPUTS_FAIL_OPEN=true` is reje
 ## Example Service Run
 
 ```bash
-XROUTE_WORKSPACE_ROOT="$(pwd)" \
-XROUTE_LIVE_QUOTE_INPUTS_COMMAND="node $(pwd)/scripts/fetch-live-quote-inputs.mjs" \
-XROUTE_RELAYER_AUTH_TOKEN="<RELAYER_TOKEN>" \
-XROUTE_HUB_RPC_URL="<POLKADOT_HUB_RPC>" \
-XROUTE_HUB_PRIVATE_KEY="<HUB_OPERATOR_KEY>" \
-XROUTE_MOONBEAM_RPC_URL="<MOONBEAM_RPC>" \
-XROUTE_MOONBEAM_PRIVATE_KEY="<MOONBEAM_OPERATOR_KEY>" \
-XROUTE_HYDRATION_RPC_URL="<HYDRATION_RPC>" \
-XROUTE_HYDRATION_PRIVATE_KEY="<HYDRATION_OPERATOR_KEY>" \
-XROUTE_BIFROST_RPC_URL="<BIFROST_RPC>" \
-XROUTE_BIFROST_PRIVATE_KEY="<BIFROST_OPERATOR_KEY>" \
-cargo run -q -p xroute-api --
+npm run serve:api
 ```
+
+If you want the raw process without `.env` loading, use:
+
+```bash
+npm run serve:api:raw
+```
+
+## Render
+
+`render.yaml` is included for the unified API. Render should use:
+
+- build command: `npm install && cargo build --release -p xroute-api`
+- start command: `./target/release/xroute-api`
+
+Render injects `PORT`; `xroute-api` now falls back to that automatically and binds `0.0.0.0` when `PORT` is present.
 
 ## Operational Notes
 

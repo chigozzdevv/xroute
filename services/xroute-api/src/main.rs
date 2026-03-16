@@ -131,6 +131,7 @@ fn bind_addr() -> Result<SocketAddr, String> {
     let host = display_host();
     let port = env::var("XROUTE_API_PORT")
         .ok()
+        .or_else(|| env::var("PORT").ok())
         .as_deref()
         .map(|value| parse_port(value, "XROUTE_API_PORT"))
         .transpose()?
@@ -144,6 +145,7 @@ fn display_host() -> String {
     env::var("XROUTE_API_HOST")
         .ok()
         .filter(|value| !value.trim().is_empty())
+        .or_else(|| env::var("PORT").ok().map(|_| "0.0.0.0".to_owned()))
         .unwrap_or_else(|| "127.0.0.1".to_owned())
 }
 
