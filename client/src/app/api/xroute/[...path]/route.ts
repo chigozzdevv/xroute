@@ -1,12 +1,7 @@
-const DEFAULT_XROUTE_API_SERVER_BASE_URL = "https://xroute-api.onrender.com/v1";
-
-export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
-
-function normalizeBaseUrl(value: string | undefined) {
-  const normalized = value?.trim();
+function getConfiguredBaseUrl() {
+  const normalized = process.env.XROUTE_API_SERVER_BASE_URL?.trim();
   if (!normalized) {
-    return DEFAULT_XROUTE_API_SERVER_BASE_URL;
+    return null;
   }
 
   return normalized.replace(/\/+$/, "");
@@ -30,9 +25,19 @@ async function proxyRequest(
   request: Request,
   { params }: { params: Promise<{ path: string[] }> },
 ) {
+  const baseUrl = getConfiguredBaseUrl();
+  if (!baseUrl) {
+    return Response.json(
+      {
+        error: "XROUTE_API_SERVER_BASE_URL is not configured.",
+      },
+      { status: 500 },
+    );
+  }
+
   const { path = [] } = await params;
   const upstreamUrl = buildUpstreamUrl(
-    normalizeBaseUrl(process.env.XROUTE_API_SERVER_BASE_URL),
+    baseUrl,
     path,
     new URL(request.url).search,
   );

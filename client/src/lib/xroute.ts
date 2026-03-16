@@ -31,13 +31,24 @@ export type Option<T extends string = string> = {
   disabled?: boolean;
 };
 
-const XROUTE_HOSTED_API_BASE_URL = "https://xroute-api.onrender.com/v1";
+const XROUTE_API_PATH_PREFIX = "/v1";
 const XROUTE_BROWSER_PROXY_BASE_PATH = "/api/xroute";
 
 function rewriteXRouteRequestUrl(url: string) {
-  return url.startsWith(XROUTE_HOSTED_API_BASE_URL)
-    ? `${XROUTE_BROWSER_PROXY_BASE_PATH}${url.slice(XROUTE_HOSTED_API_BASE_URL.length)}`
-    : url;
+  try {
+    const parsed = new URL(url, globalThis.location?.origin);
+    if (
+      parsed.pathname !== XROUTE_API_PATH_PREFIX
+      && !parsed.pathname.startsWith(`${XROUTE_API_PATH_PREFIX}/`)
+    ) {
+      return url;
+    }
+
+    const proxiedPath = parsed.pathname.slice(XROUTE_API_PATH_PREFIX.length);
+    return `${XROUTE_BROWSER_PROXY_BASE_PATH}${proxiedPath}${parsed.search}`;
+  } catch {
+    return url;
+  }
 }
 
 async function xrouteBrowserFetch(input: RequestInfo | URL, init?: RequestInit) {
