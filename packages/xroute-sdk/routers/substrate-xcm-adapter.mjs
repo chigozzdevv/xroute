@@ -26,6 +26,16 @@ import {
 } from "../indexers/status-events.mjs";
 
 const textEncoder = new TextEncoder();
+const SUBSTRATE_FEE_ASSET_METADATA = Object.freeze({
+  hydration: Object.freeze({
+    asset: "HDX",
+    decimals: 12,
+  }),
+  bifrost: Object.freeze({
+    asset: "BNC",
+    decimals: 12,
+  }),
+});
 
 export function createSubstrateXcmAdapter({
   chainKey,
@@ -142,33 +152,7 @@ export function createSubstrateXcmAdapter({
     const normalizedIntentId = assertBytes32Hex("intentId", intentId);
     const submission = requireSubstrateSubmission(normalizedIntentId);
     assertSubmissionLifecycleStatus(submission, normalizedIntentId, ["submitted"]);
-
-    const normalizedRequest = {
-      mode: normalizeDispatchMode(request?.mode),
-      destination: assertHexString("request.destination", request?.destination ?? "0x"),
-      message: assertHexString("request.message", request?.message),
-    };
-    const unsafeApi = await getUnsafeApi();
-    const xcmApi = resolveXcmTransactionApi(unsafeApi, xcmPalletNames);
-    const message = codecContext.decodeVersionedXcm(normalizedRequest.message);
-    let tx;
-
-    if (normalizedRequest.mode === 0) {
-      const maxWeight = await queryXcmWeight({
-        unsafeApi,
-        message,
-        runtimeApis: xcmWeightRuntimeApis,
-      });
-      tx = xcmApi.execute({
-        message,
-        max_weight: maxWeight,
-      });
-    } else {
-      tx = xcmApi.send({
-        dest: codecContext.decodeVersionedLocation(normalizedRequest.destination),
-        message,
-      });
-    }
+    const { normalizedRequest, tx } = await prepareDispatchTransaction(request);
 
     const txHash = normalizeSubmittedTxHash(await tx.signAndSubmit(signerContext.signer));
     submission.dispatchRequest = normalizedRequest;
@@ -354,8 +338,40 @@ export function createSubstrateXcmAdapter({
     return submission.refundableAmount - submission.refundAmount;
   }
 
+  async function estimateSubmissionCost({ owner, quote, request, dispatchRequest }) {
+    assertSubstrateOwnerMatches(owner, signerContext.accountIdHex);
+    const normalizedRequest = normalizeSubstrateSubmissionRequest({
+      ...request,
+      platformFee: quote?.fees?.platformFee?.amount ?? request?.platformFee ?? 0n,
+    });
+    const normalizedDispatchRequest = normalizeDispatchRequest(dispatchRequest);
+    const { tx } = await prepareDispatchTransaction(normalizedDispatchRequest);
+    const gasFee = toBigInt(
+      await tx.getEstimatedFees(signerContext.address),
+      "dispatch.getEstimatedFees",
+    );
+    const feeAsset = resolveSubstrateFeeAssetMetadata(normalizedChainKey);
+
+    return Object.freeze({
+      chainKey: normalizedChainKey,
+      lockedAmount: sumLockedAmount({
+        amount: normalizedRequest.amount,
+        xcmFee: normalizedRequest.xcmFee,
+        destinationFee: normalizedRequest.destinationFee,
+        platformFee: normalizedRequest.platformFee,
+      }),
+      gasFee,
+      gasAsset: feeAsset.asset,
+      gasAssetDecimals: feeAsset.decimals,
+      gasLimit: null,
+      gasPrice: null,
+      value: 0n,
+    });
+  }
+
   return {
     submitIntent,
+    estimateSubmissionCost,
     dispatchIntent,
     finalizeSuccess,
     finalizeFailure,
@@ -402,6 +418,40 @@ export function createSubstrateXcmAdapter({
     }
 
     throw new Error("refundAsset is required when the substrate submission has no tracked source asset");
+  }
+
+  async function prepareDispatchTransaction(request) {
+    const normalizedRequest = normalizeDispatchRequest(request);
+    const unsafeApi = await getUnsafeApi();
+    const xcmApi = resolveXcmTransactionApi(unsafeApi, xcmPalletNames);
+    const message = codecContext.decodeVersionedXcm(normalizedRequest.message);
+    let tx;
+
+    if (normalizedRequest.mode === 0) {
+      const maxWeight = await queryXcmWeight({
+        unsafeApi,
+        message,
+        runtimeApis: xcmWeightRuntimeApis,
+      });
+      tx = xcmApi.execute({
+        message,
+        max_weight: maxWeight,
+      });
+    } else {
+      tx = xcmApi.send({
+        dest: codecContext.decodeVersionedLocation(normalizedRequest.destination),
+        message,
+      });
+    }
+
+    if (typeof tx?.signAndSubmit !== "function") {
+      throw new Error("resolved substrate XCM transaction is missing signAndSubmit()");
+    }
+
+    return {
+      normalizedRequest,
+      tx,
+    };
   }
 }
 
@@ -476,6 +526,34 @@ function sumLockedAmount({ amount, xcmFee, destinationFee, platformFee }) {
     toBigInt(destinationFee ?? 0n, "destinationFee") +
     toBigInt(platformFee ?? 0n, "platformFee")
   );
+}
+
+function normalizeSubstrateSubmissionRequest(request) {
+  if (!request || typeof request !== "object") {
+    throw new Error("request is required");
+  }
+
+  return Object.freeze({
+    amount: toBigInt(request.amount ?? 0n, "request.amount"),
+    xcmFee: toBigInt(request.xcmFee ?? 0n, "request.xcmFee"),
+    destinationFee: toBigInt(request.destinationFee ?? 0n, "request.destinationFee"),
+    platformFee: toBigInt(request.platformFee ?? 0n, "request.platformFee"),
+  });
+}
+
+function normalizeDispatchRequest(request) {
+  return Object.freeze({
+    mode: normalizeDispatchMode(request?.mode),
+    destination: assertHexString("request.destination", request?.destination ?? "0x"),
+    message: assertHexString("request.message", request?.message),
+  });
+}
+
+function resolveSubstrateFeeAssetMetadata(chainKey) {
+  return SUBSTRATE_FEE_ASSET_METADATA[chainKey] ?? Object.freeze({
+    asset: "native",
+    decimals: 12,
+  });
 }
 
 function resolveXcmTransactionApi(unsafeApi, palletNames) {

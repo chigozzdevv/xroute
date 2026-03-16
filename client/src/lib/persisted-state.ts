@@ -3,6 +3,7 @@
 import { useCallback, useSyncExternalStore, useState } from "react";
 
 const stateByKey = new Map<string, unknown>();
+const initialSnapshotByKey = new Map<string, unknown>();
 const listenersByKey = new Map<string, Set<() => void>>();
 
 export function usePersistedState<T>(
@@ -66,12 +67,12 @@ function getOrCreateInitialState<T>(
   storageKey: string,
   createInitialState: () => T,
 ): T {
-  if (stateByKey.has(storageKey)) {
-    return stateByKey.get(storageKey) as T;
+  if (initialSnapshotByKey.has(storageKey)) {
+    return initialSnapshotByKey.get(storageKey) as T;
   }
 
   const initialState = createInitialState();
-  stateByKey.set(storageKey, initialState);
+  initialSnapshotByKey.set(storageKey, initialState);
   return initialState;
 }
 

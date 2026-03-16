@@ -87,6 +87,8 @@ export function createConfiguredXRouteClient({
       intent: prepared.intent,
       quote: prepared.quote,
       request: prepared.request,
+      envelope: prepared.envelope,
+      dispatchRequest: buildDispatchRequest(prepared.envelope),
     });
 
     return Object.freeze({

@@ -572,6 +572,112 @@ test("substrate XCM adapter submits hydration intents and dispatches through Pol
   );
 });
 
+test("substrate XCM adapter can estimate hydration source costs before dispatch", async () => {
+  const runtimeCalls = [];
+  const adapter = createSubstrateXcmAdapter({
+    chainKey: "hydration",
+    rpcUrl: "wss://hydration.example.org",
+    privateKey: `0x${"11".repeat(32)}`,
+    codecContext: {
+      decodeVersionedXcm(messageHex) {
+        assert.equal(messageHex, "0xfeedface");
+        return { type: "V5", program: "hydration-xcm" };
+      },
+      decodeVersionedLocation() {
+        throw new Error("decodeVersionedLocation should not be used for execute mode");
+      },
+    },
+    signerFactory() {
+      return {
+        address: recipientAccount,
+        accountIdHex: `0x${"22".repeat(32)}`,
+        signer: { role: "test-signer" },
+      };
+    },
+    clientFactory() {
+      return {
+        getUnsafeApi() {
+          return {
+            apis: {
+              XcmPaymentApi: {
+                async query_xcm_weight(message) {
+                  runtimeCalls.push(["query_xcm_weight", message]);
+                  return {
+                    success: true,
+                    value: {
+                      ref_time: 555n,
+                      proof_size: 777n,
+                    },
+                  };
+                },
+              },
+            },
+            tx: {
+              PolkadotXcm: {
+                execute({ message, max_weight }) {
+                  runtimeCalls.push(["execute", message, max_weight]);
+                  return {
+                    async getEstimatedFees(from) {
+                      runtimeCalls.push(["getEstimatedFees", from]);
+                      return 123456789n;
+                    },
+                    async signAndSubmit() {
+                      throw new Error("signAndSubmit should not be called during estimation");
+                    },
+                  };
+                },
+                send() {
+                  throw new Error("send should not be used for execute mode");
+                },
+              },
+            },
+          };
+        },
+      };
+    },
+  });
+
+  const estimate = await adapter.estimateSubmissionCost({
+    owner: `0x${"22".repeat(32)}`,
+    quote: {
+      fees: {
+        platformFee: { asset: "DOT", amount: 180000n },
+      },
+    },
+    request: {
+      amount: 180000000n,
+      xcmFee: 260000000n,
+      destinationFee: 0n,
+    },
+    dispatchRequest: buildDispatchRequest(
+      createDispatchEnvelope({
+        mode: "execute",
+        message: "0xfeedface",
+      }),
+    ),
+  });
+
+  assert.deepEqual(estimate, {
+    chainKey: "hydration",
+    lockedAmount: 440180000n,
+    gasFee: 123456789n,
+    gasAsset: "HDX",
+    gasAssetDecimals: 12,
+    gasLimit: null,
+    gasPrice: null,
+    value: 0n,
+  });
+  assert.deepEqual(runtimeCalls, [
+    ["query_xcm_weight", { type: "V5", program: "hydration-xcm" }],
+    [
+      "execute",
+      { type: "V5", program: "hydration-xcm" },
+      { ref_time: 555n, proof_size: 777n },
+    ],
+    ["getEstimatedFees", recipientAccount],
+  ]);
+});
+
 test("substrate XCM adapter finalizes failures and refunds hydration intents", async () => {
   const statusIndexer = new InMemoryStatusIndexer();
   const adapter = createSubstrateXcmAdapter({

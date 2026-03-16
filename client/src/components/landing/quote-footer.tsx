@@ -129,16 +129,16 @@ export function QuoteFooter({
               </span>
             </div>
           ))}
-          <div className="flex items-center justify-between gap-4">
-            <span className="text-muted">Source gas (est.)</span>
-            <span className="font-bold tracking-[-0.02em] text-ink">
-              {sourceCosts
-                ? `${compactDecimal(
-                    formatSourceCostAmount(sourceCosts.gasFee),
-                  )} ${sourceCosts.gasFee.asset}`
-                : "Connect source wallet"}
-            </span>
-          </div>
+          {sourceCosts ? (
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-muted">Source gas (est.)</span>
+              <span className="font-bold tracking-[-0.02em] text-ink">
+                {`${compactDecimal(
+                  formatSourceCostAmount(sourceCosts.gasFee),
+                )} ${sourceCosts.gasFee.asset}`}
+              </span>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

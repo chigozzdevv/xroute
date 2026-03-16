@@ -1043,7 +1043,12 @@ test("hosted createXRouteClient quote includes source costs when a wallet is con
       async dispatchIntent() {
         throw new Error("not used");
       },
-      async estimateSubmissionCost() {
+      async estimateSubmissionCost(input) {
+        assert.deepEqual(input.dispatchRequest, {
+          mode: 0,
+          destination: "0x",
+          message: "0x1234",
+        });
         return {
           chainKey: "polkadot-hub",
           lockedAmount: 500n,

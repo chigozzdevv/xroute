@@ -603,6 +603,11 @@ export function createSubstrateWalletAdapter({
   }
 
   const routerAdapter = {
+    async estimateSubmissionCost(input) {
+      const adapter = await getSubstrateAdapter();
+      return adapter.estimateSubmissionCost(input);
+    },
+
     async submitIntent(input) {
       const adapter = await getSubstrateAdapter();
       return adapter.submitIntent(input);
