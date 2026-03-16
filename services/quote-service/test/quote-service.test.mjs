@@ -452,6 +452,147 @@ test("quote service applies live quote inputs from command overrides", async () 
   }
 });
 
+test("quote service serves the last live snapshot when command refresh fails briefly", async () => {
+  const fixture = createLiveInputsFixture({
+    generatedAt: "2026-03-11T12:00:00Z",
+    transferEdges: [
+      {
+        sourceChain: "polkadot-hub",
+        destinationChain: "hydration",
+        asset: "DOT",
+        transportFee: "999",
+        buyExecutionFee: "444",
+      },
+    ],
+    swapRoutes: [],
+  });
+
+  const service = await spawnRustService({
+    packageName: "quote-service",
+    cwd: workspaceRoot,
+    env: {
+      XROUTE_QUOTE_PORT: "0",
+      XROUTE_WORKSPACE_ROOT: workspaceRoot,
+      XROUTE_LIVE_QUOTE_INPUTS_COMMAND: `cat '${fixture.liveInputsPath}'`,
+      XROUTE_LIVE_QUOTE_INPUTS_REFRESH_MS: "10",
+      XROUTE_LIVE_QUOTE_INPUTS_MAX_STALE_MS: "1000",
+    },
+  });
+
+  try {
+    const firstResponse = await fetch(`${service.url}/quote`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        intent: {
+          sourceChain: "polkadot-hub",
+          destinationChain: "hydration",
+          refundAddress,
+          deadline: 1_773_185_200,
+          action: {
+            type: "transfer",
+            params: {
+              asset: "DOT",
+              amount: "10",
+              recipient: "5Frecipient",
+            },
+          },
+        },
+      }),
+    });
+
+    assert.equal(firstResponse.status, 200);
+    const firstPayload = await firstResponse.json();
+    assert.equal(firstPayload.quote.fees.xcmFee.amount, "999");
+    assert.equal(firstPayload.quoteInputs.status, "live");
+
+    rmSync(fixture.liveInputsPath, { force: true });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const secondResponse = await fetch(`${service.url}/quote`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        intent: {
+          sourceChain: "polkadot-hub",
+          destinationChain: "hydration",
+          refundAddress,
+          deadline: 1_773_185_200,
+          action: {
+            type: "transfer",
+            params: {
+              asset: "DOT",
+              amount: "10",
+              recipient: "5Frecipient",
+            },
+          },
+        },
+      }),
+    });
+
+    assert.equal(secondResponse.status, 200);
+    const secondPayload = await secondResponse.json();
+    assert.equal(secondPayload.quote.fees.xcmFee.amount, "999");
+    assert.equal(secondPayload.quoteInputs.status, "live-with-last-error");
+    assert.match(secondPayload.quoteInputs.lastError, /live quote inputs command exited with status/i);
+    assert.equal(secondPayload.quoteInputs.usingStaticFallback, false);
+  } finally {
+    await service.close();
+    fixture.cleanup();
+  }
+});
+
+test("quote service truncates live quote command stderr in 503 responses", async () => {
+  const service = await spawnRustService({
+    packageName: "quote-service",
+    cwd: workspaceRoot,
+    env: {
+      XROUTE_QUOTE_PORT: "0",
+      XROUTE_WORKSPACE_ROOT: workspaceRoot,
+      XROUTE_LIVE_QUOTE_INPUTS_COMMAND:
+        "node -e 'console.error(\"state_getMetadata failed with status 403 on https://hk.p.bifrost-rpc.liebi.com \" + \"x\".repeat(600)); process.exit(1)'",
+    },
+  });
+
+  try {
+    const response = await fetch(`${service.url}/quote`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        intent: {
+          sourceChain: "polkadot-hub",
+          destinationChain: "hydration",
+          refundAddress,
+          deadline: 1_773_185_200,
+          action: {
+            type: "transfer",
+            params: {
+              asset: "DOT",
+              amount: "10",
+              recipient: "5Frecipient",
+            },
+          },
+        },
+      }),
+    });
+
+    assert.equal(response.status, 503);
+    const payload = await response.json();
+    assert.match(payload.error, /live quote inputs command exited with status/i);
+    assert.match(payload.error, /state_getMetadata failed with status 403 on https:\/\/hk\.p\.bifrost-rpc\.liebi\.com/i);
+    assert.equal(payload.error.includes("\n"), false);
+    assert.ok(payload.error.length < 420);
+  } finally {
+    await service.close();
+  }
+});
+
 test("quote service refuses to start on mainnet without live quote inputs", async () => {
   await assert.rejects(
     () =>

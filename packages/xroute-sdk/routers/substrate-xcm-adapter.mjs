@@ -13,6 +13,7 @@ import {
   assertNonEmptyString,
   toBigInt,
 } from "../../xroute-types/index.mjs";
+import { formatUnits } from "../chains/index.mjs";
 import {
   getDefaultXcmCodecContext,
 } from "../../xroute-xcm/index.mjs";
@@ -27,6 +28,10 @@ import {
 
 const textEncoder = new TextEncoder();
 const SUBSTRATE_FEE_ASSET_METADATA = Object.freeze({
+  "polkadot-hub": Object.freeze({
+    asset: "DOT",
+    decimals: 10,
+  }),
   hydration: Object.freeze({
     asset: "HDX",
     decimals: 12,
@@ -153,8 +158,21 @@ export function createSubstrateXcmAdapter({
     const submission = requireSubstrateSubmission(normalizedIntentId);
     assertSubmissionLifecycleStatus(submission, normalizedIntentId, ["submitted"]);
     const { normalizedRequest, tx } = await prepareDispatchTransaction(request);
+    await ensureSufficientDispatchBalance({
+      submission,
+      tx,
+    });
 
-    const txHash = normalizeSubmittedTxHash(await tx.signAndSubmit(signerContext.signer));
+    let signedResult;
+    try {
+      signedResult = await tx.signAndSubmit(signerContext.signer);
+    } catch (error) {
+      throw normalizeSubstrateDispatchError(error, {
+        chainKey: normalizedChainKey,
+        signerAddress: signerContext.address,
+      });
+    }
+    const txHash = normalizeSubmittedTxHash(signedResult);
     submission.dispatchRequest = normalizedRequest;
     submission.dispatchTxHash = txHash;
     submission.lifecycleStatus = "dispatched";
@@ -453,6 +471,48 @@ export function createSubstrateXcmAdapter({
       tx,
     };
   }
+
+  async function ensureSufficientDispatchBalance({ submission, tx }) {
+    const unsafeApi = await getUnsafeApi();
+    const spendableNativeBalance = await readSpendableNativeBalance({
+      unsafeApi,
+      address: signerContext.address,
+    });
+    if (spendableNativeBalance === null) {
+      return;
+    }
+
+    const gasFee = toBigInt(
+      await tx.getEstimatedFees(signerContext.address),
+      "dispatch.getEstimatedFees",
+    );
+    const feeAsset = resolveSubstrateFeeAssetMetadata(normalizedChainKey);
+    const submissionAsset = normalizeAssetSymbol(submission.refundAsset);
+    const nativeAsset = normalizeAssetSymbol(feeAsset.asset);
+    const requiredNativeBalance =
+      submissionAsset !== null && submissionAsset === nativeAsset
+        ? submission.lockedAmount + gasFee
+        : gasFee;
+
+    if (spendableNativeBalance >= requiredNativeBalance) {
+      return;
+    }
+
+    throw createInsufficientSubstrateBalanceError({
+      chainKey: normalizedChainKey,
+      accountAddress: signerContext.address,
+      asset: feeAsset.asset,
+      decimals: feeAsset.decimals,
+      spendableBalance: spendableNativeBalance,
+      requiredBalance: requiredNativeBalance,
+      gasFee,
+      lockedAmount:
+        submissionAsset !== null && submissionAsset === nativeAsset
+          ? submission.lockedAmount
+          : 0n,
+      includesLockedAmount: submissionAsset !== null && submissionAsset === nativeAsset,
+    });
+  }
 }
 
 export function createSr25519SignerContext({ privateKey, ownerAddress } = {}) {
@@ -636,4 +696,177 @@ function normalizeDispatchMode(mode) {
   }
 
   return assertIncluded("request.mode", mode, [0, 1]);
+}
+
+async function readSpendableNativeBalance({ unsafeApi, address }) {
+  const getAccount =
+    unsafeApi?.query?.System?.Account?.getValue;
+  if (typeof getAccount !== "function") {
+    return null;
+  }
+
+  const account = await getAccount(assertNonEmptyString("address", address));
+  const free = toBigInt(resolveBalanceField(account, ["data", "free"]) ?? 0n, "account.data.free");
+  const frozen = resolveFrozenBalance(account);
+  const existentialDeposit = await readExistentialDeposit(unsafeApi);
+  const preservedBalance = frozen > existentialDeposit ? frozen : existentialDeposit;
+  return free > preservedBalance ? free - preservedBalance : 0n;
+}
+
+async function readExistentialDeposit(unsafeApi) {
+  const constant = unsafeApi?.constants?.Balances?.ExistentialDeposit;
+  if (typeof constant !== "function") {
+    return 0n;
+  }
+
+  return toBigInt(await constant(), "Balances.ExistentialDeposit");
+}
+
+function resolveBalanceField(account, path) {
+  let current = account;
+  for (const key of path) {
+    if (!current || typeof current !== "object" || !(key in current)) {
+      return null;
+    }
+    current = current[key];
+  }
+
+  return current ?? null;
+}
+
+function resolveFrozenBalance(account) {
+  const candidates = [
+    resolveBalanceField(account, ["data", "frozen"]),
+    resolveBalanceField(account, ["data", "misc_frozen"]),
+    resolveBalanceField(account, ["data", "miscFrozen"]),
+    resolveBalanceField(account, ["data", "fee_frozen"]),
+    resolveBalanceField(account, ["data", "feeFrozen"]),
+  ].filter((value) => value !== null && value !== undefined);
+
+  return candidates.reduce((max, candidate) => {
+    const amount = toBigInt(candidate, "account.data.frozen");
+    return amount > max ? amount : max;
+  }, 0n);
+}
+
+function createInsufficientSubstrateBalanceError({
+  chainKey,
+  accountAddress,
+  asset,
+  decimals,
+  spendableBalance,
+  requiredBalance,
+  gasFee,
+  lockedAmount,
+  includesLockedAmount,
+}) {
+  const chainLabel = formatSubstrateChainLabel(chainKey);
+  const assetLabel = assertNonEmptyString("asset", asset);
+  const formattedSpendable = formatUnits(spendableBalance, decimals, {
+    trimTrailingZeros: true,
+  });
+  const formattedRequired = formatUnits(requiredBalance, decimals, {
+    trimTrailingZeros: true,
+  });
+  const formattedFee = formatUnits(gasFee, decimals, {
+    trimTrailingZeros: true,
+  });
+  const formattedLocked = includesLockedAmount
+    ? formatUnits(lockedAmount, decimals, {
+        trimTrailingZeros: true,
+      })
+    : null;
+  const signerLabel =
+    typeof accountAddress === "string" && accountAddress.trim() !== ""
+      ? ` (${accountAddress})`
+      : "";
+
+  if (includesLockedAmount && formattedLocked !== null) {
+    return new Error(
+      `Insufficient spendable ${assetLabel} on ${chainLabel}${signerLabel}. Need ${formattedRequired} ${assetLabel} total (${formattedLocked} locked amount + ${formattedFee} estimated source fee), but only ${formattedSpendable} ${assetLabel} is spendable.`,
+    );
+  }
+
+  return new Error(
+    `Insufficient spendable ${assetLabel} on ${chainLabel}${signerLabel} to pay the source-chain fee. Need ${formattedRequired} ${assetLabel}, but only ${formattedSpendable} ${assetLabel} is spendable.`,
+  );
+}
+
+function normalizeSubstrateDispatchError(error, { chainKey, signerAddress }) {
+  const validityError = extractSubstrateValidityError(error);
+  if (validityError?.category === "invalid" && validityError.reason === "payment") {
+    const chainLabel = formatSubstrateChainLabel(chainKey);
+    const signerLabel =
+      typeof signerAddress === "string" && signerAddress.trim() !== ""
+        ? ` for ${signerAddress}`
+        : "";
+    const wrapped = new Error(
+      `${chainLabel} rejected the transaction because the connected Substrate account${signerLabel} cannot pay the source-chain fee (Invalid.Payment). Make sure this same Substrate account has enough spendable native balance.`,
+    );
+    wrapped.cause = error;
+    return wrapped;
+  }
+
+  if (error instanceof Error) {
+    return error;
+  }
+
+  const wrapped = new Error(
+    `Substrate transaction failed on ${formatSubstrateChainLabel(chainKey)}: ${serializeSubstrateError(error)}`,
+  );
+  wrapped.cause = error;
+  return wrapped;
+}
+
+function extractSubstrateValidityError(error) {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+
+  const topType = normalizeEnumType(error.type);
+  const nestedType = normalizeEnumType(error.value?.type);
+  if (topType === "invalid" && nestedType) {
+    return {
+      category: topType,
+      reason: nestedType,
+    };
+  }
+
+  return null;
+}
+
+function normalizeEnumType(value) {
+  return typeof value === "string" && value.trim() !== ""
+    ? value.trim().toLowerCase()
+    : null;
+}
+
+function formatSubstrateChainLabel(chainKey) {
+  switch (chainKey) {
+    case "polkadot-hub":
+      return "Polkadot Hub";
+    case "moonbeam":
+      return "Moonbeam";
+    default:
+      return String(chainKey ?? "")
+        .trim()
+        .split("-")
+        .filter(Boolean)
+        .map((segment) => segment[0].toUpperCase() + segment.slice(1))
+        .join(" ");
+  }
+}
+
+function serializeSubstrateError(error) {
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+function normalizeAssetSymbol(value) {
+  return typeof value === "string" && value.trim() !== ""
+    ? value.trim().toUpperCase()
+    : null;
 }

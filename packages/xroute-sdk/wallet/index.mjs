@@ -20,6 +20,13 @@ const HOSTED_EVM_WALLET_DEFAULTS = Object.freeze({
   mainnet: Object.freeze({
     "polkadot-hub": Object.freeze({
       routerAddress: "0xaa696e1929b0284f3a0bbc2cab2653cae6c8f7a8",
+      // Polkadot Hub route amounts use 10-decimal DOT in the route registry, while the
+      // EVM execution layer exposes native gas/accounting in 18-decimal units.
+      gasAssetMetadata: Object.freeze({
+        asset: "DOT",
+        decimals: 18,
+        unitDomain: "polkadot-hub-evm-native",
+      }),
       network: Object.freeze({
         chainId: 420420419,
         chainName: "Polkadot Hub",
@@ -43,6 +50,11 @@ const HOSTED_EVM_WALLET_DEFAULTS = Object.freeze({
     }),
     moonbeam: Object.freeze({
       routerAddress: "0x33810619b522ee56dcd0cfba53822fad5ff48fdd",
+      gasAssetMetadata: Object.freeze({
+        asset: "GLMR",
+        decimals: 18,
+        unitDomain: "evm-native",
+      }),
       network: Object.freeze({
         chainId: 1284,
         chainName: "Moonbeam",
@@ -69,6 +81,9 @@ const HOSTED_EVM_WALLET_DEFAULTS = Object.freeze({
 
 const HOSTED_SUBSTRATE_WALLET_DEFAULTS = Object.freeze({
   mainnet: Object.freeze({
+    "polkadot-hub": Object.freeze({
+      rpcUrl: "wss://polkadot-asset-hub-rpc.polkadot.io",
+    }),
     hydration: Object.freeze({
       rpcUrl: "wss://rpc.hydradx.cloud",
     }),
@@ -97,9 +112,47 @@ export function getBrowserWalletAvailability({
   browserWindow = globalThis.window,
 } = {}) {
   return {
-    evm: Boolean(browserWindow?.ethereum),
-    substrate: Object.keys(browserWindow?.injectedWeb3 ?? {}).length > 0,
+    evm: listInjectedEvmProviders({ browserWindow }).length > 0,
+    substrate: listInjectedSubstrateExtensions({ browserWindow }).length > 0,
   };
+}
+
+export function listInjectedEvmProviders({
+  browserWindow = globalThis.window,
+} = {}) {
+  const rootProvider = browserWindow?.ethereum;
+  if (!rootProvider) {
+    return [];
+  }
+
+  const candidates = Array.isArray(rootProvider.providers) && rootProvider.providers.length > 0
+    ? rootProvider.providers
+    : [rootProvider];
+  const uniqueProviders = [];
+  const seen = new Set();
+
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object" || seen.has(candidate)) {
+      continue;
+    }
+    seen.add(candidate);
+    uniqueProviders.push(candidate);
+  }
+
+  return uniqueProviders.map((provider, index) => ({
+    ...describeInjectedEvmProvider(provider, index),
+    provider,
+  }));
+}
+
+export function listInjectedSubstrateExtensions({
+  browserWindow = globalThis.window,
+} = {}) {
+  return Object.entries(browserWindow?.injectedWeb3 ?? {})
+    .filter(([, source]) => Boolean(source) && typeof source?.enable === "function")
+    .map(([extensionName], index) => ({
+      ...describeInjectedSubstrateExtension(extensionName, index),
+    }));
 }
 
 export async function connectInjectedWallet(type, options = {}) {
@@ -125,7 +178,10 @@ function createEvmWallet({
   assetAddresses,
   deploymentProfile = DEFAULT_DEPLOYMENT_PROFILE,
   gasLimit,
+  gasAssetMetadata,
   autoApprove,
+  debugTransactions = false,
+  debugLogger = null,
   receiptPollIntervalMs,
   receiptTimeoutMs,
 } = {}) {
@@ -152,7 +208,10 @@ function createEvmWallet({
       normalizeAssetAddressOverrides(assetAddresses, normalizedChainKey),
     ),
     gasLimit,
+    gasAssetMetadata: gasAssetMetadata ?? defaultConfig?.gasAssetMetadata ?? null,
     autoApprove,
+    debugTransactions,
+    debugLogger,
     receiptPollIntervalMs,
     receiptTimeoutMs,
   });
@@ -203,15 +262,20 @@ function createSubstrateWallet({
 
 async function connectInjectedEvmWallet({
   provider,
+  providerId = null,
   browserWindow = globalThis.window,
   requestAccess = true,
 } = {}) {
-  const resolvedProvider = provider ?? browserWindow?.ethereum;
-  if (!resolvedProvider) {
+  const resolved = resolveInjectedEvmProvider({
+    provider,
+    providerId,
+    browserWindow,
+  });
+  if (!resolved) {
     throw new Error("Install an injected EVM wallet to connect.");
   }
 
-  const accounts = await resolvedProvider.request({
+  const accounts = await resolved.provider.request({
     method: requestAccess ? "eth_requestAccounts" : "eth_accounts",
   });
   const nextAccounts = Array.isArray(accounts) ? accounts : [];
@@ -227,7 +291,9 @@ async function connectInjectedEvmWallet({
   return {
     kind: WALLET_TYPES.EVM,
     account: assertAddress("evmAccount", account).toLowerCase(),
-    provider: resolvedProvider,
+    provider: resolved.provider,
+    providerId: resolved.id,
+    providerLabel: resolved.label,
   };
 }
 
@@ -258,6 +324,7 @@ async function connectInjectedSubstrateWallet({
     kind: WALLET_TYPES.SUBSTRATE,
     account: assertNonEmptyString("account.address", selected.address),
     extensionName: resolved.extensionName,
+    extensionLabel: resolved.extensionLabel,
     extensionSource: resolved.extensionSource,
     accountLabel: selected.meta?.name ?? selected.name ?? null,
   };
@@ -284,13 +351,19 @@ function resolveInjectedSubstrateExtension({
         typeof extensionName === "string" && extensionName.trim() !== ""
           ? extensionName.trim()
           : "injected-substrate",
+      extensionLabel: describeInjectedSubstrateExtension(
+        typeof extensionName === "string" && extensionName.trim() !== ""
+          ? extensionName.trim()
+          : "injected-substrate",
+        0,
+      ).label,
       extensionSource: extension,
     };
   }
 
-  const entries = Object.entries(browserWindow?.injectedWeb3 ?? {}).filter(
-    ([, source]) => Boolean(source) && typeof source?.enable === "function",
-  );
+  const entries = listInjectedSubstrateExtensions({ browserWindow })
+    .map(({ id }) => [id, browserWindow?.injectedWeb3?.[id]])
+    .filter(([, source]) => Boolean(source) && typeof source?.enable === "function");
   if (entries.length === 0) {
     throw new Error("Install a Substrate wallet extension to connect.");
   }
@@ -306,6 +379,10 @@ function resolveInjectedSubstrateExtension({
   const [resolvedName, extensionSource] = matched;
   return {
     extensionName: resolvedName,
+    extensionLabel: describeInjectedSubstrateExtension(
+      resolvedName,
+      entries.findIndex(([name]) => name === resolvedName),
+    ).label,
     extensionSource,
   };
 }
@@ -388,4 +465,80 @@ function mergeAssetAddressMaps(defaults, overrides) {
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function resolveInjectedEvmProvider({
+  provider,
+  providerId,
+  browserWindow,
+}) {
+  if (provider) {
+    return {
+      ...describeInjectedEvmProvider(provider, 0),
+      provider,
+    };
+  }
+
+  const providers = listInjectedEvmProviders({ browserWindow });
+  if (providers.length === 0) {
+    return null;
+  }
+
+  if (typeof providerId === "string" && providerId.trim() !== "") {
+    const matched = providers.find((candidate) => candidate.id === providerId.trim());
+    if (!matched) {
+      throw new Error(`No injected EVM wallet named ${providerId} is available.`);
+    }
+    return matched;
+  }
+
+  return providers[0];
+}
+
+function describeInjectedEvmProvider(provider, index) {
+  if (provider?.isRabby) {
+    return { id: "rabby", label: "Rabby" };
+  }
+  if (provider?.isMetaMask) {
+    return { id: "metamask", label: "MetaMask" };
+  }
+  if (provider?.isCoinbaseWallet) {
+    return { id: "coinbase", label: "Coinbase Wallet" };
+  }
+  if (provider?.isBraveWallet) {
+    return { id: "brave", label: "Brave Wallet" };
+  }
+  if (provider?.isTrust) {
+    return { id: "trust", label: "Trust Wallet" };
+  }
+
+  return {
+    id: `injected-evm-${index + 1}`,
+    label: `Injected EVM Wallet ${index + 1}`,
+  };
+}
+
+function describeInjectedSubstrateExtension(extensionName, index) {
+  const normalized = String(extensionName ?? "").trim();
+  const lower = normalized.toLowerCase();
+  if (lower === "subwallet-js" || lower === "subwallet") {
+    return { id: normalized, label: "SubWallet" };
+  }
+  if (lower === "polkadot-js" || lower === "polkadot{.js}") {
+    return { id: normalized, label: "polkadot.js" };
+  }
+  if (lower === "talisman") {
+    return { id: normalized, label: "Talisman" };
+  }
+  if (lower === "enkrypt") {
+    return { id: normalized, label: "Enkrypt" };
+  }
+  if (normalized !== "") {
+    return { id: normalized, label: normalized };
+  }
+
+  return {
+    id: `injected-substrate-${index + 1}`,
+    label: `Injected Substrate Wallet ${index + 1}`,
+  };
 }

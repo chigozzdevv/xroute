@@ -36,10 +36,13 @@ struct QuoteState {
 struct LiveQuoteInputsConfig {
     source: LiveQuoteInputsSource,
     refresh_interval_ms: u64,
+    max_stale_ms: u64,
     fail_open: bool,
     workspace_root: PathBuf,
     deployment_profile: DeploymentProfile,
 }
+
+const MAX_LIVE_INPUTS_ERROR_CHARS: usize = 280;
 
 #[derive(Clone)]
 enum LiveQuoteInputsSource {
@@ -426,6 +429,13 @@ fn load_live_inputs_config(
                 .unwrap_or("30000"),
             "XROUTE_LIVE_QUOTE_INPUTS_REFRESH_MS",
         )?,
+        max_stale_ms: parse_non_negative_u64(
+            env::var("XROUTE_LIVE_QUOTE_INPUTS_MAX_STALE_MS")
+                .ok()
+                .as_deref()
+                .unwrap_or("300000"),
+            "XROUTE_LIVE_QUOTE_INPUTS_MAX_STALE_MS",
+        )?,
         fail_open,
         workspace_root: workspace_root.to_path_buf(),
         deployment_profile,
@@ -448,7 +458,9 @@ impl LiveQuoteInputsCache {
             }
             Err(error) => {
                 self.last_error = Some(error.clone());
-                if self.config.fail_open && self.snapshot.is_some() {
+                if self.can_serve_stale_snapshot(now_ms) {
+                    Ok(())
+                } else if self.config.fail_open && self.snapshot.is_some() {
                     Ok(())
                 } else if self.config.fail_open {
                     Ok(())
@@ -468,6 +480,15 @@ impl LiveQuoteInputsCache {
             || now_ms.saturating_sub(snapshot.loaded_at_ms) >= self.config.refresh_interval_ms
     }
 
+    fn can_serve_stale_snapshot(&self, now_ms: u64) -> bool {
+        let Some(snapshot) = &self.snapshot else {
+            return false;
+        };
+
+        self.config.max_stale_ms == 0
+            || now_ms.saturating_sub(snapshot.loaded_at_ms) <= self.config.max_stale_ms
+    }
+
     fn metadata_json(&self) -> Value {
         let source_mode = self.config.source.mode();
         match &self.snapshot {
@@ -477,6 +498,7 @@ impl LiveQuoteInputsCache {
                 "status": if self.last_error.is_some() { "live-with-last-error" } else { "live" },
                 "failOpen": self.config.fail_open,
                 "refreshIntervalMs": self.config.refresh_interval_ms,
+                "maxStaleMs": self.config.max_stale_ms,
                 "generatedAt": snapshot.document.generated_at,
                 "loadedAtMs": snapshot.loaded_at_ms,
                 "appliedTransferEdges": snapshot.applied_transfer_edges,
@@ -497,6 +519,7 @@ impl LiveQuoteInputsCache {
                 },
                 "failOpen": self.config.fail_open,
                 "refreshIntervalMs": self.config.refresh_interval_ms,
+                "maxStaleMs": self.config.max_stale_ms,
                 "generatedAt": Value::Null,
                 "loadedAtMs": Value::Null,
                 "appliedTransferEdges": 0,
@@ -542,7 +565,7 @@ async fn load_live_quote_inputs(
                 .map_err(|error| format!("failed to execute live quote inputs command: {error}"))?;
 
             if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                let stderr = summarize_live_inputs_error(&String::from_utf8_lossy(&output.stderr));
                 return Err(format!(
                     "live quote inputs command exited with status {}{}",
                     output.status,
@@ -573,6 +596,31 @@ async fn load_live_quote_inputs(
         applied_execute_routes: applied.2,
         applied_vdot_orders: applied.3,
     })
+}
+
+fn summarize_live_inputs_error(stderr: &str) -> String {
+    let flattened = stderr.split_whitespace().collect::<Vec<_>>().join(" ");
+    truncate_error_message(&flattened, MAX_LIVE_INPUTS_ERROR_CHARS)
+}
+
+fn truncate_error_message(message: &str, max_chars: usize) -> String {
+    let normalized = message.trim();
+    if normalized.is_empty() {
+        return String::new();
+    }
+
+    let mut truncated = String::new();
+    let mut count = 0usize;
+    for ch in normalized.chars() {
+        if count == max_chars {
+            truncated.push_str("...");
+            return truncated;
+        }
+        truncated.push(ch);
+        count += 1;
+    }
+
+    truncated
 }
 
 fn apply_live_quote_inputs(

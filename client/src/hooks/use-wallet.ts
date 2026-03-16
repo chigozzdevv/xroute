@@ -4,6 +4,8 @@ import { useEffect, useSyncExternalStore } from "react";
 import {
   connectInjectedWallet,
   getBrowserWalletAvailability,
+  listInjectedEvmProviders,
+  listInjectedSubstrateExtensions,
 } from "@xroute/sdk";
 import {
   chainKeysForWalletKind,
@@ -13,16 +15,29 @@ import {
 
 export type WalletKind = "evm" | "substrate";
 
+export type AvailableEvmWallet = {
+  id: string;
+  label: string;
+};
+
+export type AvailableSubstrateWallet = {
+  id: string;
+  label: string;
+};
+
 export type WalletSession =
   | {
       kind: "evm";
       account: string;
       provider: EthereumProvider;
+      providerId: string;
+      providerLabel: string;
     }
   | {
       kind: "substrate";
       account: string;
       extensionName: string;
+      extensionLabel: string;
       extensionSource: InjectedSubstrateExtensionSource;
       accountLabel: string | null;
     };
@@ -35,8 +50,8 @@ type WalletState = {
   isRestoring: boolean;
   error: string | null;
   availableWallets: {
-    evm: boolean;
-    substrate: boolean;
+    evm: AvailableEvmWallet[];
+    substrate: AvailableSubstrateWallet[];
   };
 };
 
@@ -50,13 +65,14 @@ let state: WalletState = {
   isRestoring: false,
   error: null,
   availableWallets: {
-    evm: false,
-    substrate: false,
+    evm: [],
+    substrate: [],
   },
 };
 
 let boundEvmProvider: EthereumProvider | null = null;
 let boundAccountsListener: ((...args: unknown[]) => void) | null = null;
+let boundEvmProviderInfo: AvailableEvmWallet | null = null;
 let initialized = false;
 let restoreRunId = 0;
 let connectRunId = 0;
@@ -64,6 +80,7 @@ let connectRunId = 0;
 type PersistedWalletPreferences = {
   evm?: {
     enabled: true;
+    providerId?: string;
   };
   substrate?: {
     extensionName: string;
@@ -100,7 +117,14 @@ function getSnapshot() {
 }
 
 function resolveAvailableWallets() {
-  return getBrowserWalletAvailability();
+  const browserAvailability = getBrowserWalletAvailability();
+  return {
+    evm: listInjectedEvmProviders().map(({ id, label }) => ({ id, label })),
+    substrate:
+      browserAvailability.substrate
+        ? listInjectedSubstrateExtensions().map(({ id, label }) => ({ id, label }))
+        : [],
+  };
 }
 
 function syncAvailableWallets() {
@@ -109,8 +133,9 @@ function syncAvailableWallets() {
   });
 }
 
-function bindEvmProvider(provider: EthereumProvider) {
+function bindEvmProvider(provider: EthereumProvider, providerInfo: AvailableEvmWallet) {
   if (boundEvmProvider === provider && boundAccountsListener) {
+    boundEvmProviderInfo = providerInfo;
     return;
   }
 
@@ -132,6 +157,7 @@ function bindEvmProvider(provider: EthereumProvider) {
       return;
     }
 
+    const activeProviderInfo = boundEvmProviderInfo ?? providerInfo;
     setState({
       sessions: {
         ...state.sessions,
@@ -139,6 +165,8 @@ function bindEvmProvider(provider: EthereumProvider) {
           kind: "evm",
           account: nextAccount,
           provider,
+          providerId: activeProviderInfo.id,
+          providerLabel: activeProviderInfo.label,
         },
       },
       error: null,
@@ -147,9 +175,10 @@ function bindEvmProvider(provider: EthereumProvider) {
 
   provider.on?.("accountsChanged", boundAccountsListener);
   boundEvmProvider = provider;
+  boundEvmProviderInfo = providerInfo;
 }
 
-async function connectEvmWallet() {
+async function connectEvmWallet(providerId: string | null = null) {
   const currentConnectRunId = ++connectRunId;
   setState({
     isConnecting: true,
@@ -157,11 +186,16 @@ async function connectEvmWallet() {
   });
 
   try {
-    const session = await connectInjectedWallet("evm");
+    const session = await connectInjectedWallet("evm", {
+      providerId: providerId ?? undefined,
+    });
     if (session.kind !== "evm") {
       throw new Error("Expected an EVM wallet session.");
     }
-    bindEvmProvider(session.provider);
+    bindEvmProvider(session.provider, {
+      id: session.providerId,
+      label: session.providerLabel,
+    });
     setState({
       sessions: {
         ...state.sessions,
@@ -178,7 +212,7 @@ async function connectEvmWallet() {
   }
 }
 
-async function connectSubstrateWallet() {
+async function connectSubstrateWallet(extensionName: string | null = null) {
   const currentConnectRunId = ++connectRunId;
   setState({
     isConnecting: true,
@@ -187,6 +221,7 @@ async function connectSubstrateWallet() {
 
   try {
     const session = await connectInjectedWallet("substrate", {
+      extensionName: extensionName ?? undefined,
       extensionDappName: DAPP_NAME,
     });
     if (session.kind !== "substrate") {
@@ -208,14 +243,18 @@ async function connectSubstrateWallet() {
   }
 }
 
-async function connect(kind: WalletKind) {
+async function connect(
+  kind: WalletKind,
+  providerId: string | null = null,
+  extensionName: string | null = null,
+) {
   try {
     if (kind === "evm") {
-      await connectEvmWallet();
+      await connectEvmWallet(providerId);
       return;
     }
 
-    await connectSubstrateWallet();
+    await connectSubstrateWallet(extensionName);
   } catch (error) {
     setState({
       error: error instanceof Error ? error.message : "Wallet connection failed.",
@@ -275,10 +314,14 @@ async function restorePersistedWalletSessions() {
   if (preferences.evm) {
     try {
       const session = await connectInjectedWallet("evm", {
+        providerId: preferences.evm.providerId ?? undefined,
         requestAccess: false,
       });
       if (session.kind === "evm") {
-        bindEvmProvider(session.provider);
+        bindEvmProvider(session.provider, {
+          id: session.providerId,
+          label: session.providerLabel,
+        });
         restoredSessions.evm = session;
       }
     } catch {
@@ -293,9 +336,10 @@ async function restorePersistedWalletSessions() {
         accountAddress: preferences.substrate.accountAddress,
         extensionDappName: DAPP_NAME,
       });
-      if (session.kind === "substrate") {
-        restoredSessions.substrate = session;
+      if (session.kind !== "substrate") {
+        throw new Error("Expected a Substrate wallet session.");
       }
+      restoredSessions.substrate = session;
     } catch {
       // ignore missing extension/account during restore
     }
@@ -335,8 +379,11 @@ function persistWalletPreferences(sessions: WalletSessions) {
   }
 
   const preferences: PersistedWalletPreferences = {};
-  if (sessions.evm) {
-    preferences.evm = { enabled: true };
+  if (sessions.evm?.kind === "evm") {
+    preferences.evm = {
+      enabled: true,
+      providerId: sessions.evm.providerId,
+    };
   }
   if (sessions.substrate?.kind === "substrate") {
     preferences.substrate = {
@@ -356,7 +403,6 @@ function persistWalletPreferences(sessions: WalletSessions) {
       JSON.stringify(preferences),
     );
   } catch {
-    // ignore storage failures
   }
 }
 
@@ -410,6 +456,7 @@ export function useWallet() {
         connectXRouteWallet("evm", {
           provider: snapshot.sessions.evm.provider,
           chainKey,
+          debugTransactions: isXRouteDebugTransactionsEnabled(),
         });
       }
     }
@@ -436,9 +483,16 @@ export function useWallet() {
     connectEvm() {
       return connect("evm");
     },
-    connectSubstrate() {
-      return connect("substrate");
+    connectEvmProvider(providerId: string) {
+      return connect("evm", providerId);
+    },
+    connectSubstrate(extensionName?: string) {
+      return connect("substrate", null, extensionName ?? null);
     },
     disconnect,
   };
+}
+
+function isXRouteDebugTransactionsEnabled() {
+  return process.env.NEXT_PUBLIC_XROUTE_DEBUG_TX?.trim() === "true";
 }

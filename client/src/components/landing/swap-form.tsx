@@ -18,6 +18,7 @@ import { usePersistedState } from "@/lib/persisted-state";
 import {
   type AssetKey,
   canParseAssetUnits,
+  chainLabel,
   fromAssetUnits,
   type ChainKey,
   coerceOptionValue,
@@ -406,7 +407,7 @@ export function SwapForm() {
             <label className={fieldFullClass}>
               <span className={labelClass}>Recipient</span>
               <div className={`${inputClass} flex items-center`}>
-                {resolvedRecipient || `Connect a ${walletRequirementLabel(form.settlementChain).toLowerCase()} for ${form.settlementChain}.`}
+                {resolvedRecipient || `Connect a ${walletRequirementLabel(form.settlementChain).toLowerCase()} for ${chainLabel(form.settlementChain)}.`}
               </div>
             </label>
       </div>
@@ -429,7 +430,7 @@ export function SwapForm() {
         </button>
         {!sourceWalletReady ? (
           <p className="m-0 text-center text-sm leading-6 text-muted">
-            {`Connect a ${walletRequirementLabel(form.sourceChain).toLowerCase()} to execute from ${form.sourceChain}.`}
+            {`Connect a ${walletRequirementLabel(form.sourceChain).toLowerCase()} to execute from ${chainLabel(form.sourceChain)}.`}
           </p>
         ) : null}
         {inlineError ? (

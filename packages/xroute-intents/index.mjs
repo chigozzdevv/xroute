@@ -31,7 +31,7 @@ const DEFAULT_CALL_FALLBACK_WEIGHT = Object.freeze({
 const DEFAULT_VDOT_ORDER_GAS_LIMIT = 500000n;
 const DEFAULT_VDOT_ORDER_REMARK = "xroute";
 const DEFAULT_VDOT_ORDER_CHANNEL_ID = 0;
-const EVM_SOURCE_CHAINS = new Set(["polkadot-hub", "moonbeam"]);
+const EVM_SOURCE_CHAINS = new Set(["moonbeam"]);
 
 export function createTransferIntent(input) {
   return createIntent({

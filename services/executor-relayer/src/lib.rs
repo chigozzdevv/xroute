@@ -33,8 +33,7 @@ const FINALIZE_EXTERNAL_SUCCESS_SIGNATURE: &str =
     "finalizeExternalSuccess(bytes32,bytes32,bytes32,uint128)";
 const FINALIZE_FAILURE_SIGNATURE: &str = "finalizeFailure(bytes32,bytes32,bytes32)";
 const REFUND_FAILED_INTENT_SIGNATURE: &str = "refundFailedIntent(bytes32,uint128)";
-const XCM_EXECUTE_SIGNATURE: &str = "execute(bytes,(uint64,uint64))";
-const XCM_WEIGH_MESSAGE_SIGNATURE: &str = "weighMessage(bytes)((uint64,uint64))";
+
 const XCM_PRECOMPILE_ADDRESS: &str = "0x00000000000000000000000000000000000a0000";
 const SUPPORTED_EXECUTION_CHAINS: &[&str] = &["polkadot-hub", "hydration", "moonbeam", "bifrost"];
 
@@ -838,49 +837,20 @@ fn run_job_blocking(
             let execution_context = execution_context
                 .as_ref()
                 .ok_or_else(|| format!("missing execution context for source chain {chain_key}"))?;
-            let uses_external_source_dispatch =
-                should_use_external_source_dispatch(deployment_profile, &wire_intent);
-            let tx_hash = if uses_external_source_dispatch {
-                let (ref_time, proof_size) = weigh_xcm_message(
-                    &execution_context.xcm_address,
-                    &request.message,
-                    &execution_context.rpc_url,
-                )?;
-                send_transaction(
-                    &execution_context.xcm_address,
-                    XCM_EXECUTE_SIGNATURE,
-                    &[
-                        request.message.clone(),
-                        format!("({ref_time},{proof_size})"),
-                    ],
-                    &execution_context.rpc_url,
-                    &execution_context.private_key,
-                    gas_limit,
-                )?
-            } else {
-                send_transaction(
-                    &execution_context.router_address,
-                    DISPATCH_INTENT_SIGNATURE,
-                    &[intent_id.clone(), format_dispatch_request_tuple(&request)],
-                    &execution_context.rpc_url,
-                    &execution_context.private_key,
-                    gas_limit,
-                )?
-            };
+            let tx_hash = send_transaction(
+                &execution_context.router_address,
+                DISPATCH_INTENT_SIGNATURE,
+                &[intent_id.clone(), format_dispatch_request_tuple(&request)],
+                &execution_context.rpc_url,
+                &execution_context.private_key,
+                gas_limit,
+            )?;
             Ok(json!({
                 "intentId": intent_id,
                 "sourceChain": chain_key,
                 "txHash": tx_hash,
-                "strategy": if uses_external_source_dispatch {
-                    "external-source-execute"
-                } else {
-                    "router-dispatch"
-                },
-                "targetAddress": if uses_external_source_dispatch {
-                    &execution_context.xcm_address
-                } else {
-                    &execution_context.router_address
-                },
+                "strategy": "router-dispatch",
+                "targetAddress": &execution_context.router_address,
                 "request": request,
             }))
         }
@@ -1289,58 +1259,9 @@ fn send_transaction(
     Ok(tx_hash)
 }
 
-fn weigh_xcm_message(
-    xcm_address: &str,
-    message: &str,
-    rpc_url: &str,
-) -> Result<(u64, u64), String> {
-    let output = Command::new("cast")
-        .arg("call")
-        .arg(xcm_address)
-        .arg(XCM_WEIGH_MESSAGE_SIGNATURE)
-        .arg(message)
-        .arg("--rpc-url")
-        .arg(rpc_url)
-        .output()
-        .map_err(|error| format!("failed to run cast call weighMessage: {error}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
-    }
 
-    parse_weight_tuple(String::from_utf8_lossy(&output.stdout).trim())
-}
 
-fn parse_weight_tuple(raw: &str) -> Result<(u64, u64), String> {
-    let normalized = raw.trim().trim_start_matches('(').trim_end_matches(')');
-    let mut parts = normalized.split(',').map(str::trim);
-    let ref_time = parts
-        .next()
-        .ok_or_else(|| format!("invalid weight tuple: {raw}"))?
-        .split_whitespace()
-        .next()
-        .ok_or_else(|| format!("invalid weight tuple: {raw}"))?
-        .parse::<u64>()
-        .map_err(|error| format!("invalid weighMessage refTime: {error}"))?;
-    let proof_size = parts
-        .next()
-        .ok_or_else(|| format!("invalid weight tuple: {raw}"))?
-        .split_whitespace()
-        .next()
-        .ok_or_else(|| format!("invalid weight tuple: {raw}"))?
-        .parse::<u64>()
-        .map_err(|error| format!("invalid weighMessage proofSize: {error}"))?;
 
-    Ok((ref_time, proof_size))
-}
-
-fn should_use_external_source_dispatch(
-    deployment_profile: DeploymentProfile,
-    wire_intent: &WireIntent,
-) -> bool {
-    let _ = deployment_profile;
-    let _ = wire_intent;
-    false
-}
 
 fn should_use_external_settlement(
     router_address: &str,

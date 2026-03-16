@@ -62,6 +62,11 @@ export type Quote = QuoteResponse["quote"];
 export type QuoteAssetAmount = Quote["fees"]["totalFee"];
 export type QuoteSourceCosts = QuoteResponse["sourceCosts"];
 export type SourceCostAmount = NonNullable<QuoteSourceCosts>["lockedAmount"];
+export type AssetUsdPrice = {
+  usd: number;
+  lastUpdatedAt: number | null;
+};
+export type AssetUsdPrices = Partial<Record<AssetKey, AssetUsdPrice>>;
 export type XRouteWalletConnection = Parameters<QuoteClient["connectWallet"]>;
 export type TransferRequest = Parameters<QuoteClient["transfer"]>[0];
 export type TransferResponse = Awaited<ReturnType<QuoteClient["transfer"]>>;
@@ -192,6 +197,7 @@ export function connectWalletSessionForChain(
     return connectXRouteWallet("evm", {
       provider: session.provider,
       chainKey: sourceChain,
+      debugTransactions: isXRouteDebugTransactionsEnabled(),
     });
   }
 
@@ -239,6 +245,182 @@ export function formatEstimatedTotalSpend(sourceCosts: QuoteSourceCosts) {
   }
 
   return null;
+}
+
+export function sourceCostUsesDifferentUnitDomains(sourceCosts: QuoteSourceCosts) {
+  if (!sourceCosts) {
+    return false;
+  }
+
+  return sourceCosts.lockedAmount.asset === sourceCosts.gasFee.asset
+    && (
+      sourceCosts.lockedAmount.unitDomain !== sourceCosts.gasFee.unitDomain
+      || sourceCosts.lockedAmount.decimals !== sourceCosts.gasFee.decimals
+    );
+}
+
+export function getQuotedFeeAssets(
+  quote: Quote | null,
+  sourceCosts: QuoteSourceCosts = null,
+): AssetKey[] {
+  const symbols = new Set<AssetKey>();
+
+  if (quote) {
+    symbols.add(quote.fees.xcmFee.asset as AssetKey);
+    symbols.add(quote.fees.destinationFee.asset as AssetKey);
+    symbols.add(quote.fees.platformFee.asset as AssetKey);
+  }
+  if (sourceCosts) {
+    symbols.add(sourceCosts.lockedAmount.asset as AssetKey);
+    symbols.add(sourceCosts.gasFee.asset as AssetKey);
+  }
+
+  return [...symbols];
+}
+
+export function getUsdValueForQuoteAmount(
+  amount: QuoteAssetAmount,
+  prices: AssetUsdPrices,
+) {
+  const price = prices[amount.asset as AssetKey]?.usd;
+  if (typeof price !== "number" || !Number.isFinite(price)) {
+    return null;
+  }
+
+  const numericAmount = Number.parseFloat(
+    formatAssetAmount(amount.asset, amount.amount, DEFAULT_DEPLOYMENT_PROFILE, {
+      trimTrailingZeros: false,
+    }),
+  );
+  if (!Number.isFinite(numericAmount)) {
+    return null;
+  }
+
+  return numericAmount * price;
+}
+
+export function getUsdValueForSourceCostAmount(
+  amount: SourceCostAmount,
+  prices: AssetUsdPrices,
+) {
+  const price = prices[amount.asset as AssetKey]?.usd;
+  if (typeof price !== "number" || !Number.isFinite(price)) {
+    return null;
+  }
+
+  const numericAmount = Number.parseFloat(
+    formatUnits(amount.amount, amount.decimals, {
+      trimTrailingZeros: false,
+    }),
+  );
+  if (!Number.isFinite(numericAmount)) {
+    return null;
+  }
+
+  return numericAmount * price;
+}
+
+export function estimateQuoteUsdTotal(
+  quote: Quote | null,
+  sourceCosts: QuoteSourceCosts = null,
+  prices: AssetUsdPrices = {},
+) {
+  if (!quote) {
+    return null;
+  }
+
+  if (sourceCosts) {
+    const lockedUsd = getUsdValueForSourceCostAmount(sourceCosts.lockedAmount, prices);
+    const gasUsd = getUsdValueForSourceCostAmount(sourceCosts.gasFee, prices);
+    if (lockedUsd === null || gasUsd === null) {
+      return null;
+    }
+
+    return lockedUsd + gasUsd;
+  }
+
+  const feeAmounts = [
+    quote.fees.xcmFee,
+    quote.fees.destinationFee,
+    quote.fees.platformFee,
+  ];
+  const feeUsdValues = feeAmounts.map((fee) => getUsdValueForQuoteAmount(fee, prices));
+  const resolvedFeeUsdValues = feeUsdValues.filter((value): value is number => value !== null);
+  if (resolvedFeeUsdValues.length !== feeUsdValues.length) {
+    return null;
+  }
+
+  return resolvedFeeUsdValues.reduce((sum, value) => sum + value, 0);
+}
+
+function isXRouteDebugTransactionsEnabled() {
+  return process.env.NEXT_PUBLIC_XROUTE_DEBUG_TX?.trim() === "true";
+}
+
+export function useAssetUsdPrices(
+  assets: readonly AssetKey[],
+  {
+    refreshMs = 60_000,
+  }: {
+    refreshMs?: number;
+  } = {},
+) {
+  const [prices, setPrices] = useState<AssetUsdPrices>({});
+  const emptyPrices = useMemo<AssetUsdPrices>(() => ({}), []);
+  const assetKey = useMemo(
+    () =>
+      [...new Set(assets.map((asset) => asset.trim()).filter(Boolean))]
+        .sort()
+        .join(","),
+    [assets],
+  );
+
+  useEffect(() => {
+    if (!assetKey) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadPrices() {
+      try {
+        const response = await fetch(`/api/asset-prices?assets=${encodeURIComponent(assetKey)}`);
+        if (!response.ok) {
+          return;
+        }
+
+        const payload = await response.json();
+        if (cancelled) {
+          return;
+        }
+
+        setPrices(payload?.prices ?? {});
+      } catch {
+        if (!cancelled) {
+          setPrices({});
+        }
+      }
+    }
+
+    void loadPrices();
+
+    if (refreshMs <= 0) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const intervalId = window.setInterval(() => {
+      void loadPrices();
+    }, refreshMs);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [assetKey, refreshMs]);
+
+  return assetKey ? prices : emptyPrices;
 }
 
 export function canParseAssetUnits(assetKey: AssetKey, value: string) {
@@ -455,17 +637,143 @@ const INITIAL_INTENT_EXECUTION_STATE: IntentExecutionState = Object.freeze({
   isTracking: false,
 });
 
+const RELAYER_JOB_TERMINAL_STATUSES = new Set(["completed"]);
+
+function isRelayerJobTerminal(status: string | undefined | null): boolean {
+  return RELAYER_JOB_TERMINAL_STATUSES.has(status ?? "");
+}
+
+function getXRouteApiBaseUrl(): string {
+  const hostname = globalThis.location?.hostname?.trim().toLowerCase();
+  if (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "0.0.0.0" ||
+    hostname === "::1"
+  ) {
+    return "http://127.0.0.1:8788/v1";
+  }
+
+  return "https://xroute-api.onrender.com/v1";
+}
+
+async function fetchRelayerJobStatus(jobId: string): Promise<{
+  status?: string;
+  lastError?: string | null;
+} | null> {
+  try {
+    const response = await fetch(
+      `${getXRouteApiBaseUrl()}/jobs/${encodeURIComponent(jobId)}`,
+    );
+    if (!response.ok) {
+      return null;
+    }
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+function mergeRelayerJobStatus(
+  execution: IntentExecutionResult,
+  jobUpdate: { status?: string; lastError?: string | null },
+): IntentExecutionResult {
+  const dispatched = (execution as Record<string, unknown>).dispatched as
+    | Record<string, unknown>
+    | undefined;
+  if (!dispatched?.relayerJob) {
+    return execution;
+  }
+
+  return {
+    ...execution,
+    dispatched: {
+      ...dispatched,
+      relayerJob: {
+        ...(dispatched.relayerJob as Record<string, unknown>),
+        status: jobUpdate.status,
+        lastError: jobUpdate.lastError ?? null,
+      },
+    },
+  } as IntentExecutionResult;
+}
+
 export function useXRouteExecution() {
   const [state, setState] = useState<IntentExecutionState>(INITIAL_INTENT_EXECUTION_STATE);
   const trackerRef = useRef<ReturnType<typeof trackXRouteIntent> | null>(null);
+  const jobPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const executionRef = useRef(0);
 
   useEffect(() => {
     return () => {
       trackerRef.current?.stop();
       trackerRef.current = null;
+      if (jobPollRef.current !== null) {
+        clearTimeout(jobPollRef.current);
+        jobPollRef.current = null;
+      }
     };
   }, []);
+
+  function startRelayerJobPolling(
+    execution: IntentExecutionResult,
+    executionId: number,
+  ) {
+    const jobId = (execution as Record<string, unknown> & {
+      dispatched?: { relayerJob?: { id?: string } };
+    }).dispatched?.relayerJob?.id;
+    if (!jobId) {
+      return;
+    }
+
+    const resolvedJobId: string = jobId;
+    const pollInterval = 2_000;
+    let stopped = false;
+
+    async function poll() {
+      if (stopped || executionRef.current !== executionId) {
+        return;
+      }
+
+      const jobUpdate = await fetchRelayerJobStatus(resolvedJobId);
+      if (stopped || executionRef.current !== executionId || !jobUpdate) {
+        return;
+      }
+
+      const updated = mergeRelayerJobStatus(execution, jobUpdate);
+      execution = updated;
+
+      setState((current) => ({
+        ...current,
+        execution: updated,
+      }));
+
+      if (
+        jobUpdate.status === "failed" &&
+        jobUpdate.lastError
+      ) {
+        setState((current) => ({
+          ...current,
+          execution: updated,
+          error: current.error ?? `Relayer job failed: ${jobUpdate.lastError}`,
+        }));
+      }
+
+      if (!isRelayerJobTerminal(jobUpdate.status)) {
+        jobPollRef.current = setTimeout(poll, pollInterval);
+      }
+    }
+
+    jobPollRef.current = setTimeout(poll, pollInterval);
+
+    return () => {
+      stopped = true;
+      if (jobPollRef.current !== null) {
+        clearTimeout(jobPollRef.current);
+        jobPollRef.current = null;
+      }
+    };
+  }
 
   async function execute(runExecution: () => Promise<IntentExecutionResult>) {
     executionRef.current += 1;
@@ -473,6 +781,10 @@ export function useXRouteExecution() {
 
     trackerRef.current?.stop();
     trackerRef.current = null;
+    if (jobPollRef.current !== null) {
+      clearTimeout(jobPollRef.current);
+      jobPollRef.current = null;
+    }
 
     setState({
       ...INITIAL_INTENT_EXECUTION_STATE,
@@ -494,6 +806,8 @@ export function useXRouteExecution() {
         isTracking: Boolean(execution.submitted?.intentId),
       });
 
+      startRelayerJobPolling(execution, currentExecutionId);
+
       if (execution.submitted?.intentId) {
         trackerRef.current = trackXRouteIntent(execution.submitted.intentId, {
           includeTimeline: true,
@@ -504,7 +818,7 @@ export function useXRouteExecution() {
 
             setState((current) => ({
               ...current,
-              execution,
+              execution: current.execution,
               status: snapshot.status ?? current.status,
               timeline: snapshot.timeline ?? current.timeline,
               isTracking: true,
@@ -554,6 +868,10 @@ export function useXRouteExecution() {
     executionRef.current += 1;
     trackerRef.current?.stop();
     trackerRef.current = null;
+    if (jobPollRef.current !== null) {
+      clearTimeout(jobPollRef.current);
+      jobPollRef.current = null;
+    }
     setState(INITIAL_INTENT_EXECUTION_STATE);
   }
 

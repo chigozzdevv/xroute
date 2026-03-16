@@ -44,7 +44,7 @@ const websocketTransports = new Map();
 const moonbeamSlpxAdapterAddress = resolveMoonbeamSlpxAdapterAddress();
 
 main().catch((error) => {
-  const message = error instanceof Error ? error.stack ?? error.message : String(error);
+  const message = error instanceof Error ? error.message : String(error);
   process.stderr.write(`${message}\n`, () => {
     process.exit(1);
   });
@@ -230,7 +230,7 @@ function encodeCallWord(word) {
 }
 
 async function readHydrationOraclePrice({ assetAId, assetBId }) {
-  const rpcUrl = resolveHttpRpcUrl('hydration');
+  const rpcUrl = resolveRuntimeRpcUrl('hydration');
   const to = hydrationOracleAddress(assetAId, assetBId);
   const result = await rpcRequest(rpcUrl, 'eth_call', [
     {
@@ -557,7 +557,7 @@ async function getRuntimeClient(chainKey) {
 }
 
 async function createRuntimeClient(chainKey) {
-  const rpcUrl = resolveHttpRpcUrl(chainKey);
+  const rpcUrl = resolveRuntimeRpcUrl(chainKey);
   const metadataHex = await rpcRequest(rpcUrl, 'state_getMetadata', []);
   const decodedMetadata = unifyMetadata(metadata.dec(metadataHex));
   const dynamicBuilder = getDynamicBuilder(getLookupFn(decodedMetadata));
@@ -663,22 +663,80 @@ async function rpcRequest(url, method, params) {
   return json.result;
 }
 
-function resolveHttpRpcUrl(chainKey) {
+function resolveRuntimeRpcUrl(chainKey) {
   switch (chainKey) {
     case 'polkadot-hub':
-      return process.env.XROUTE_HUB_XCM_RPC_URL?.trim() || 'https://polkadot-asset-hub-rpc.polkadot.io';
-    case 'hydration':
-      return websocketToHttp(requiredSetting('XROUTE_HYDRATION_RPC_URL', process.env.XROUTE_HYDRATION_RPC_URL));
-    case 'moonbeam':
-      return requiredSetting('XROUTE_MOONBEAM_RPC_URL', process.env.XROUTE_MOONBEAM_RPC_URL);
-    case 'bifrost':
       return requiredSetting(
+        'XROUTE_HUB_XCM_RPC_URL',
+        process.env.XROUTE_HUB_XCM_RPC_URL?.trim() || 'https://polkadot-asset-hub-rpc.polkadot.io',
+      );
+    case 'hydration':
+      return resolveReadonlyRpcUrl(
+        chainKey,
+        'XROUTE_HYDRATION_XCM_RPC_URL',
+        'XROUTE_HYDRATION_RPC_URL',
+      );
+    case 'moonbeam':
+      return resolveReadonlyRpcUrl(
+        chainKey,
+        'XROUTE_MOONBEAM_XCM_RPC_URL',
+        'XROUTE_MOONBEAM_RPC_URL',
+      );
+    case 'bifrost':
+      return resolveReadonlyRpcUrl(
+        chainKey,
+        'XROUTE_BIFROST_XCM_RPC_URL',
         'XROUTE_BIFROST_RPC_URL',
-        process.env.XROUTE_BIFROST_RPC_URL || 'wss://hk.p.bifrost-rpc.liebi.com/ws',
+        'wss://hk.p.bifrost-rpc.liebi.com/ws',
       );
     default:
       throw new Error(`unsupported chain: ${chainKey}`);
   }
+}
+
+function resolveReadonlyRpcUrl(chainKey, readonlyName, fallbackName, fallbackValue = null) {
+  const readonlyValue = process.env[readonlyName]?.trim();
+  if (readonlyValue) {
+    return normalizeRuntimeRpcUrl(chainKey, readonlyValue);
+  }
+
+  return normalizeRuntimeRpcUrl(chainKey, requiredSetting(
+    fallbackValue === null ? fallbackName : `${readonlyName} or ${fallbackName}`,
+    process.env[fallbackName]?.trim() || fallbackValue,
+  ));
+}
+
+function normalizeRuntimeRpcUrl(chainKey, rpcUrl) {
+  const normalized = String(rpcUrl ?? '').trim();
+  if (chainKey === 'bifrost') {
+    return normalizeKnownBifrostPublicRpcUrl(normalized);
+  }
+
+  return normalized;
+}
+
+function normalizeKnownBifrostPublicRpcUrl(rpcUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rpcUrl);
+  } catch {
+    return rpcUrl;
+  }
+
+  if (!parsed.hostname.endsWith('bifrost-rpc.liebi.com')) {
+    return rpcUrl;
+  }
+
+  if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+    const normalizedPath = parsed.pathname.replace(/\/+$/, '');
+    if (normalizedPath === '' || normalizedPath === '/') {
+      parsed.protocol = parsed.protocol === 'https:' ? 'wss:' : 'ws:';
+      parsed.pathname = '/ws';
+      return parsed.toString();
+    }
+  }
+
+  return rpcUrl;
 }
 
 async function websocketRpcRequest(url, method, params) {
@@ -758,20 +816,6 @@ async function getWebsocketTransport(url) {
 
   websocketTransports.set(url, transport);
   return transport;
-}
-
-function websocketToHttp(url) {
-  const normalized = String(url ?? '').trim();
-  if (normalized.startsWith('https://') || normalized.startsWith('http://')) {
-    return normalized;
-  }
-  if (normalized.startsWith('wss://')) {
-    return normalized.replace(/^wss:/, 'https:').replace(/\/wss\/?$/, '');
-  }
-  if (normalized.startsWith('ws://')) {
-    return normalized.replace(/^ws:/, 'http:').replace(/\/wss\/?$/, '');
-  }
-  throw new Error(`unable to normalize websocket rpc url: ${normalized}`);
 }
 
 function hydrationOracleAddress(assetAId, assetBId) {

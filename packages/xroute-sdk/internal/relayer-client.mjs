@@ -13,7 +13,7 @@ import {
 } from "../../xroute-xcm/index.mjs";
 import { normalizeQuote } from "../quote/index.mjs";
 
-const SUBSTRATE_SOURCE_CHAINS = new Set(["hydration", "bifrost"]);
+const SUBSTRATE_SOURCE_CHAINS = new Set(["polkadot-hub", "hydration", "bifrost"]);
 
 export function createHttpExecutorRelayerClient({
   endpoint,

@@ -868,8 +868,10 @@ fn normalize_refund_address(
     name: &str,
 ) -> Result<String, String> {
     match source_chain {
-        ChainKey::PolkadotHub | ChainKey::Moonbeam => normalize_address(value, name),
-        ChainKey::Hydration | ChainKey::Bifrost => require_non_empty(value, name),
+        ChainKey::Moonbeam => normalize_address(value, name),
+        ChainKey::PolkadotHub | ChainKey::Hydration | ChainKey::Bifrost => {
+            require_non_empty(value, name)
+        }
     }
 }
 
@@ -959,6 +961,35 @@ mod tests {
         let parsed =
             quote_request_from_slice(&body).expect("hydration refund address should parse");
         assert_eq!(parsed.intent.source_chain, ChainKey::Hydration);
+        assert_eq!(
+            parsed.intent.refund_address,
+            "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+        );
+    }
+
+    #[test]
+    fn quote_request_accepts_substrate_refund_address_for_polkadot_hub_sources() {
+        let body = serde_json::to_vec(&json!({
+            "intent": {
+                "sourceChain": "polkadot-hub",
+                "destinationChain": "hydration",
+                "refundAddress": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+                "deadline": 1_773_185_200u64,
+                "action": {
+                    "type": "transfer",
+                    "params": {
+                        "asset": "DOT",
+                        "amount": "10",
+                        "recipient": "5Frecipient",
+                    }
+                }
+            }
+        }))
+        .expect("request body should encode");
+
+        let parsed =
+            quote_request_from_slice(&body).expect("polkadot hub refund address should parse");
+        assert_eq!(parsed.intent.source_chain, ChainKey::PolkadotHub);
         assert_eq!(
             parsed.intent.refund_address,
             "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"

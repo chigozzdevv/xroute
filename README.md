@@ -182,6 +182,9 @@ The deployer/admin key is not the executor. Deployments derive the router execut
 - one of:
   - `XROUTE_LIVE_QUOTE_INPUTS_PATH`
   - `XROUTE_LIVE_QUOTE_INPUTS_COMMAND`
+- optional live-input refresh tuning:
+  - `XROUTE_LIVE_QUOTE_INPUTS_REFRESH_MS`
+  - `XROUTE_LIVE_QUOTE_INPUTS_MAX_STALE_MS`
 - `XROUTE_RELAYER_AUTH_TOKEN`
 - Hub execution context:
   - `XROUTE_HUB_RPC_URL`
@@ -198,6 +201,13 @@ The deployer/admin key is not the executor. Deployments derive the router execut
 - optional:
   - `XROUTE_EVM_POLICY_PATH`
   - `XROUTE_SUBSTRATE_DISPATCH_SCRIPT`
+  - dedicated read-only quote RPCs:
+    - `XROUTE_HUB_XCM_RPC_URL`
+    - `XROUTE_MOONBEAM_XCM_RPC_URL`
+    - `XROUTE_HYDRATION_XCM_RPC_URL`
+    - `XROUTE_BIFROST_XCM_RPC_URL`
+    - `XROUTE_HUB_XCM_RPC_URL` must be a Substrate/XCM RPC for Asset Hub, not `https://eth-rpc.polkadot.io/`
+    - `XROUTE_BIFROST_XCM_RPC_URL` should be a Substrate-capable Bifrost RPC; if you use the public Liebi endpoint, use `wss://hk.p.bifrost-rpc.liebi.com/ws`, not bare `https://hk.p.bifrost-rpc.liebi.com`
 
 The quote path is fail-closed. `XROUTE_LIVE_QUOTE_INPUTS_FAIL_OPEN=true` is rejected.
 
@@ -226,11 +236,13 @@ Render injects `PORT`; `xroute-api` now falls back to that automatically and bin
 
 - Refunds are full-refund only for failed intents.
 - Mainnet quote inputs must be live; static fallback is not allowed.
+- Quote refresh now serves the last successful live snapshot during short upstream outages, bounded by `XROUTE_LIVE_QUOTE_INPUTS_MAX_STALE_MS`.
 - `scripts/fetch-live-quote-inputs.mjs` pulls live inputs from:
   - Polkadot Hub `XcmPaymentApi`
   - Hydration Omnipool oracle precompiles
   - Moonbeam XCM payment APIs
   - Bifrost vDOT pricing via the official Moonbeam XCM oracle mirror
+- Prefer dedicated read-only RPC URLs for live quote inputs instead of reusing executor RPCs; the protocol must match the chain endpoint, and the fetcher will keep websocket fallbacks where that is the working public transport.
 - `execute/call` should be protected with a Moonbeam execution allowlist policy.
 - `execute/mint-vdot` submits a Moonbeam SLPx order; it is an async asset-order flow, not immediate final asset settlement.
 - The relayer should stay behind auth, rate limits, and your own control plane.

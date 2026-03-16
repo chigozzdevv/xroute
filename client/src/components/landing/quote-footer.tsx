@@ -3,12 +3,17 @@
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  estimateQuoteUsdTotal,
   formatEstimatedTotalSpend,
   formatAssetAmount as formatSdkAssetAmount,
+  getQuotedFeeAssets,
+  getUsdValueForQuoteAmount,
+  getUsdValueForSourceCostAmount,
   type Quote,
   type QuoteAssetAmount,
   type QuoteSourceCosts,
   formatSourceCostAmount,
+  useAssetUsdPrices,
 } from "@/lib/xroute";
 
 type QuoteFooterProps = {
@@ -31,6 +36,7 @@ export function QuoteFooter({
 }: QuoteFooterProps) {
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  const prices = useAssetUsdPrices(getQuotedFeeAssets(quote, sourceCosts));
 
   useEffect(() => {
     if (!quote || !refreshMs || refreshMs <= 0) {
@@ -65,10 +71,17 @@ export function QuoteFooter({
   const destinationFee = quote.fees.destinationFee;
   const platformFee = quote.fees.platformFee;
   const estimatedTotalSpend = formatEstimatedTotalSpend(sourceCosts);
-  const summaryLabel = estimatedTotalSpend ? "Estimated total spend" : "Fees";
-  const summaryValue = estimatedTotalSpend
-    ? `${compactDecimal(formatSourceCostAmount(estimatedTotalSpend.value))} ${estimatedTotalSpend.value.asset}`
-    : formatAssetAmount(totalFee, true);
+  const usdTotal = estimateQuoteUsdTotal(quote, sourceCosts, prices);
+  const summaryLabel = sourceCosts || estimatedTotalSpend
+      ? "Estimated total spend"
+      : usdTotal !== null
+        ? "Estimated total"
+        : "Fees";
+  const summaryValue = usdTotal !== null
+    ? formatUsdAmount(usdTotal)
+    : estimatedTotalSpend
+      ? `${compactDecimal(formatSourceCostAmount(estimatedTotalSpend.value))} ${estimatedTotalSpend.value.asset}`
+      : formatAssetAmount(totalFee, true);
 
   const breakdown = [
     { label: "XCM fee", fee: xcmFee },
@@ -118,25 +131,56 @@ export function QuoteFooter({
 
       {showBreakdown ? (
         <div className="mt-3 space-y-2 border-t border-line/70 pt-3 text-sm">
+          {sourceCosts ? (
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-muted">Locked amount</span>
+              <div className="text-right">
+                <div className="font-bold tracking-[-0.02em] text-ink">
+                  {`${compactDecimal(
+                    formatSourceCostAmount(sourceCosts.lockedAmount),
+                  )} ${sourceCosts.lockedAmount.asset}`}
+                </div>
+                {getUsdValueForSourceCostAmount(sourceCosts.lockedAmount, prices) !== null ? (
+                  <div className="text-[0.72rem] font-semibold text-muted/85">
+                    {formatUsdAmount(getUsdValueForSourceCostAmount(sourceCosts.lockedAmount, prices) ?? 0)}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
           {breakdown.map((entry) => (
             <div
               key={`${entry.label}-${entry.fee.asset}-${entry.fee.amount.toString()}`}
               className="flex items-center justify-between gap-4"
             >
               <span className="text-muted">{entry.label}</span>
-              <span className="font-bold tracking-[-0.02em] text-ink">
-                {formatAssetAmount(entry.fee, true)}
-              </span>
+              <div className="text-right">
+                <div className="font-bold tracking-[-0.02em] text-ink">
+                  {formatAssetAmount(entry.fee, true)}
+                </div>
+                {getUsdValueForQuoteAmount(entry.fee, prices) !== null ? (
+                  <div className="text-[0.72rem] font-semibold text-muted/85">
+                    {formatUsdAmount(getUsdValueForQuoteAmount(entry.fee, prices) ?? 0)}
+                  </div>
+                ) : null}
+              </div>
             </div>
           ))}
           {sourceCosts ? (
             <div className="flex items-center justify-between gap-4">
               <span className="text-muted">Source gas (est.)</span>
-              <span className="font-bold tracking-[-0.02em] text-ink">
-                {`${compactDecimal(
-                  formatSourceCostAmount(sourceCosts.gasFee),
-                )} ${sourceCosts.gasFee.asset}`}
-              </span>
+              <div className="text-right">
+                <div className="font-bold tracking-[-0.02em] text-ink">
+                  {`${compactDecimal(
+                    formatSourceCostAmount(sourceCosts.gasFee),
+                  )} ${sourceCosts.gasFee.asset}`}
+                </div>
+                {getUsdValueForSourceCostAmount(sourceCosts.gasFee, prices) !== null ? (
+                  <div className="text-[0.72rem] font-semibold text-muted/85">
+                    {formatUsdAmount(getUsdValueForSourceCostAmount(sourceCosts.gasFee, prices) ?? 0)}
+                  </div>
+                ) : null}
+              </div>
             </div>
           ) : null}
         </div>
@@ -160,4 +204,13 @@ function formatCountdown(remainingSeconds: number) {
   const minutes = Math.floor(remainingSeconds / 60);
   const seconds = remainingSeconds % 60;
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatUsdAmount(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: value < 1 ? 2 : 2,
+    maximumFractionDigits: value < 1 ? 4 : 2,
+  }).format(value);
 }

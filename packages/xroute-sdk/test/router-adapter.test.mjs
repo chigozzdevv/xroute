@@ -678,6 +678,278 @@ test("substrate XCM adapter can estimate hydration source costs before dispatch"
   ]);
 });
 
+test("substrate XCM adapter blocks Polkadot Hub dispatches when spendable DOT is below locked amount plus fee", async () => {
+  let signAndSubmitCalled = false;
+  const adapter = createSubstrateXcmAdapter({
+    chainKey: "polkadot-hub",
+    rpcUrl: "wss://polkadot-asset-hub.example.org",
+    privateKey: `0x${"11".repeat(32)}`,
+    codecContext: {
+      decodeVersionedXcm(messageHex) {
+        assert.equal(messageHex, "0xfeedface");
+        return { type: "V5", program: "asset-hub-xcm" };
+      },
+      decodeVersionedLocation() {
+        throw new Error("decodeVersionedLocation should not be used for execute mode");
+      },
+    },
+    signerFactory() {
+      return {
+        address: recipientAccount,
+        accountIdHex: `0x${"22".repeat(32)}`,
+        signer: { role: "test-signer" },
+      };
+    },
+    clientFactory() {
+      return {
+        getUnsafeApi() {
+          return {
+            apis: {
+              XcmPaymentApi: {
+                async query_xcm_weight() {
+                  return {
+                    success: true,
+                    value: {
+                      ref_time: 555n,
+                      proof_size: 777n,
+                    },
+                  };
+                },
+              },
+            },
+            query: {
+              System: {
+                Account: {
+                  async getValue(address) {
+                    assert.equal(address, recipientAccount);
+                    return {
+                      data: {
+                        free: 1500000000n,
+                        frozen: 0n,
+                      },
+                    };
+                  },
+                },
+              },
+            },
+            constants: {
+              Balances: {
+                async ExistentialDeposit() {
+                  return 100000000n;
+                },
+              },
+            },
+            tx: {
+              PolkadotXcm: {
+                execute() {
+                  return {
+                    async getEstimatedFees(from) {
+                      assert.equal(from, recipientAccount);
+                      return 200000000n;
+                    },
+                    async signAndSubmit() {
+                      signAndSubmitCalled = true;
+                      return "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+                    },
+                  };
+                },
+                send() {
+                  throw new Error("send should not be used for execute mode");
+                },
+              },
+            },
+          };
+        },
+      };
+    },
+  });
+
+  const intent = {
+    quoteId: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    refundAddress: recipientAccount,
+    deadline: 1_773_185_200,
+    action: { type: "transfer", params: {} },
+  };
+  const quote = {
+    quoteId: intent.quoteId,
+    fees: {
+      platformFee: { asset: "DOT", amount: 100000n },
+    },
+    submission: {
+      asset: "DOT",
+      amount: 1000000000n,
+      xcmFee: 300000000n,
+      destinationFee: 40000n,
+    },
+  };
+  const request = {
+    amount: 1000000000n,
+    xcmFee: 300000000n,
+    destinationFee: 40000n,
+    minOutputAmount: 0n,
+  };
+
+  const submitted = await adapter.submitIntent({
+    owner: `0x${"22".repeat(32)}`,
+    intent,
+    quote,
+    request,
+  });
+
+  await assert.rejects(
+    () =>
+      adapter.dispatchIntent({
+        intentId: submitted.intentId,
+        request: buildDispatchRequest(
+          createDispatchEnvelope({
+            mode: "execute",
+            message: "0xfeedface",
+          }),
+        ),
+      }),
+    /Insufficient spendable DOT on Polkadot Hub.*locked amount \+ 0\.02 estimated source fee.*only 0\.14 DOT is spendable/i,
+  );
+  assert.equal(signAndSubmitCalled, false);
+});
+
+test("substrate XCM adapter blocks dispatches when spendable native balance cannot cover the source fee", async () => {
+  let signAndSubmitCalled = false;
+  const adapter = createSubstrateXcmAdapter({
+    chainKey: "hydration",
+    rpcUrl: "wss://hydration.example.org",
+    privateKey: `0x${"11".repeat(32)}`,
+    codecContext: {
+      decodeVersionedXcm(messageHex) {
+        assert.equal(messageHex, "0xfeedface");
+        return { type: "V5", program: "hydration-xcm" };
+      },
+      decodeVersionedLocation() {
+        throw new Error("decodeVersionedLocation should not be used for execute mode");
+      },
+    },
+    signerFactory() {
+      return {
+        address: recipientAccount,
+        accountIdHex: `0x${"22".repeat(32)}`,
+        signer: { role: "test-signer" },
+      };
+    },
+    clientFactory() {
+      return {
+        getUnsafeApi() {
+          return {
+            apis: {
+              XcmPaymentApi: {
+                async query_xcm_weight() {
+                  return {
+                    success: true,
+                    value: {
+                      ref_time: 555n,
+                      proof_size: 777n,
+                    },
+                  };
+                },
+              },
+            },
+            query: {
+              System: {
+                Account: {
+                  async getValue(address) {
+                    assert.equal(address, recipientAccount);
+                    return {
+                      data: {
+                        free: 100000000000n,
+                        fee_frozen: 0n,
+                      },
+                    };
+                  },
+                },
+              },
+            },
+            constants: {
+              Balances: {
+                async ExistentialDeposit() {
+                  return 10000000000n;
+                },
+              },
+            },
+            tx: {
+              PolkadotXcm: {
+                execute() {
+                  return {
+                    async getEstimatedFees(from) {
+                      assert.equal(from, recipientAccount);
+                      return 95000000000n;
+                    },
+                    async signAndSubmit() {
+                      signAndSubmitCalled = true;
+                      return "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+                    },
+                  };
+                },
+                send() {
+                  throw new Error("send should not be used for execute mode");
+                },
+              },
+            },
+          };
+        },
+      };
+    },
+  });
+
+  const intent = {
+    quoteId: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    sourceChain: "hydration",
+    destinationChain: "moonbeam",
+    refundAddress: recipientAccount,
+    deadline: 1_773_185_200,
+    action: { type: "transfer", params: {} },
+  };
+  const quote = {
+    quoteId: intent.quoteId,
+    fees: {
+      platformFee: { asset: "DOT", amount: 180000n },
+    },
+    submission: {
+      asset: "DOT",
+      amount: 180000000n,
+      xcmFee: 260000000n,
+      destinationFee: 0n,
+    },
+  };
+  const request = {
+    amount: 180000000n,
+    xcmFee: 260000000n,
+    destinationFee: 0n,
+    minOutputAmount: 0n,
+  };
+
+  const submitted = await adapter.submitIntent({
+    owner: `0x${"22".repeat(32)}`,
+    intent,
+    quote,
+    request,
+  });
+
+  await assert.rejects(
+    () =>
+      adapter.dispatchIntent({
+        intentId: submitted.intentId,
+        request: buildDispatchRequest(
+          createDispatchEnvelope({
+            mode: "execute",
+            message: "0xfeedface",
+          }),
+        ),
+      }),
+    /Insufficient spendable HDX on Hydration.*Need 0\.095 HDX.*only 0\.09 HDX is spendable/i,
+  );
+  assert.equal(signAndSubmitCalled, false);
+});
+
 test("substrate XCM adapter finalizes failures and refunds hydration intents", async () => {
   const statusIndexer = new InMemoryStatusIndexer();
   const adapter = createSubstrateXcmAdapter({
@@ -813,6 +1085,117 @@ test("substrate XCM adapter finalizes failures and refunds hydration intents", a
   );
   assert.equal(statusIndexer.getStatus(submitted.intentId).refund.asset, "DOT");
   assert.equal(statusIndexer.getStatus(submitted.intentId).refund.amount, 440000000n);
+});
+
+test("substrate XCM adapter normalizes Invalid.Payment submission errors", async () => {
+  const adapter = createSubstrateXcmAdapter({
+    chainKey: "polkadot-hub",
+    rpcUrl: "wss://polkadot-asset-hub.example.org",
+    privateKey: `0x${"11".repeat(32)}`,
+    codecContext: {
+      decodeVersionedXcm() {
+        return { type: "V5", program: "asset-hub-xcm" };
+      },
+      decodeVersionedLocation() {
+        throw new Error("decodeVersionedLocation should not be used for execute mode");
+      },
+    },
+    signerFactory() {
+      return {
+        address: recipientAccount,
+        accountIdHex: `0x${"22".repeat(32)}`,
+        signer: { role: "test-signer" },
+      };
+    },
+    clientFactory() {
+      return {
+        getUnsafeApi() {
+          return {
+            apis: {
+              XcmPaymentApi: {
+                async query_xcm_weight() {
+                  return {
+                    success: true,
+                    value: {
+                      ref_time: 555n,
+                      proof_size: 777n,
+                    },
+                  };
+                },
+              },
+            },
+            tx: {
+              PolkadotXcm: {
+                execute() {
+                  return {
+                    async signAndSubmit() {
+                      throw {
+                        type: "Invalid",
+                        value: {
+                          type: "Payment",
+                        },
+                      };
+                    },
+                  };
+                },
+                send() {
+                  throw new Error("send should not be used for execute mode");
+                },
+              },
+            },
+          };
+        },
+      };
+    },
+  });
+
+  const intent = {
+    quoteId: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    refundAddress: recipientAccount,
+    deadline: 1_773_185_200,
+    action: { type: "transfer", params: {} },
+  };
+  const quote = {
+    quoteId: intent.quoteId,
+    fees: {
+      platformFee: { asset: "DOT", amount: 100000n },
+    },
+    submission: {
+      asset: "DOT",
+      amount: 1000000000n,
+      xcmFee: 300000000n,
+      destinationFee: 40000n,
+    },
+  };
+  const request = {
+    amount: 1000000000n,
+    xcmFee: 300000000n,
+    destinationFee: 40000n,
+    minOutputAmount: 0n,
+  };
+
+  const submitted = await adapter.submitIntent({
+    owner: `0x${"22".repeat(32)}`,
+    intent,
+    quote,
+    request,
+  });
+
+  await assert.rejects(
+    () =>
+      adapter.dispatchIntent({
+        intentId: submitted.intentId,
+        request: buildDispatchRequest(
+          createDispatchEnvelope({
+            mode: "execute",
+            message: "0xfeedface",
+          }),
+        ),
+      }),
+    /cannot pay the source-chain fee \(Invalid\.Payment\)/i,
+  );
 });
 
 test("substrate XCM adapter rejects owners that do not match the substrate signer", async () => {

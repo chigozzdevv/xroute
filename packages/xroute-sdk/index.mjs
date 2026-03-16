@@ -39,6 +39,8 @@ import { createHttpExecutorRelayerClient } from "./internal/relayer-client.mjs";
 export {
   connectInjectedWallet,
   getBrowserWalletAvailability,
+  listInjectedEvmProviders,
+  listInjectedSubstrateExtensions,
 } from "./wallet/index.mjs";
 export { createQuote } from "./quote/index.mjs";
 export { createStatusClient } from "./status/index.mjs";
@@ -442,39 +444,52 @@ function normalizeWalletConnector(wallet) {
 
 function createRelayerAwareRouterAdapter({ walletConnector, relayer }) {
   const walletRouterAdapter = walletConnector.routerAdapter;
-  const substrateDispatches = new Map();
+  const trackedDispatches = new Map();
 
   const hostedRouterAdapter = {
     async submitIntent(input) {
       const submitted = await walletRouterAdapter.submitIntent(input);
-
-      if (requiresSubstrateSourceMetadata(input?.intent?.sourceChain)) {
-        substrateDispatches.set(assertNonEmptyString("intentId", submitted.intentId), {
-          intent: input.intent,
-          quote: input.quote,
-          dispatchResult: null,
-          registrationResult: null,
-        });
-      }
+      trackedDispatches.set(assertNonEmptyString("intentId", submitted.intentId), {
+        intent: input.intent,
+        quote: input.quote,
+        dispatchResult: null,
+        registrationResult: null,
+      });
 
       return submitted;
     },
 
     async dispatchIntent({ intentId, request }) {
       const normalizedIntentId = assertNonEmptyString("intentId", intentId);
-      const state = substrateDispatches.get(normalizedIntentId);
-      const dispatchResult =
-        state?.dispatchResult
-        ?? await walletRouterAdapter.dispatchIntent({ intentId: normalizedIntentId, request });
-
+      const state = trackedDispatches.get(normalizedIntentId);
       if (!state) {
-        return dispatchResult;
+        return walletRouterAdapter.dispatchIntent({ intentId: normalizedIntentId, request });
       }
 
+      if (!requiresSubstrateSourceMetadata(state.intent?.sourceChain)) {
+        if (!state.registrationResult) {
+          state.registrationResult = await relayer.dispatch({
+            intentId: normalizedIntentId,
+            intent: state.intent,
+            quote: state.quote,
+            request,
+          });
+        }
+
+        return {
+          intentId: normalizedIntentId,
+          request,
+          strategy: "relayer-owned-dispatch",
+          relayerJob: state.registrationResult.job ?? state.registrationResult,
+        };
+      }
+
+      const dispatchResult =
+        state.dispatchResult
+        ?? await walletRouterAdapter.dispatchIntent({ intentId: normalizedIntentId, request });
       if (!state.dispatchResult) {
         state.dispatchResult = dispatchResult;
       }
-
       if (!state.registrationResult) {
         state.registrationResult = await relayer.dispatch({
           intentId: normalizedIntentId,
@@ -542,5 +557,5 @@ function defaultIntentDeadline() {
 }
 
 function requiresSubstrateSourceMetadata(sourceChain) {
-  return sourceChain === "hydration" || sourceChain === "bifrost";
+  return sourceChain === "polkadot-hub" || sourceChain === "hydration" || sourceChain === "bifrost";
 }

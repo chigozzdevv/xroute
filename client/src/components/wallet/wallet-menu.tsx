@@ -12,8 +12,10 @@ export function WalletMenu() {
     account,
     availableWallets,
     connectEvm,
+    connectEvmProvider,
     connectSubstrate,
     disconnect,
+    evmSession,
     error,
     isConnecting,
     sessions,
@@ -44,8 +46,18 @@ export function WalletMenu() {
     setIsOpen(false);
   }
 
+  async function handleConnectEvmProvider(providerId: string) {
+    await connectEvmProvider(providerId);
+    setIsOpen(false);
+  }
+
   async function handleConnectSubstrate() {
     await connectSubstrate();
+    setIsOpen(false);
+  }
+
+  async function handleConnectSubstrateExtension(extensionName: string) {
+    await connectSubstrate(extensionName);
     setIsOpen(false);
   }
 
@@ -111,7 +123,11 @@ export function WalletMenu() {
                 {connectedSessions.map((session) => (
                   <div key={session.kind} className="grid gap-0.5">
                     <span className="text-[0.72rem] uppercase tracking-[0.12em] text-muted">
-                      {session.kind === "substrate" ? "Substrate" : "EVM"}
+                      {session.kind === "substrate"
+                        ? `Substrate · ${session.extensionLabel || session.extensionName}`
+                        : session.providerLabel
+                          ? `EVM · ${session.providerLabel}`
+                          : "EVM"}
                     </span>
                     <span className="font-extrabold tracking-[-0.03em]">
                       {truncateAddress(session.account, 8, 6)}
@@ -127,27 +143,63 @@ export function WalletMenu() {
           )}
 
           <div className="grid gap-2">
-            {availableWallets.evm ? (
+            {availableWallets.evm.length === 1 ? (
               <button
                 type="button"
                 className="w-full rounded-2xl bg-teal/8 px-4 py-3 text-left font-bold transition duration-150 hover:bg-teal/14 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/30 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
                 onClick={handleConnectEvm}
                 role="menuitem"
               >
-                {sessions.evm ? "Reconnect EVM" : "Connect EVM"}
+                {sessions.evm
+                  ? `Reconnect ${evmSession?.providerLabel ?? availableWallets.evm[0].label}`
+                  : `Connect ${availableWallets.evm[0].label}`}
               </button>
             ) : null}
 
-            {availableWallets.substrate ? (
+            {availableWallets.evm.length > 1
+              ? availableWallets.evm.map((wallet) => (
+                  <button
+                    key={wallet.id}
+                    type="button"
+                    className="w-full rounded-2xl bg-teal/8 px-4 py-3 text-left font-bold transition duration-150 hover:bg-teal/14 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/30 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
+                    onClick={() => handleConnectEvmProvider(wallet.id)}
+                    role="menuitem"
+                  >
+                    {sessions.evm && evmSession?.providerId === wallet.id
+                      ? `Reconnect ${wallet.label}`
+                      : `Connect ${wallet.label}`}
+                  </button>
+                ))
+              : null}
+
+            {availableWallets.substrate.length === 1 ? (
               <button
                 type="button"
                 className="w-full rounded-2xl bg-orange/10 px-4 py-3 text-left font-bold transition duration-150 hover:bg-orange/16 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange/30 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
                 onClick={handleConnectSubstrate}
                 role="menuitem"
               >
-                {sessions.substrate ? "Reconnect Substrate" : "Connect Substrate"}
+                {sessions.substrate
+                  ? `Reconnect ${sessions.substrate.extensionLabel || availableWallets.substrate[0].label}`
+                  : `Connect ${availableWallets.substrate[0].label}`}
               </button>
             ) : null}
+
+            {availableWallets.substrate.length > 1
+              ? availableWallets.substrate.map((wallet) => (
+                  <button
+                    key={wallet.id}
+                    type="button"
+                    className="w-full rounded-2xl bg-orange/10 px-4 py-3 text-left font-bold transition duration-150 hover:bg-orange/16 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange/30 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
+                    onClick={() => handleConnectSubstrateExtension(wallet.id)}
+                    role="menuitem"
+                  >
+                    {sessions.substrate && sessions.substrate.extensionName === wallet.id
+                      ? `Reconnect ${wallet.label}`
+                      : `Connect ${wallet.label}`}
+                  </button>
+                ))
+              : null}
 
             {connectedSessions.length > 0 ? (
               <button

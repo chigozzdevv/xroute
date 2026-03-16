@@ -23,6 +23,12 @@ declare global {
   }
 
   interface EthereumProvider {
+    isMetaMask?: boolean;
+    isRabby?: boolean;
+    isCoinbaseWallet?: boolean;
+    isBraveWallet?: boolean;
+    isTrust?: boolean;
+    providers?: EthereumProvider[];
     request(args: {
       method: string;
       params?: unknown[] | Record<string, unknown>;

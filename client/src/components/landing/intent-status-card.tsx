@@ -107,9 +107,32 @@ export function IntentStatusCard({
       ) : null}
 
       {execution?.dispatched?.relayerJob?.id ? (
-        <p className="m-0 text-sm leading-6 text-muted">
-          Relayer job: {truncateAddress(execution.dispatched.relayerJob.id, 10, 6)}
-        </p>
+        <div className="grid gap-1 text-sm">
+          <div className="flex items-center gap-2">
+            <span className="text-muted">
+              Relayer job: {truncateAddress(execution.dispatched.relayerJob.id, 10, 6)}
+            </span>
+            {execution.dispatched.relayerJob.status ? (
+              <span
+                className={`rounded-full px-2 py-0.5 text-[0.65rem] font-semibold uppercase tracking-[0.08em] ${
+                  execution.dispatched.relayerJob.status === "completed"
+                    ? "bg-teal/10 text-teal"
+                    : execution.dispatched.relayerJob.status === "failed"
+                      ? "bg-danger/10 text-danger"
+                      : "bg-warning/10 text-warning"
+                }`}
+              >
+                {execution.dispatched.relayerJob.status}
+              </span>
+            ) : null}
+          </div>
+          {execution.dispatched.relayerJob.status === "failed" &&
+          execution.dispatched.relayerJob.lastError ? (
+            <p className="m-0 text-sm leading-6 text-danger">
+              {execution.dispatched.relayerJob.lastError}
+            </p>
+          ) : null}
+        </div>
       ) : null}
 
       {timeline.length > 0 ? (

@@ -100,11 +100,13 @@ export function createConfiguredXRouteClient({
           prepared.quote.submission.asset,
           prepared.quote.deploymentProfile,
         ),
+        unitDomain: "route-asset",
       }),
       gasFee: Object.freeze({
         asset: estimate.gasAsset,
         amount: estimate.gasFee,
         decimals: estimate.gasAssetDecimals,
+        unitDomain: estimate.gasAssetUnitDomain ?? "native",
       }),
       gasLimit: estimate.gasLimit,
       gasPrice: estimate.gasPrice,

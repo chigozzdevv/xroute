@@ -63,6 +63,41 @@ test("xroute api serves quote and relayer routes from one base url", async () =>
     const quotePayload = await quoteResponse.json();
     assert.equal(quotePayload.quote.quoteId, "0xfeedface");
 
+    const dispatchResponse = await fetch(`${service.url}/jobs/dispatch`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        intentId:
+          "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        intent: {
+          quoteId: "0xfeedface",
+          sourceChain: "moonbeam",
+          destinationChain: "hydration",
+          refundAddress,
+          deadline: 1_773_185_200,
+          action: {
+            type: "transfer",
+            params: {
+              asset: "DOT",
+              amount: "10",
+              recipient: "5Frecipient",
+            },
+          },
+        },
+        request: {
+          mode: 0,
+          destination: "0x",
+          message: "0x1234",
+        },
+      }),
+    });
+
+    assert.equal(dispatchResponse.status, 202);
+    const dispatchPayload = await dispatchResponse.json();
+    assert.equal(typeof dispatchPayload.job.id, "string");
+
     const jobsResponse = await fetch(`${service.url}/jobs`);
     assert.equal(jobsResponse.status, 401);
   } finally {

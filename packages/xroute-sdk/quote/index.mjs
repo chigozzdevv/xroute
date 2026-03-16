@@ -175,7 +175,12 @@ export function createHttpQuoteProvider({
       });
 
       if (!response.ok) {
-        throw new Error(`http quote failed with status ${response.status}`);
+        const detail = await readHttpQuoteErrorDetail(response);
+        throw new Error(
+          detail
+            ? `http quote failed with status ${response.status}: ${detail}`
+            : `http quote failed with status ${response.status}`,
+        );
       }
 
       const payload = await response.json();
@@ -190,6 +195,38 @@ export function createHttpQuoteProvider({
       };
     },
   };
+}
+
+async function readHttpQuoteErrorDetail(response) {
+  try {
+    if (typeof response?.json === "function") {
+      const payload = await response.json();
+      if (typeof payload?.error === "string" && payload.error.trim() !== "") {
+        return payload.error.trim();
+      }
+      if (typeof payload?.message === "string" && payload.message.trim() !== "") {
+        return payload.message.trim();
+      }
+      if (payload !== null && payload !== undefined) {
+        return JSON.stringify(payload);
+      }
+    }
+  } catch {
+    // Fall through to text parsing below.
+  }
+
+  try {
+    if (typeof response?.text === "function") {
+      const text = await response.text();
+      if (typeof text === "string" && text.trim() !== "") {
+        return text.trim();
+      }
+    }
+  } catch {
+    // Ignore secondary parsing failures and return no detail.
+  }
+
+  return "";
 }
 
 function buildBaseIntentInput(input, deploymentProfile) {

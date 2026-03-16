@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   formatAssetAmount,
   formatUnits,
+  getChainWalletType,
   parseAssetAmount,
   parseUnits,
 } from "../chains/index.mjs";
@@ -29,4 +30,9 @@ test("asset amount helpers use registry decimals", () => {
   assert.equal(parseAssetAmount("USDT", "49"), "49000000");
   assert.equal(formatAssetAmount("DOT", "250000000000"), "25");
   assert.equal(formatAssetAmount("USDT", "49000000"), "49");
+});
+
+test("chain wallet types classify Polkadot Hub as substrate and Moonbeam as evm", () => {
+  assert.equal(getChainWalletType("polkadot-hub"), "substrate");
+  assert.equal(getChainWalletType("moonbeam"), "evm");
 });

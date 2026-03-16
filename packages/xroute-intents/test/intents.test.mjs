@@ -101,6 +101,23 @@ test("createTransferIntent accepts substrate senderAddress values for substrate 
   assert.equal(intent.refundAddress, senderAddress);
 });
 
+test("createTransferIntent accepts substrate senderAddress values for Polkadot Hub", () => {
+  const senderAddress = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
+  const intent = createTransferIntent({
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    senderAddress,
+    deadline: 1_773_185_200,
+    params: {
+      asset: "DOT",
+      amount: "10",
+      recipient: "5Frecipient",
+    },
+  });
+
+  assert.equal(intent.refundAddress, senderAddress);
+});
+
 test("createSwapIntent accepts a multihop moonbeam to hydration swap", () => {
   const intent = createSwapIntent({
     sourceChain: "moonbeam",

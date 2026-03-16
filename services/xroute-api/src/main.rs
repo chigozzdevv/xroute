@@ -13,6 +13,7 @@ use xroute_service_shared::json_response;
 struct ApiApp {
     quote: QuoteApp,
     relayer: RelayerApp,
+    relayer_auth_token: String,
 }
 
 impl ApiApp {
@@ -20,16 +21,25 @@ impl ApiApp {
         let quote = QuoteApp::load()?;
         let relayer = RelayerApp::load()?;
         relayer.start_worker();
+        let relayer_auth_token = env::var("XROUTE_RELAYER_AUTH_TOKEN")
+            .map_err(|_| "XROUTE_RELAYER_AUTH_TOKEN is required".to_owned())?;
 
-        Ok(Self { quote, relayer })
+        Ok(Self {
+            quote,
+            relayer,
+            relayer_auth_token,
+        })
     }
 
-    async fn handle(&self, request: Request<Body>) -> Response<Body> {
+    async fn handle(&self, mut request: Request<Body>) -> Response<Body> {
         if request.method() == Method::OPTIONS {
             return cors_preflight_response();
         }
 
         let normalized_path = normalize_public_path(request.uri().path());
+        if request.method() == Method::POST && normalized_path == "/jobs/dispatch" {
+            inject_relayer_auth(&mut request, &self.relayer_auth_token);
+        }
 
         let response = match (request.method(), normalized_path.as_str()) {
             (&Method::GET, "/healthz") => self.handle_health().await,
@@ -218,8 +228,17 @@ fn with_cors(mut response: Response<Body>) -> Response<Body> {
     );
     headers.insert(
         "access-control-allow-headers",
-        "content-type,x-api-key,x-xroute-deployment-profile".parse().unwrap(),
+        "content-type,x-api-key,x-xroute-deployment-profile"
+            .parse()
+            .unwrap(),
     );
     headers.insert("access-control-max-age", "86400".parse().unwrap());
     response
+}
+
+fn inject_relayer_auth(request: &mut Request<Body>, auth_token: &str) {
+    let value = format!("Bearer {}", auth_token.trim());
+    if let Ok(header) = value.parse() {
+        request.headers_mut().insert("authorization", header);
+    }
 }

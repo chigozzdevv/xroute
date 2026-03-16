@@ -18,6 +18,7 @@ import { QuoteFooter } from "./quote-footer";
 import { usePersistedState } from "@/lib/persisted-state";
 import {
   canParseAssetUnits,
+  chainLabel,
   type ChainKey,
   type ExecuteType,
   coerceOptionValue,
@@ -419,7 +420,7 @@ export function ExecuteForm() {
         </button>
         {!walletReady ? (
           <p className="m-0 text-center text-sm leading-6 text-muted">
-            {`Connect a ${walletRequirementLabel(form.sourceChain).toLowerCase()} to execute from ${form.sourceChain}.`}
+            {`Connect a ${walletRequirementLabel(form.sourceChain).toLowerCase()} to execute from ${chainLabel(form.sourceChain)}.`}
           </p>
         ) : null}
         {inlineError ? (

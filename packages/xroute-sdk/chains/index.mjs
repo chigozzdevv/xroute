@@ -25,7 +25,7 @@ export {
   DEPLOYMENT_PROFILES,
 } from "../../xroute-precompile-interfaces/index.mjs";
 
-const EVM_CHAIN_KEYS = new Set(["polkadot-hub", "moonbeam"]);
+const EVM_CHAIN_KEYS = new Set(["moonbeam"]);
 
 export function getAssetDecimals(assetKey, deploymentProfile) {
   return getAsset(assetKey, deploymentProfile).decimals;

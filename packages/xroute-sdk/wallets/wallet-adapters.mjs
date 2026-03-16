@@ -12,6 +12,7 @@ import {
   assertNonEmptyString,
 } from "../../xroute-types/index.mjs";
 import { computeExecutionHash } from "../../xroute-xcm/index.mjs";
+import { formatUnits, getAssetDecimals } from "../chains/index.mjs";
 import { NATIVE_ASSET_ADDRESS as ROUTER_NATIVE_ASSET_ADDRESS } from "../routers/constants.mjs";
 import { createSubstrateXcmAdapter } from "../routers/substrate-xcm-adapter.mjs";
 
@@ -40,7 +41,10 @@ export function createEvmWalletAdapter({
   statusProvider = null,
   assetAddresses = {},
   gasLimit = null,
+  gasAssetMetadata = null,
   autoApprove = true,
+  debugTransactions = false,
+  debugLogger = null,
   receiptPollIntervalMs = 1_000,
   receiptTimeoutMs = 120_000,
   fetchImpl = globalThis.fetch,
@@ -72,6 +76,15 @@ export function createEvmWalletAdapter({
       ? fetchImpl
       : null;
   const readOnlyRpcUrl = normalizedExpectedNetwork?.rpcUrls?.[0] ?? null;
+  const normalizedGasAssetMetadata = normalizeGasAssetMetadata(
+    gasAssetMetadata,
+    normalizedExpectedNetwork,
+    normalizedChainKey,
+  );
+  const normalizedDebugLogger =
+    debugTransactions
+      ? (typeof debugLogger === "function" ? debugLogger : defaultTransactionDebugLogger)
+      : null;
   const assetAddressResolver = createWalletAssetAddressResolver(assetAddresses);
 
   let cachedAddress = null;
@@ -148,10 +161,24 @@ export function createEvmWalletAdapter({
       data: assertHexString("transaction.data", data),
       ...(value !== null ? { value: toRpcQuantity(value, "value") } : {}),
     };
+    const estimateRequest = createEstimationRequestTransport();
     const gas =
       normalizedGasLimit
-      ?? await estimateGasWithHeadroom(baseTxParams);
-    const gasPrice = await readGasPrice();
+      ?? await (async () => {
+        try {
+          return await estimateGasWithHeadroomUsing(estimateRequest, baseTxParams);
+        } catch {
+          return resolveDefaultSubmitGasLimit();
+        }
+      })();
+    const gasPrice =
+      await (async () => {
+        try {
+          return await readGasPriceWith(estimateRequest);
+        } catch {
+          return await readGasPrice();
+        }
+      })();
     await ensureSufficientNativeBalanceForTransaction({
       ownerAddress: from,
       value: value ?? 0n,
@@ -162,6 +189,14 @@ export function createEvmWalletAdapter({
       ...baseTxParams,
       gas: toRpcQuantity(gas, "gasLimit"),
     };
+    emitTransactionDebug("eth_sendTransaction.request", {
+      chainKey: normalizedChainKey,
+      txParams,
+      gasPrice: toRpcQuantity(gasPrice, "gasPrice"),
+      estimatedGasFee: gas * gasPrice,
+      requiredNativeBalance: (value ?? 0n) + (gas * gasPrice),
+      readOnlyRpcUrl,
+    });
 
     const txHash = assertHexString(
       "eth_sendTransaction.txHash",
@@ -170,6 +205,10 @@ export function createEvmWalletAdapter({
         params: [txParams],
       }),
     );
+    emitTransactionDebug("eth_sendTransaction.response", {
+      chainKey: normalizedChainKey,
+      txHash,
+    });
 
     const receipt = await waitForEvmReceipt({
       provider,
@@ -221,10 +260,8 @@ export function createEvmWalletAdapter({
   }
 
   async function readAllowance({ assetAddress, ownerAddress, spenderAddress }) {
-    if (ensuredChainId !== normalizedExpectedNetwork?.chainIdHex) {
-      await ensureExpectedChain();
-    }
-    const result = await provider.request({
+    const requestImpl = createBalanceReadTransport();
+    const result = await requestImpl({
       method: "eth_call",
       params: [
         {
@@ -239,10 +276,8 @@ export function createEvmWalletAdapter({
   }
 
   async function readTokenBalance({ assetAddress, ownerAddress }) {
-    if (ensuredChainId !== normalizedExpectedNetwork?.chainIdHex) {
-      await ensureExpectedChain();
-    }
-    const result = await provider.request({
+    const requestImpl = createBalanceReadTransport();
+    const result = await requestImpl({
       method: "eth_call",
       params: [
         {
@@ -257,10 +292,8 @@ export function createEvmWalletAdapter({
   }
 
   async function readNativeBalance(ownerAddress) {
-    if (ensuredChainId !== normalizedExpectedNetwork?.chainIdHex) {
-      await ensureExpectedChain();
-    }
-    const result = await provider.request({
+    const requestImpl = createBalanceReadTransport();
+    const result = await requestImpl({
       method: "eth_getBalance",
       params: [assertAddress("ownerAddress", ownerAddress), "latest"],
     });
@@ -287,15 +320,20 @@ export function createEvmWalletAdapter({
   }
 
   async function ensureSufficientAssetBalance({ assetAddress, ownerAddress, requiredAmount }) {
+    const assetMetadata = resolveSpendAssetMetadata(assetAddress);
+    const gasAsset = resolveGasAssetMetadata();
     if (isNativeAddress(assetAddress)) {
       const balance = await readNativeBalance(ownerAddress);
       if (balance < requiredAmount) {
         throw createInsufficientBalanceError({
-          chainKey: normalizedChainKey,
+          chainKey: normalizedExpectedNetwork?.chainName ?? normalizedChainKey,
           assetAddress,
           ownerAddress,
           balance,
           needed: requiredAmount,
+          assetSymbol: assetMetadata.symbol,
+          assetDecimals: assetMetadata.decimals,
+          gasAssetSymbol: gasAsset.asset,
         });
       }
       return balance;
@@ -304,11 +342,14 @@ export function createEvmWalletAdapter({
     const balance = await readTokenBalance({ assetAddress, ownerAddress });
     if (balance < requiredAmount) {
       throw createInsufficientBalanceError({
-        chainKey: normalizedChainKey,
+        chainKey: normalizedExpectedNetwork?.chainName ?? normalizedChainKey,
         assetAddress,
         ownerAddress,
         balance,
         needed: requiredAmount,
+        assetSymbol: assetMetadata.symbol,
+        assetDecimals: assetMetadata.decimals,
+        gasAssetSymbol: gasAsset.asset,
       });
     }
     return balance;
@@ -323,7 +364,7 @@ export function createEvmWalletAdapter({
         }),
         "eth_estimateGas",
       );
-      return (estimate * 12n + 9n) / 10n;
+      return clampEstimatedGasLimit(txParams, (estimate * 12n + 9n) / 10n);
     } catch (error) {
       throw describeRpcPreflightError(error, normalizedChainKey);
     }
@@ -338,7 +379,7 @@ export function createEvmWalletAdapter({
         }),
         "eth_estimateGas",
       );
-      return (estimate * 12n + 9n) / 10n;
+      return clampEstimatedGasLimit(txParams, (estimate * 12n + 9n) / 10n);
     } catch (error) {
       throw describeRpcPreflightError(error, normalizedChainKey);
     }
@@ -385,29 +426,82 @@ export function createEvmWalletAdapter({
   }
 
   function resolveGasAssetMetadata() {
-    const nativeCurrency = normalizedExpectedNetwork?.nativeCurrency;
-    if (nativeCurrency?.symbol) {
-      return {
-        asset: assertNonEmptyString("nativeCurrency.symbol", nativeCurrency.symbol),
-        decimals:
-          Number.isInteger(nativeCurrency.decimals) && nativeCurrency.decimals >= 0
-            ? nativeCurrency.decimals
-            : 18,
-      };
+    if (normalizedGasAssetMetadata) {
+      return normalizedGasAssetMetadata;
     }
 
     switch (normalizedChainKey) {
       case "moonbeam":
-        return { asset: "GLMR", decimals: 18 };
+        return { asset: "GLMR", decimals: 18, unitDomain: "evm-native" };
       case "polkadot-hub":
-        return { asset: "DOT", decimals: 18 };
+        return { asset: "DOT", decimals: 18, unitDomain: "polkadot-hub-evm-native" };
       default:
-        return { asset: "native", decimals: 18 };
+        return { asset: "native", decimals: 18, unitDomain: "native" };
     }
+  }
+
+  function resolveSpendAssetMetadata(assetAddress) {
+    if (isNativeAddress(assetAddress)) {
+      const gasAsset = resolveGasAssetMetadata();
+      return {
+        symbol: gasAsset.asset,
+        decimals: gasAsset.decimals,
+      };
+    }
+
+    const normalizedAssetAddress = assertAddress("assetAddress", assetAddress).toLowerCase();
+    const chainScopedAddresses = assetAddresses?.[normalizedChainKey];
+    if (chainScopedAddresses && typeof chainScopedAddresses === "object") {
+      for (const [assetSymbol, configuredAddress] of Object.entries(chainScopedAddresses)) {
+        if (
+          typeof configuredAddress === "string"
+          && configuredAddress.toLowerCase() === normalizedAssetAddress
+        ) {
+          return {
+            symbol: assetSymbol,
+            decimals: resolveKnownAssetDecimals(assetSymbol),
+          };
+        }
+      }
+    }
+
+    return {
+      symbol: normalizedAssetAddress,
+      decimals: 18,
+    };
   }
 
   function resolveDefaultSubmitGasLimit() {
     return DEFAULT_EVM_SUBMIT_GAS_LIMITS[normalizedChainKey] ?? 250000n;
+  }
+
+  function clampEstimatedGasLimit(txParams, gasLimit) {
+    const ceiling = resolveEstimatedGasLimitCeiling(txParams);
+    if (ceiling !== null && gasLimit > ceiling) {
+      return ceiling;
+    }
+
+    return gasLimit;
+  }
+
+  function resolveEstimatedGasLimitCeiling(txParams) {
+    const transactionTo =
+      typeof txParams?.to === "string"
+        ? txParams.to.toLowerCase()
+        : null;
+    const transactionData =
+      typeof txParams?.data === "string"
+        ? txParams.data.toLowerCase()
+        : "";
+
+    if (
+      transactionTo === normalizedRouterAddress
+      && transactionData.startsWith(EVM_SUBMIT_INTENT_SELECTOR)
+    ) {
+      return resolveDefaultSubmitGasLimit();
+    }
+
+    return null;
   }
 
   async function requestViaWalletProvider({ method, params }) {
@@ -465,6 +559,20 @@ export function createEvmWalletAdapter({
     };
   }
 
+  function createBalanceReadTransport() {
+    if (!readOnlyRpcUrl || !normalizedFetchImpl) {
+      return requestViaWalletProvider;
+    }
+
+    return async ({ method, params }) => {
+      try {
+        return await requestViaReadonlyRpc({ method, params });
+      } catch {
+        return requestViaWalletProvider({ method, params });
+      }
+    };
+  }
+
   const routerAdapter = {
     async estimateSubmissionCost({ owner, request }) {
       const normalizedRequest = normalizeRouterIntentRequest(request);
@@ -507,12 +615,14 @@ export function createEvmWalletAdapter({
         gasFee: gasLimit * gasPrice,
         gasAsset: gasAsset.asset,
         gasAssetDecimals: gasAsset.decimals,
+        gasAssetUnitDomain: gasAsset.unitDomain ?? "native",
         value,
       });
     },
 
     async submitIntent({ owner, request }) {
       const normalizedRequest = normalizeRouterIntentRequest(request);
+      assertSupportedNativeIntentSubmission(normalizedRequest);
       const signerAddress = await getAddress();
       if (owner) {
         const normalizedOwner = assertAddress("owner", owner).toLowerCase();
@@ -646,6 +756,22 @@ export function createEvmWalletAdapter({
     assetAddressResolver,
     chainKey: normalizedChainKey,
   };
+
+  function emitTransactionDebug(event, payload) {
+    if (!normalizedDebugLogger) {
+      return;
+    }
+
+    normalizedDebugLogger(event, serializeDebugPayload(payload));
+  }
+
+  function assertSupportedNativeIntentSubmission(request) {
+    if (normalizedChainKey === "polkadot-hub" && isNativeAddress(request.asset)) {
+      throw new Error(
+        "Polkadot Hub native DOT submission is disabled in the EVM wallet flow because route amounts use 10-decimal DOT while wallet native value uses 18-decimal DOT. Use Moonbeam with DOT + GLMR for now.",
+      );
+    }
+  }
 }
 
 export function createSubstrateWalletAdapter({
@@ -1123,6 +1249,46 @@ function parseRpcUint256(value, name) {
   return BigInt(value);
 }
 
+function normalizeGasAssetMetadata(metadata, expectedNetwork, chainKey) {
+  if (metadata && typeof metadata === "object") {
+    return {
+      asset: assertNonEmptyString("gasAssetMetadata.asset", metadata.asset),
+      decimals: assertPositiveInteger("gasAssetMetadata.decimals", metadata.decimals),
+      unitDomain:
+        typeof metadata.unitDomain === "string" && metadata.unitDomain.trim() !== ""
+          ? metadata.unitDomain.trim()
+          : "native",
+    };
+  }
+
+  const nativeCurrency = expectedNetwork?.nativeCurrency;
+  if (nativeCurrency?.symbol) {
+    return {
+      asset: assertNonEmptyString("nativeCurrency.symbol", nativeCurrency.symbol),
+      decimals:
+        Number.isInteger(nativeCurrency.decimals) && nativeCurrency.decimals >= 0
+          ? nativeCurrency.decimals
+          : 18,
+      unitDomain: chainKey === "polkadot-hub" ? "polkadot-hub-evm-native" : "native",
+    };
+  }
+
+  return null;
+}
+
+function defaultTransactionDebugLogger(event, payload) {
+  console.info(`[xroute-sdk] ${event}`, payload);
+}
+
+function serializeDebugPayload(payload) {
+  return JSON.parse(JSON.stringify(payload, (_key, value) => {
+    if (typeof value === "bigint") {
+      return value.toString();
+    }
+    return value;
+  }));
+}
+
 function normalizeExpectedEvmNetwork(network) {
   if (!network) {
     return null;
@@ -1207,10 +1373,59 @@ function createInsufficientBalanceError({
   ownerAddress,
   balance,
   needed,
+  assetSymbol = null,
+  assetDecimals = 18,
+  gasAssetSymbol = null,
 }) {
-  return new Error(
-    `Insufficient balance on ${chainKey}. Wallet ${ownerAddress} has ${balance.toString()} units of ${assetAddress} but needs ${needed.toString()}.`,
-  );
+  const resolvedAssetSymbol =
+    typeof assetSymbol === "string" && assetSymbol.trim() !== ""
+      ? assetSymbol.trim()
+      : shortenHexValue(assetAddress);
+  const resolvedDecimals = normalizeDisplayDecimals(assetDecimals);
+  const formattedBalance = formatUnits(balance, resolvedDecimals, {
+    trimTrailingZeros: true,
+  });
+  const formattedNeeded = formatUnits(needed, resolvedDecimals, {
+    trimTrailingZeros: true,
+  });
+  let message =
+    `Insufficient ${resolvedAssetSymbol} balance on ${chainKey}. `
+    + `This route needs ${formattedNeeded} ${resolvedAssetSymbol}, `
+    + `but wallet ${shortenHexValue(ownerAddress)} has ${formattedBalance} ${resolvedAssetSymbol}.`;
+
+  if (
+    typeof gasAssetSymbol === "string"
+    && gasAssetSymbol.trim() !== ""
+    && gasAssetSymbol.trim() !== resolvedAssetSymbol
+  ) {
+    message += ` ${gasAssetSymbol.trim()} only covers gas; you also need ${resolvedAssetSymbol} for the routed amount.`;
+  }
+
+  return new Error(message);
+}
+
+function resolveKnownAssetDecimals(assetSymbol) {
+  try {
+    return getAssetDecimals(assetSymbol);
+  } catch {
+    return 18;
+  }
+}
+
+function normalizeDisplayDecimals(value) {
+  return Number.isInteger(value) && value >= 0 ? value : 18;
+}
+
+function shortenHexValue(value) {
+  if (typeof value !== "string") {
+    return String(value);
+  }
+
+  if (/^0x[0-9a-fA-F]{40}$/.test(value)) {
+    return `${value.slice(0, 6)}...${value.slice(-4)}`;
+  }
+
+  return value;
 }
 
 function describeRpcPreflightError(error, chainKey) {
