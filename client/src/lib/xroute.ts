@@ -33,7 +33,6 @@ export type Option<T extends string = string> = {
 
 export const xrouteClient = createXRouteClient({
   apiKey: process.env.NEXT_PUBLIC_XROUTE_API_KEY?.trim() || undefined,
-  baseUrl: process.env.NEXT_PUBLIC_XROUTE_API_BASE_URL?.trim() || undefined,
 });
 
 const TX_EXPLORER_BASE_URLS = Object.freeze({
