@@ -177,7 +177,7 @@ test("buildExecutionEnvelope encodes a reserve-withdraw multihop swap with hub s
       amountIn: "100000000000",
       minAmountOut: "49000000",
       settlementChain: "polkadot-hub",
-      recipient: aliceAddress,
+      recipient: "0x1111111111111111111111111111111111111111",
     },
   });
   const quote = await mainnetQuoteProvider.quote(intent);
@@ -187,6 +187,7 @@ test("buildExecutionEnvelope encodes a reserve-withdraw multihop swap with hub s
   const reserveWithdraw = decoded.value[2];
   const reserveDelivery = reserveWithdraw.value.xcm[1];
   const destinationInstructions = reserveDelivery.value.xcm;
+  const beneficiary = destinationInstructions[2].value.xcm[1].value.beneficiary;
 
   assert.equal(decoded.value[1].type, "WithdrawAsset");
   assert.equal(reserveWithdraw.type, "InitiateReserveWithdraw");
@@ -195,6 +196,12 @@ test("buildExecutionEnvelope encodes a reserve-withdraw multihop swap with hub s
   assert.equal(destinationInstructions[2].type, "InitiateReserveWithdraw");
   assert.equal(destinationInstructions[2].value.xcm[0].type, "BuyExecution");
   assert.equal(destinationInstructions[2].value.xcm[1].type, "DepositAsset");
+  assert.equal(beneficiary.interior.type, "X1");
+  assert.equal(beneficiary.interior.value.type, "AccountKey20");
+  assert.equal(
+    beneficiary.interior.value.value.key.asHex(),
+    "0x1111111111111111111111111111111111111111",
+  );
 });
 
 test("buildExecutionEnvelope encodes a moonbeam call via Transact", async () => {

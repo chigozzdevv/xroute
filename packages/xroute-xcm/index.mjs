@@ -736,7 +736,7 @@ function buildBeneficiaryJunction(chainKey, recipient) {
 }
 
 function supportsAccountKey20(chainKey) {
-  return chainKey === "moonbeam";
+  return chainKey === "moonbeam" || chainKey === "polkadot-hub";
 }
 
 function looksLikeAccountKey20(value) {
@@ -819,5 +819,6 @@ function buildJunction(junction) {
 }
 
 function hexToBytes(value) {
-  return hexToBytesRaw(assertHexString("hex", value));
+  const normalized = assertHexString("hex", value);
+  return hexToBytesRaw(normalized.startsWith("0x") ? normalized.slice(2) : normalized);
 }

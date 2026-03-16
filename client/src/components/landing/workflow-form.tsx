@@ -44,6 +44,7 @@ import {
 } from "./form-classes";
 import { PoweredBy } from "./powered-by";
 import { TxHashLink } from "./tx-hash-link";
+import { usePersistedState } from "@/lib/persisted-state";
 import { Select } from "@/components/ui/select";
 import { useWallet } from "@/hooks/use-wallet";
 
@@ -105,7 +106,7 @@ let nextWorkflowStepId = 0;
 
 function createWorkflowStepId() {
   nextWorkflowStepId += 1;
-  return `workflow-step-${nextWorkflowStepId}`;
+  return `workflow-step-${Date.now()}-${nextWorkflowStepId}`;
 }
 
 function createTransferStep(): TransferWorkflowStep {
@@ -246,7 +247,10 @@ function buildWorkflowIntent(step: WorkflowStep, ownerAddress: string) {
 }
 
 export function WorkflowForm() {
-  const [steps, setSteps] = useState<WorkflowStep[]>([]);
+  const [steps, setSteps] = usePersistedState<WorkflowStep[]>(
+    "xroute.form.workflow.steps.v1",
+    () => [],
+  );
   const [showPicker, setShowPicker] = useState(false);
   const [openStepId, setOpenStepId] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);

@@ -20,6 +20,21 @@ const HOSTED_EVM_WALLET_DEFAULTS = Object.freeze({
   mainnet: Object.freeze({
     "polkadot-hub": Object.freeze({
       routerAddress: "0xaa696e1929b0284f3a0bbc2cab2653cae6c8f7a8",
+      network: Object.freeze({
+        chainId: 420420419,
+        chainName: "Polkadot Hub",
+        nativeCurrency: Object.freeze({
+          name: "DOT",
+          symbol: "DOT",
+          decimals: 18,
+        }),
+        rpcUrls: Object.freeze([
+          "https://eth-rpc.polkadot.io/",
+        ]),
+        blockExplorerUrls: Object.freeze([
+          "https://blockscout.polkadot.io/",
+        ]),
+      }),
       assetAddresses: Object.freeze({
         "polkadot-hub": Object.freeze({
           DOT: NATIVE_ASSET_ADDRESS,
@@ -28,6 +43,21 @@ const HOSTED_EVM_WALLET_DEFAULTS = Object.freeze({
     }),
     moonbeam: Object.freeze({
       routerAddress: "0x33810619b522ee56dcd0cfba53822fad5ff48fdd",
+      network: Object.freeze({
+        chainId: 1284,
+        chainName: "Moonbeam",
+        nativeCurrency: Object.freeze({
+          name: "GLMR",
+          symbol: "GLMR",
+          decimals: 18,
+        }),
+        rpcUrls: Object.freeze([
+          "https://rpc.api.moonbeam.network",
+        ]),
+        blockExplorerUrls: Object.freeze([
+          "https://moonbeam.moonscan.io/",
+        ]),
+      }),
       assetAddresses: Object.freeze({
         moonbeam: Object.freeze({
           DOT: "0xffffffff1fcacbd218edc0eba20fc2308c778080",
@@ -115,6 +145,7 @@ function createEvmWallet({
     provider,
     chainKey: normalizedChainKey,
     routerAddress: routerAddress ?? defaultConfig?.routerAddress,
+    expectedNetwork: defaultConfig?.network ?? null,
     statusProvider,
     assetAddresses: mergeAssetAddressMaps(
       defaultConfig?.assetAddresses,
@@ -173,6 +204,7 @@ function createSubstrateWallet({
 async function connectInjectedEvmWallet({
   provider,
   browserWindow = globalThis.window,
+  requestAccess = true,
 } = {}) {
   const resolvedProvider = provider ?? browserWindow?.ethereum;
   if (!resolvedProvider) {
@@ -180,12 +212,16 @@ async function connectInjectedEvmWallet({
   }
 
   const accounts = await resolvedProvider.request({
-    method: "eth_requestAccounts",
+    method: requestAccess ? "eth_requestAccounts" : "eth_accounts",
   });
   const nextAccounts = Array.isArray(accounts) ? accounts : [];
   const account = nextAccounts[0];
   if (!account) {
-    throw new Error("No EVM account was returned by the wallet.");
+    throw new Error(
+      requestAccess
+        ? "No EVM account was returned by the wallet."
+        : "No connected EVM account is available.",
+    );
   }
 
   return {

@@ -161,6 +161,23 @@ function createHostedXRouteClient({
     });
   }
 
+  async function maybeEstimateSourceCosts({ intent, quote, owner }) {
+    const entry = resolveWalletEntry(intent.sourceChain);
+    if (!entry?.connectedClient?.estimateSourceCosts) {
+      return null;
+    }
+
+    try {
+      return await entry.connectedClient.estimateSourceCosts({
+        intent,
+        quote,
+        owner,
+      });
+    } catch {
+      return null;
+    }
+  }
+
   const api = {
     connectWallet(typeOrWallet, walletOptions) {
       const explicitChainKey =
@@ -208,7 +225,11 @@ function createHostedXRouteClient({
         throw new Error("quote id must match the normalized intent quote id");
       }
 
-      return { intent, quote };
+      return {
+        intent,
+        quote,
+        sourceCosts: await maybeEstimateSourceCosts({ intent, quote }),
+      };
     },
 
     async transfer(input) {
@@ -486,6 +507,10 @@ function createRelayerAwareRouterAdapter({ walletConnector, relayer }) {
   if (typeof walletRouterAdapter.previewRefundableAmount === "function") {
     hostedRouterAdapter.previewRefundableAmount =
       walletRouterAdapter.previewRefundableAmount.bind(walletRouterAdapter);
+  }
+  if (typeof walletRouterAdapter.estimateSubmissionCost === "function") {
+    hostedRouterAdapter.estimateSubmissionCost =
+      walletRouterAdapter.estimateSubmissionCost.bind(walletRouterAdapter);
   }
 
   return hostedRouterAdapter;

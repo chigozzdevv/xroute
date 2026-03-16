@@ -15,7 +15,9 @@ import {
 import { IntentStatusCard } from "./intent-status-card";
 import { PoweredBy } from "./powered-by";
 import { QuoteFooter } from "./quote-footer";
+import { usePersistedState } from "@/lib/persisted-state";
 import {
+  canParseAssetUnits,
   type ChainKey,
   type ExecuteType,
   coerceOptionValue,
@@ -63,23 +65,26 @@ function createInitialExecuteForm(): ExecuteFormState {
   };
 }
 
-function canBuildQuote(form: ExecuteFormState, ownerAddress?: string) {
+function canBuildQuote(form: ExecuteFormState) {
   if (form.executionType !== "call") {
     return null;
   }
 
-  if (!form.maxPaymentAmount.trim() || !ownerAddress?.trim()) {
+  if (!form.maxPaymentAmount.trim()) {
     return null;
   }
 
   if (!form.contractAddress.trim() || !form.calldata.trim()) {
     return null;
   }
-  return ownerAddress.trim();
+  return true;
 }
 
 export function ExecuteForm() {
-  const [form, setForm] = useState<ExecuteFormState>(createInitialExecuteForm);
+  const [form, setForm] = usePersistedState(
+    "xroute.form.execute.v1",
+    createInitialExecuteForm,
+  );
   const { sessions } = useWallet();
   const [showAdvanced, setShowAdvanced] = useState(false);
   const executionTypeOptions = useMemo(
@@ -103,22 +108,28 @@ export function ExecuteForm() {
   const ownerAddress = resolveWalletAccountForChain(sessions, form.sourceChain) ?? undefined;
   const quoteRequest = useMemo(
     () => {
-      const walletAddress = canBuildQuote(form, ownerAddress);
-      if (!walletAddress) {
+      if (!canBuildQuote(form) || !canParseAssetUnits(executionAsset, form.maxPaymentAmount)) {
         return null;
       }
 
       return createExecuteQuoteRequest({
         ...form,
         asset: executionAsset,
-        ownerAddress: walletAddress,
+        ownerAddress,
       });
     },
     [executionAsset, form, ownerAddress],
   );
-  const { quote, error: quoteError } = useXRouteQuote(quoteRequest);
+  const {
+    quote,
+    sourceCosts,
+    error: quoteError,
+    lastUpdatedAtMs,
+    refreshMs,
+  } = useXRouteQuote(quoteRequest);
   const execution = useXRouteExecution();
   const walletReady = walletMatchesChain(sessions, form.sourceChain);
+  const inlineError = execution.execution ? null : execution.error ?? quoteError;
 
   async function handleSubmit() {
     if (!walletReady || form.executionType !== "call") {
@@ -384,14 +395,14 @@ export function ExecuteForm() {
             ) : null}
       </div>
 
-      <QuoteFooter quote={quote} />
+      <QuoteFooter
+        quote={quote}
+        sourceCosts={sourceCosts}
+        lastUpdatedAtMs={lastUpdatedAtMs}
+        refreshMs={refreshMs}
+      />
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        {!walletReady ? (
-          <p className="m-0 text-sm leading-6 text-muted">
-            {`Connect a ${walletRequirementLabel(form.sourceChain).toLowerCase()} to quote and execute from ${form.sourceChain}.`}
-          </p>
-        ) : <span />}
+      <div className="grid justify-items-center gap-2">
         <button
           type="button"
           className={actionButtonClass}
@@ -406,20 +417,23 @@ export function ExecuteForm() {
         >
           {execution.isSubmitting ? "Submitting..." : "Call"}
         </button>
+        {!walletReady ? (
+          <p className="m-0 text-center text-sm leading-6 text-muted">
+            {`Connect a ${walletRequirementLabel(form.sourceChain).toLowerCase()} to execute from ${form.sourceChain}.`}
+          </p>
+        ) : null}
+        {inlineError ? (
+          <p className="m-0 text-center text-sm leading-6 text-danger">{inlineError}</p>
+        ) : null}
       </div>
 
       <IntentStatusCard
         execution={execution.execution}
         status={execution.status}
         timeline={execution.timeline}
-        error={execution.error ?? quoteError}
+        error={execution.execution ? execution.error : null}
         isSubmitting={execution.isSubmitting}
         isTracking={execution.isTracking}
-        idleMessage={
-          walletReady
-            ? null
-            : `This route requires a ${walletRequirementLabel(form.sourceChain).toLowerCase()}.`
-        }
       />
 
       <PoweredBy />

@@ -23,6 +23,7 @@ const EVM_REFUND_SELECTOR = "0xef836308";
 const EVM_PREVIEW_LOCKED_AMOUNT_SELECTOR = "0x12747753";
 const EVM_PREVIEW_REFUNDABLE_SELECTOR = "0xbeb8511f";
 const EVM_ALLOWANCE_SELECTOR = "0xdd62ed3e";
+const EVM_BALANCE_OF_SELECTOR = "0x70a08231";
 const EVM_APPROVE_SELECTOR = "0x095ea7b3";
 const EVM_INTENT_SUBMITTED_TOPIC =
   "0x958ded10bf7c27600499d19f87c591832d502b52c7439827fabc5c4fe5d7d028";
@@ -31,6 +32,7 @@ export function createEvmWalletAdapter({
   provider,
   chainKey = "polkadot-hub",
   routerAddress,
+  expectedNetwork = null,
   statusProvider = null,
   assetAddresses = {},
   gasLimit = null,
@@ -51,6 +53,7 @@ export function createEvmWalletAdapter({
     gasLimit === null || gasLimit === undefined
       ? null
       : toBigInt(gasLimit, "gasLimit");
+  const normalizedExpectedNetwork = normalizeExpectedEvmNetwork(expectedNetwork);
   const normalizedPollIntervalMs = assertPositiveInteger(
     "receiptPollIntervalMs",
     receiptPollIntervalMs,
@@ -62,10 +65,57 @@ export function createEvmWalletAdapter({
   const assetAddressResolver = createWalletAssetAddressResolver(assetAddresses);
 
   let cachedAddress = null;
+  let ensuredChainId = null;
+
+  async function ensureExpectedChain() {
+    if (!normalizedExpectedNetwork) {
+      return null;
+    }
+
+    const currentChainId = await provider.request({
+      method: "eth_chainId",
+    });
+    const normalizedCurrentChainId = normalizeRpcHex(currentChainId, "eth_chainId");
+    if (normalizedCurrentChainId === normalizedExpectedNetwork.chainIdHex) {
+      ensuredChainId = normalizedCurrentChainId;
+      return normalizedCurrentChainId;
+    }
+
+    try {
+      await provider.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: normalizedExpectedNetwork.chainIdHex }],
+      });
+    } catch (error) {
+      if (isUnknownChainError(error)) {
+        await provider.request({
+          method: "wallet_addEthereumChain",
+          params: [buildAddEthereumChainParams(normalizedExpectedNetwork)],
+        });
+      } else {
+        throw createUnexpectedNetworkError(normalizedChainKey, normalizedExpectedNetwork.chainName);
+      }
+    }
+
+    const resolvedChainId = normalizeRpcHex(
+      await provider.request({ method: "eth_chainId" }),
+      "eth_chainId",
+    );
+    if (resolvedChainId !== normalizedExpectedNetwork.chainIdHex) {
+      throw createUnexpectedNetworkError(normalizedChainKey, normalizedExpectedNetwork.chainName);
+    }
+
+    ensuredChainId = resolvedChainId;
+    return resolvedChainId;
+  }
 
   async function getAddress() {
     if (cachedAddress) {
       return cachedAddress;
+    }
+
+    if (ensuredChainId !== normalizedExpectedNetwork?.chainIdHex) {
+      await ensureExpectedChain();
     }
 
     const accounts = await provider.request({ method: "eth_requestAccounts" });
@@ -78,15 +128,29 @@ export function createEvmWalletAdapter({
   }
 
   async function sendTransaction({ to, data, value = null }) {
+    if (ensuredChainId !== normalizedExpectedNetwork?.chainIdHex) {
+      await ensureExpectedChain();
+    }
     const from = await getAddress();
-    const txParams = {
+    const baseTxParams = {
       from,
       to: assertAddress("transaction.to", to),
       data: assertHexString("transaction.data", data),
       ...(value !== null ? { value: toRpcQuantity(value, "value") } : {}),
-      ...(normalizedGasLimit !== null
-        ? { gas: toRpcQuantity(normalizedGasLimit, "gasLimit") }
-        : {}),
+    };
+    const gas =
+      normalizedGasLimit
+      ?? await estimateGasWithHeadroom(baseTxParams);
+    const gasPrice = await readGasPrice();
+    await ensureSufficientNativeBalanceForTransaction({
+      ownerAddress: from,
+      value: value ?? 0n,
+      gas,
+      gasPrice,
+    });
+    const txParams = {
+      ...baseTxParams,
+      gas: toRpcQuantity(gas, "gasLimit"),
     };
 
     const txHash = assertHexString(
@@ -109,6 +173,9 @@ export function createEvmWalletAdapter({
   }
 
   async function readUintFromRouter(calldata) {
+    if (ensuredChainId !== normalizedExpectedNetwork?.chainIdHex) {
+      await ensureExpectedChain();
+    }
     const response = await provider.request({
       method: "eth_call",
       params: [
@@ -132,6 +199,9 @@ export function createEvmWalletAdapter({
   }
 
   async function readAllowance({ assetAddress, ownerAddress, spenderAddress }) {
+    if (ensuredChainId !== normalizedExpectedNetwork?.chainIdHex) {
+      await ensureExpectedChain();
+    }
     const result = await provider.request({
       method: "eth_call",
       params: [
@@ -144,6 +214,106 @@ export function createEvmWalletAdapter({
     });
 
     return parseRpcUint256(result, "allowance");
+  }
+
+  async function readTokenBalance({ assetAddress, ownerAddress }) {
+    if (ensuredChainId !== normalizedExpectedNetwork?.chainIdHex) {
+      await ensureExpectedChain();
+    }
+    const result = await provider.request({
+      method: "eth_call",
+      params: [
+        {
+          to: assertAddress("assetAddress", assetAddress),
+          data: encodeBalanceOfCalldata({ ownerAddress }),
+        },
+        "latest",
+      ],
+    });
+
+    return parseRpcUint256(result, "balanceOf");
+  }
+
+  async function readNativeBalance(ownerAddress) {
+    if (ensuredChainId !== normalizedExpectedNetwork?.chainIdHex) {
+      await ensureExpectedChain();
+    }
+    const result = await provider.request({
+      method: "eth_getBalance",
+      params: [assertAddress("ownerAddress", ownerAddress), "latest"],
+    });
+
+    return parseRpcUint256(result, "eth_getBalance");
+  }
+
+  async function readGasPrice() {
+    if (ensuredChainId !== normalizedExpectedNetwork?.chainIdHex) {
+      await ensureExpectedChain();
+    }
+    const result = await provider.request({
+      method: "eth_gasPrice",
+      params: [],
+    });
+
+    return parseRpcUint256(result, "eth_gasPrice");
+  }
+
+  async function ensureSufficientAssetBalance({ assetAddress, ownerAddress, requiredAmount }) {
+    if (isNativeAddress(assetAddress)) {
+      const balance = await readNativeBalance(ownerAddress);
+      if (balance < requiredAmount) {
+        throw createInsufficientBalanceError({
+          chainKey: normalizedChainKey,
+          assetAddress,
+          ownerAddress,
+          balance,
+          needed: requiredAmount,
+        });
+      }
+      return balance;
+    }
+
+    const balance = await readTokenBalance({ assetAddress, ownerAddress });
+    if (balance < requiredAmount) {
+      throw createInsufficientBalanceError({
+        chainKey: normalizedChainKey,
+        assetAddress,
+        ownerAddress,
+        balance,
+        needed: requiredAmount,
+      });
+    }
+    return balance;
+  }
+
+  async function estimateGasWithHeadroom(txParams) {
+    try {
+      const estimate = parseRpcUint256(
+        await provider.request({
+          method: "eth_estimateGas",
+          params: [txParams],
+        }),
+        "eth_estimateGas",
+      );
+      return (estimate * 12n + 9n) / 10n;
+    } catch (error) {
+      throw describeRpcPreflightError(error, normalizedChainKey);
+    }
+  }
+
+  async function ensureSufficientNativeBalanceForTransaction({
+    ownerAddress,
+    value,
+    gas,
+    gasPrice,
+  }) {
+    const balance = await readNativeBalance(ownerAddress);
+    const required = value + (gas * gasPrice);
+    if (balance < required) {
+      throw new Error(
+        `Insufficient native balance for gas on ${normalizedChainKey}. Wallet ${ownerAddress} has ${balance.toString()} units but needs ${required.toString()} including gas.`,
+      );
+    }
   }
 
   async function ensureAllowance({ assetAddress, ownerAddress, requiredAmount }) {
@@ -171,7 +341,64 @@ export function createEvmWalletAdapter({
     return txHash;
   }
 
+  function resolveGasAssetMetadata() {
+    const nativeCurrency = normalizedExpectedNetwork?.nativeCurrency;
+    if (nativeCurrency?.symbol) {
+      return {
+        asset: assertNonEmptyString("nativeCurrency.symbol", nativeCurrency.symbol),
+        decimals:
+          Number.isInteger(nativeCurrency.decimals) && nativeCurrency.decimals >= 0
+            ? nativeCurrency.decimals
+            : 18,
+      };
+    }
+
+    switch (normalizedChainKey) {
+      case "moonbeam":
+        return { asset: "GLMR", decimals: 18 };
+      case "polkadot-hub":
+        return { asset: "DOT", decimals: 18 };
+      default:
+        return { asset: "native", decimals: 18 };
+    }
+  }
+
   const routerAdapter = {
+    async estimateSubmissionCost({ owner, request }) {
+      const normalizedRequest = normalizeRouterIntentRequest(request);
+      const signerAddress = await getAddress();
+      if (owner) {
+        const normalizedOwner = assertAddress("owner", owner).toLowerCase();
+        if (normalizedOwner !== signerAddress) {
+          throw new Error(`owner ${normalizedOwner} does not match signer ${signerAddress}`);
+        }
+      }
+
+      const lockedAmount = await previewLockedAmount(normalizedRequest);
+      const value = isNativeAddress(normalizedRequest.asset) ? lockedAmount : 0n;
+      const gasLimit =
+        normalizedGasLimit
+        ?? await estimateGasWithHeadroom({
+          from: signerAddress,
+          to: normalizedRouterAddress,
+          data: encodeSubmitIntentCalldata(normalizedRequest),
+          ...(value > 0n ? { value: toRpcQuantity(value, "value") } : {}),
+        });
+      const gasPrice = await readGasPrice();
+      const gasAsset = resolveGasAssetMetadata();
+
+      return Object.freeze({
+        chainKey: normalizedChainKey,
+        lockedAmount,
+        gasLimit,
+        gasPrice,
+        gasFee: gasLimit * gasPrice,
+        gasAsset: gasAsset.asset,
+        gasAssetDecimals: gasAsset.decimals,
+        value,
+      });
+    },
+
     async submitIntent({ owner, request }) {
       const normalizedRequest = normalizeRouterIntentRequest(request);
       const signerAddress = await getAddress();
@@ -183,6 +410,11 @@ export function createEvmWalletAdapter({
       }
 
       const lockedAmount = await previewLockedAmount(normalizedRequest);
+      await ensureSufficientAssetBalance({
+        assetAddress: normalizedRequest.asset,
+        ownerAddress: signerAddress,
+        requiredAmount: lockedAmount,
+      });
       const approvalTxHash = await ensureAllowance({
         assetAddress: normalizedRequest.asset,
         ownerAddress: signerAddress,
@@ -723,6 +955,10 @@ function encodeAllowanceCalldata({ ownerAddress, spenderAddress }) {
   );
 }
 
+function encodeBalanceOfCalldata({ ownerAddress }) {
+  return `${EVM_BALANCE_OF_SELECTOR}${encodeAddressWord(ownerAddress)}`;
+}
+
 function encodeApproveCalldata({ spenderAddress, amount }) {
   return (
     `${EVM_APPROVE_SELECTOR}`
@@ -768,6 +1004,147 @@ function parseRpcUint256(value, name) {
   }
 
   return BigInt(value);
+}
+
+function normalizeExpectedEvmNetwork(network) {
+  if (!network) {
+    return null;
+  }
+
+  const chainId = assertPositiveInteger("expectedNetwork.chainId", network.chainId);
+  const chainName = assertNonEmptyString("expectedNetwork.chainName", network.chainName);
+  const rpcUrls = normalizeStringArray("expectedNetwork.rpcUrls", network.rpcUrls);
+  const blockExplorerUrls = normalizeOptionalStringArray(
+    "expectedNetwork.blockExplorerUrls",
+    network.blockExplorerUrls,
+  );
+  const nativeCurrency = network.nativeCurrency
+    ? {
+        name: assertNonEmptyString("expectedNetwork.nativeCurrency.name", network.nativeCurrency.name),
+        symbol: assertNonEmptyString(
+          "expectedNetwork.nativeCurrency.symbol",
+          network.nativeCurrency.symbol,
+        ),
+        decimals: assertPositiveInteger(
+          "expectedNetwork.nativeCurrency.decimals",
+          network.nativeCurrency.decimals,
+        ),
+      }
+    : null;
+
+  return {
+    chainId,
+    chainIdHex: `0x${chainId.toString(16)}`,
+    chainName,
+    rpcUrls,
+    ...(blockExplorerUrls ? { blockExplorerUrls } : {}),
+    ...(nativeCurrency ? { nativeCurrency } : {}),
+  };
+}
+
+function normalizeRpcHex(value, name) {
+  if (typeof value !== "string" || !/^0x[0-9a-fA-F]+$/.test(value)) {
+    throw new Error(`${name} must be a 0x-prefixed hex value`);
+  }
+
+  return `0x${stripHexPrefix(value).toLowerCase()}`;
+}
+
+function normalizeStringArray(name, values) {
+  if (!Array.isArray(values) || values.length === 0) {
+    throw new Error(`${name} must contain at least one value`);
+  }
+
+  return values.map((value, index) => assertNonEmptyString(`${name}[${index}]`, value));
+}
+
+function normalizeOptionalStringArray(name, values) {
+  if (values === null || values === undefined) {
+    return null;
+  }
+
+  return normalizeStringArray(name, values);
+}
+
+function buildAddEthereumChainParams(network) {
+  return {
+    chainId: network.chainIdHex,
+    chainName: network.chainName,
+    rpcUrls: network.rpcUrls,
+    ...(network.blockExplorerUrls ? { blockExplorerUrls: network.blockExplorerUrls } : {}),
+    ...(network.nativeCurrency ? { nativeCurrency: network.nativeCurrency } : {}),
+  };
+}
+
+function isUnknownChainError(error) {
+  return Number(error?.code) === 4902;
+}
+
+function createUnexpectedNetworkError(chainKey, chainName) {
+  return new Error(`Switch your EVM wallet to ${chainName} to execute from ${chainKey}.`);
+}
+
+function createInsufficientBalanceError({
+  chainKey,
+  assetAddress,
+  ownerAddress,
+  balance,
+  needed,
+}) {
+  return new Error(
+    `Insufficient balance on ${chainKey}. Wallet ${ownerAddress} has ${balance.toString()} units of ${assetAddress} but needs ${needed.toString()}.`,
+  );
+}
+
+function describeRpcPreflightError(error, chainKey) {
+  const decoded = decodeKnownRpcRevert(error);
+  if (decoded) {
+    return decoded;
+  }
+
+  const message = error instanceof Error ? error.message.trim() : "";
+  return new Error(message || `Transaction simulation failed on ${chainKey}.`);
+}
+
+function decodeKnownRpcRevert(error) {
+  const data = extractRpcErrorData(error);
+  if (!data) {
+    return null;
+  }
+
+  if (data.startsWith("0xe450d38c") && data.length >= 202) {
+    const owner = `0x${data.slice(34, 74)}`.toLowerCase();
+    const balance = BigInt(`0x${data.slice(74, 138)}`);
+    const needed = BigInt(`0x${data.slice(138, 202)}`);
+    return new Error(
+      `Insufficient token balance. Wallet ${owner} has ${balance.toString()} units but needs ${needed.toString()}.`,
+    );
+  }
+
+  if (data.startsWith("0xfb8f41b2") && data.length >= 202) {
+    const spender = `0x${data.slice(34, 74)}`.toLowerCase();
+    const allowance = BigInt(`0x${data.slice(74, 138)}`);
+    const needed = BigInt(`0x${data.slice(138, 202)}`);
+    return new Error(
+      `Insufficient token allowance. Spender ${spender} has ${allowance.toString()} approved units but needs ${needed.toString()}.`,
+    );
+  }
+
+  if (data.startsWith("0x5274afe7") && data.length >= 74) {
+    const token = `0x${data.slice(34, 74)}`.toLowerCase();
+    return new Error(`Token transfer simulation failed for ${token}.`);
+  }
+
+  return null;
+}
+
+function extractRpcErrorData(error) {
+  const rawData = error?.data?.data ?? error?.data;
+  if (typeof rawData !== "string" || !/^0x[0-9a-fA-F]+$/.test(rawData)) {
+    return null;
+  }
+
+  return rawData.toLowerCase();
 }
 
 function extractIntentIdFromSubmitReceipt({ receipt, routerAddress, txHash }) {

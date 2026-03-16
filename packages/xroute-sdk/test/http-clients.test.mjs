@@ -555,11 +555,20 @@ test("createEvmWalletAdapter submits intents with approval and extracts intent i
           if (data.startsWith("0x12747753")) {
             return "0x01f4";
           }
+          if (data.startsWith("0x70a08231")) {
+            return "0x01f4";
+          }
           if (data.startsWith("0xdd62ed3e")) {
             return "0x0";
           }
           throw new Error(`unexpected eth_call payload: ${data}`);
         }
+        case "eth_estimateGas":
+          return "0x5208";
+        case "eth_gasPrice":
+          return "0x64";
+        case "eth_getBalance":
+          return "0xffffff";
         case "eth_sendTransaction": {
           const tx = params?.[0];
           if (tx.data.startsWith("0x095ea7b3")) {
@@ -667,11 +676,17 @@ test("createWallet resolves hosted mainnet defaults for moonbeam evm wallets", a
     approve: "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
     submit: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
   };
+  let chainId = "0x1";
 
   const provider = {
     async request({ method, params }) {
       calls.push({ method, params });
       switch (method) {
+        case "eth_chainId":
+          return chainId;
+        case "wallet_switchEthereumChain":
+          chainId = params?.[0]?.chainId ?? chainId;
+          return null;
         case "eth_requestAccounts":
           return [ownerAddress];
         case "eth_call": {
@@ -679,11 +694,20 @@ test("createWallet resolves hosted mainnet defaults for moonbeam evm wallets", a
           if (data.startsWith("0x12747753")) {
             return "0x01f4";
           }
+          if (data.startsWith("0x70a08231")) {
+            return "0x01f4";
+          }
           if (data.startsWith("0xdd62ed3e")) {
             return "0x0";
           }
           throw new Error(`unexpected eth_call payload: ${data}`);
         }
+        case "eth_estimateGas":
+          return "0x5208";
+        case "eth_gasPrice":
+          return "0x64";
+        case "eth_getBalance":
+          return "0xffffff";
         case "eth_sendTransaction": {
           const tx = params?.[0];
           if (tx.data.startsWith("0x095ea7b3")) {
@@ -744,11 +768,324 @@ test("createWallet resolves hosted mainnet defaults for moonbeam evm wallets", a
 
   assert.equal(submitted.intentId, intentId);
 
+  const chainCalls = calls.filter((call) => call.method === "wallet_switchEthereumChain");
+  assert.deepEqual(chainCalls.map((call) => call.params[0]), [{ chainId: "0x504" }]);
+
   const sentTxs = calls
     .filter((call) => call.method === "eth_sendTransaction")
     .map((call) => call.params[0]);
   assert.equal(sentTxs[0].to.toLowerCase(), tokenAddress);
   assert.equal(sentTxs[1].to.toLowerCase(), routerAddress);
+  assert.equal(sentTxs[0].gas, "0x6270");
+  assert.equal(sentTxs[1].gas, "0x6270");
+});
+
+test("createEvmWalletAdapter blocks intent submission before signature when the token balance is insufficient", async () => {
+  const ownerAddress = "0x1111111111111111111111111111111111111111";
+  const routerAddress = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const tokenAddress = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const provider = {
+    async request({ method, params }) {
+      switch (method) {
+        case "eth_chainId":
+          return "0x504";
+        case "eth_requestAccounts":
+          return [ownerAddress];
+        case "eth_call": {
+          const data = params?.[0]?.data ?? "";
+          if (data.startsWith("0x12747753")) {
+            return "0x01f4";
+          }
+          if (data.startsWith("0x70a08231")) {
+            return "0x00";
+          }
+          if (data.startsWith("0xdd62ed3e")) {
+            return "0x0";
+          }
+          throw new Error(`unexpected eth_call payload: ${data}`);
+        }
+        case "eth_getBalance":
+          return "0xffff";
+        case "eth_gasPrice":
+          return "0x64";
+        case "eth_sendTransaction":
+          throw new Error("submit should not reach the wallet when balance is insufficient");
+        default:
+          throw new Error(`unexpected rpc method: ${method}`);
+      }
+    },
+  };
+
+  const wallet = createEvmWalletAdapter({
+    provider,
+    chainKey: "moonbeam",
+    routerAddress,
+    expectedNetwork: {
+      chainId: 1284,
+      chainName: "Moonbeam",
+      nativeCurrency: { name: "GLMR", symbol: "GLMR", decimals: 18 },
+      rpcUrls: ["https://rpc.api.moonbeam.network"],
+      blockExplorerUrls: ["https://moonbeam.moonscan.io/"],
+    },
+    assetAddresses: {
+      moonbeam: {
+        DOT: tokenAddress,
+      },
+    },
+  });
+
+  await assert.rejects(
+    wallet.routerAdapter.submitIntent({
+      owner: ownerAddress,
+      request: {
+        actionType: 0,
+        asset: tokenAddress,
+        refundAddress: ownerAddress,
+        amount: 100n,
+        xcmFee: 20n,
+        destinationFee: 5n,
+        minOutputAmount: 100n,
+        deadline: 1_773_185_200,
+        executionHash: "0x1111111111111111111111111111111111111111111111111111111111111111",
+      },
+    }),
+    /Insufficient balance on moonbeam/,
+  );
+});
+
+test("createEvmWalletAdapter blocks intent submission before signature when native balance cannot cover gas", async () => {
+  const ownerAddress = "0x1111111111111111111111111111111111111111";
+  const routerAddress = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const provider = {
+    async request({ method, params }) {
+      switch (method) {
+        case "eth_chainId":
+          return "0x190f1b43";
+        case "eth_requestAccounts":
+          return [ownerAddress];
+        case "eth_call": {
+          const data = params?.[0]?.data ?? "";
+          if (data.startsWith("0x12747753")) {
+            return "0x01f4";
+          }
+          throw new Error(`unexpected eth_call payload: ${data}`);
+        }
+        case "eth_estimateGas":
+          return "0x5208";
+        case "eth_gasPrice":
+          return "0x64";
+        case "eth_getBalance":
+          return "0x3e8";
+        case "eth_sendTransaction":
+          throw new Error("submit should not reach the wallet when gas balance is insufficient");
+        default:
+          throw new Error(`unexpected rpc method: ${method}`);
+      }
+    },
+  };
+
+  const wallet = createEvmWalletAdapter({
+    provider,
+    chainKey: "polkadot-hub",
+    routerAddress,
+    expectedNetwork: {
+      chainId: 420420419,
+      chainName: "Polkadot Hub",
+      nativeCurrency: { name: "DOT", symbol: "DOT", decimals: 18 },
+      rpcUrls: ["https://eth-rpc.polkadot.io/"],
+      blockExplorerUrls: ["https://blockscout.polkadot.io/"],
+    },
+  });
+
+  await assert.rejects(
+    wallet.routerAdapter.submitIntent({
+      owner: ownerAddress,
+      request: {
+        actionType: 0,
+        asset: "0x0000000000000000000000000000000000000000",
+        refundAddress: ownerAddress,
+        amount: 100n,
+        xcmFee: 0n,
+        destinationFee: 0n,
+        minOutputAmount: 100n,
+        deadline: 1_773_185_200,
+        executionHash: "0x1111111111111111111111111111111111111111111111111111111111111111",
+      },
+    }),
+    /Insufficient native balance for gas on polkadot-hub/,
+  );
+});
+
+test("createEvmWalletAdapter can estimate submit costs before signature", async () => {
+  const ownerAddress = "0x1111111111111111111111111111111111111111";
+  const routerAddress = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const provider = {
+    async request({ method, params }) {
+      switch (method) {
+        case "eth_chainId":
+          return "0x190f1b43";
+        case "eth_requestAccounts":
+          return [ownerAddress];
+        case "eth_call": {
+          const data = params?.[0]?.data ?? "";
+          if (data.startsWith("0x12747753")) {
+            return "0x01f4";
+          }
+          throw new Error(`unexpected eth_call payload: ${data}`);
+        }
+        case "eth_estimateGas":
+          return "0x5208";
+        case "eth_gasPrice":
+          return "0x64";
+        default:
+          throw new Error(`unexpected rpc method: ${method}`);
+      }
+    },
+  };
+
+  const wallet = createEvmWalletAdapter({
+    provider,
+    chainKey: "polkadot-hub",
+    routerAddress,
+    expectedNetwork: {
+      chainId: 420420419,
+      chainName: "Polkadot Hub",
+      nativeCurrency: { name: "DOT", symbol: "DOT", decimals: 18 },
+      rpcUrls: ["https://eth-rpc.polkadot.io/"],
+      blockExplorerUrls: ["https://blockscout.polkadot.io/"],
+    },
+  });
+
+  const estimate = await wallet.routerAdapter.estimateSubmissionCost({
+    owner: ownerAddress,
+    request: {
+      actionType: 0,
+      asset: "0x0000000000000000000000000000000000000000",
+      refundAddress: ownerAddress,
+      amount: 100n,
+      xcmFee: 0n,
+      destinationFee: 0n,
+      minOutputAmount: 100n,
+      deadline: 1_773_185_200,
+      executionHash: "0x1111111111111111111111111111111111111111111111111111111111111111",
+    },
+  });
+
+  assert.deepEqual(estimate, {
+    chainKey: "polkadot-hub",
+    lockedAmount: 500n,
+    gasLimit: 25200n,
+    gasPrice: 100n,
+    gasFee: 2520000n,
+    gasAsset: "DOT",
+    gasAssetDecimals: 18,
+    value: 500n,
+  });
+});
+
+test("hosted createXRouteClient quote includes source costs when a wallet is connected", async () => {
+  const client = createXRouteClient({
+    apiKey: "public-test-key",
+    fetchImpl: async (url) => {
+      if (url.endsWith("/quote")) {
+        return {
+          ok: true,
+          async json() {
+            return {
+              quote: {
+                quoteId: "ignored",
+                route: ["polkadot-hub", "hydration"],
+                fees: {
+                  xcmFee: { asset: "DOT", amount: "1" },
+                  destinationFee: { asset: "DOT", amount: "2" },
+                  platformFee: { asset: "DOT", amount: "3" },
+                  totalFee: { asset: "DOT", amount: "6" },
+                },
+                expectedOutput: { asset: "DOT", amount: "99" },
+                minOutput: { asset: "DOT", amount: "98" },
+                submission: {
+                  action: "transfer",
+                  asset: "DOT",
+                  amount: "100",
+                  xcmFee: "1",
+                  destinationFee: "2",
+                  minOutputAmount: "98",
+                },
+                executionPlan: {
+                  route: ["polkadot-hub", "hydration"],
+                  steps: [],
+                },
+              },
+            };
+          },
+        };
+      }
+
+      throw new Error(`unexpected request to ${url}`);
+    },
+  });
+
+  client.connectWallet({
+    chainKey: "polkadot-hub",
+    async getAddress() {
+      return "0x1111111111111111111111111111111111111111";
+    },
+    xcmEnvelopeBuilder() {
+      return {
+        mode: "execute",
+        message: "0x1234",
+      };
+    },
+    routerAdapter: {
+      async submitIntent() {
+        throw new Error("not used");
+      },
+      async dispatchIntent() {
+        throw new Error("not used");
+      },
+      async estimateSubmissionCost() {
+        return {
+          chainKey: "polkadot-hub",
+          lockedAmount: 500n,
+          gasLimit: 24696n,
+          gasPrice: 100n,
+          gasFee: 2469600n,
+          gasAsset: "DOT",
+          gasAssetDecimals: 18,
+          value: 500n,
+        };
+      },
+    },
+    async assetAddressResolver() {
+      return "0x0000000000000000000000000000000000000000";
+    },
+  });
+
+  const quoted = await client.quote({
+    sourceChain: "polkadot-hub",
+    destinationChain: "hydration",
+    ownerAddress: "0x1111111111111111111111111111111111111111",
+    asset: "DOT",
+    amount: "100",
+    recipient: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+  });
+
+  assert.deepEqual(quoted.sourceCosts, {
+    chainKey: "polkadot-hub",
+    lockedAmount: {
+      asset: "DOT",
+      amount: 500n,
+      decimals: 10,
+    },
+    gasFee: {
+      asset: "DOT",
+      amount: 2469600n,
+      decimals: 18,
+    },
+    gasLimit: 24696n,
+    gasPrice: 100n,
+    value: 500n,
+  });
 });
 
 test("createWallet resolves hosted mainnet defaults for hydration substrate wallets", () => {

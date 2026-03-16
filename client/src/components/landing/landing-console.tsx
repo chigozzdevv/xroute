@@ -1,10 +1,9 @@
 "use client";
 
-import { useState } from "react";
-
 import { Header } from "@/components/layout/header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs } from "@/components/ui/tabs";
+import { usePersistedState } from "@/lib/persisted-state";
 
 import { actionTabs, type ActionKey } from "./action-config";
 import { ExecuteForm } from "./execute-form";
@@ -13,7 +12,10 @@ import { TransferForm } from "./transfer-form";
 import { WorkflowForm } from "./workflow-form";
 
 export function LandingConsole() {
-  const [activeAction, setActiveAction] = useState<ActionKey>("transfer");
+  const [activeAction, setActiveAction] = usePersistedState<ActionKey>(
+    "xroute.console.activeAction.v1",
+    () => "transfer",
+  );
 
   return (
     <div className="relative z-10 grid min-h-screen grid-rows-[auto_1fr]">

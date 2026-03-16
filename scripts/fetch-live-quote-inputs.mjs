@@ -243,7 +243,11 @@ async function readHydrationOraclePrice({ assetAId, assetBId }) {
 }
 
 function buildDirectTransferMessages({ sourceChain, destinationChain, asset }) {
-  const remoteXcm = isReserveChainForAsset(sourceChain, asset)
+  const usesReserveWithdraw =
+    !isReserveChainForAsset(sourceChain, asset)
+    && reserveChainForAsset(asset) === destinationChain;
+
+  const remoteXcm = (isReserveChainForAsset(sourceChain, asset) || usesReserveWithdraw)
     ? buildVersionedXcm([
         buildBuyExecutionInstruction(destinationChain, asset),
         buildDepositAssetInstruction(destinationChain),
@@ -265,6 +269,27 @@ function buildDirectTransferMessages({ sourceChain, destinationChain, asset }) {
           },
         },
       ])
+    : usesReserveWithdraw
+      ? buildVersionedXcm([
+          {
+            type: 'WithdrawAsset',
+            value: [buildAsset(sourceChain, asset, 1n)],
+          },
+          {
+            type: 'InitiateReserveWithdraw',
+            value: {
+              assets: {
+                type: 'Wild',
+                value: {
+                  type: 'AllCounted',
+                  value: 1,
+                },
+              },
+              reserve: buildParachainLocation(destinationChain),
+              xcm: remoteXcm.value,
+            },
+          },
+        ])
     : buildVersionedXcm([
         {
           type: 'SetFeesMode',

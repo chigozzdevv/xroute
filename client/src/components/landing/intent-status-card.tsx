@@ -15,6 +15,7 @@ type IntentStatusCardProps = {
   error: string | null;
   isSubmitting: boolean;
   isTracking: boolean;
+  idleTitle?: string | null;
   idleMessage?: string | null;
 };
 
@@ -36,6 +37,7 @@ export function IntentStatusCard({
   error,
   isSubmitting,
   isTracking,
+  idleTitle = null,
   idleMessage = null,
 }: IntentStatusCardProps) {
   const intentId = execution?.submitted?.intentId ?? status?.intentId ?? null;
@@ -61,7 +63,7 @@ export function IntentStatusCard({
                 ? status.status
                 : error
                   ? "Error"
-                  : idleMessage ?? "Ready"}
+                  : idleTitle ?? idleMessage ?? "Ready"}
           </p>
         </div>
         {isTracking ? (

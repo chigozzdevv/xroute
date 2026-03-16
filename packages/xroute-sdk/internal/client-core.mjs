@@ -5,6 +5,7 @@ import {
   buildRouterIntentRequest,
   createDispatchEnvelope,
 } from "../../xroute-xcm/index.mjs";
+import { getAssetDecimals } from "../chains/index.mjs";
 import { createQuoteIntent, normalizeQuote } from "../quote/index.mjs";
 
 const TERMINAL_INTENT_STATUSES = new Set([
@@ -57,40 +58,55 @@ export function createConfiguredXRouteClient({
   }
 
   async function submitIntent({ intent, quote, envelope, owner }) {
-    const normalizedIntent = intent.quoteId
-      ? intent
-      : createQuoteIntent({
-          ...intent,
-          deploymentProfile: intent.deploymentProfile ?? quoteProvider.deploymentProfile,
-        });
-    const normalizedQuote = normalizeQuote(quote);
-    const normalizedEnvelope = createDispatchEnvelope(
-      envelope ?? xcmEnvelopeBuilder({ intent: normalizedIntent, quote: normalizedQuote }),
-    );
-    const request =
-      typeof submitRequestBuilder === "function"
-        ? await submitRequestBuilder({
-            intent: normalizedIntent,
-            quote: normalizedQuote,
-            envelope: normalizedEnvelope,
-            castBin,
-          })
-        : buildRouterIntentRequest({
-            intent: normalizedIntent,
-            quote: normalizedQuote,
-            envelope: normalizedEnvelope,
-            assetAddress: await assetAddressResolver({
-              chainKey: normalizedIntent.sourceChain,
-              assetKey: normalizedQuote.submission.asset,
-            }),
-            castBin,
-          });
+    const prepared = await prepareSubmission({
+      intent,
+      quote,
+      envelope,
+    });
 
     return routerAdapter.submitIntent({
       owner,
-      intent: normalizedIntent,
-      quote: normalizedQuote,
-      request,
+      intent: prepared.intent,
+      quote: prepared.quote,
+      request: prepared.request,
+    });
+  }
+
+  async function estimateSourceCosts({ intent, quote, envelope, owner }) {
+    if (typeof routerAdapter.estimateSubmissionCost !== "function") {
+      return null;
+    }
+
+    const prepared = await prepareSubmission({
+      intent,
+      quote,
+      envelope,
+    });
+    const estimate = await routerAdapter.estimateSubmissionCost({
+      owner,
+      intent: prepared.intent,
+      quote: prepared.quote,
+      request: prepared.request,
+    });
+
+    return Object.freeze({
+      chainKey: prepared.intent.sourceChain,
+      lockedAmount: Object.freeze({
+        asset: prepared.quote.submission.asset,
+        amount: estimate.lockedAmount,
+        decimals: getAssetDecimals(
+          prepared.quote.submission.asset,
+          prepared.quote.deploymentProfile,
+        ),
+      }),
+      gasFee: Object.freeze({
+        asset: estimate.gasAsset,
+        amount: estimate.gasFee,
+        decimals: estimate.gasAssetDecimals,
+      }),
+      gasLimit: estimate.gasLimit,
+      gasPrice: estimate.gasPrice,
+      value: estimate.value,
     });
   }
 
@@ -267,6 +283,7 @@ export function createConfiguredXRouteClient({
     submit: submitIntent,
     dispatch: dispatchIntent,
     execute: executeIntent,
+    estimateSourceCosts,
     runFlow,
     waitForCompletion,
     wait: waitForCompletion,
@@ -285,6 +302,44 @@ export function createConfiguredXRouteClient({
       return statusProvider.getTimeline(intentId);
     },
   };
+
+  async function prepareSubmission({ intent, quote, envelope }) {
+    const normalizedIntent = intent.quoteId
+      ? intent
+      : createQuoteIntent({
+          ...intent,
+          deploymentProfile: intent.deploymentProfile ?? quoteProvider.deploymentProfile,
+        });
+    const normalizedQuote = normalizeQuote(quote);
+    const normalizedEnvelope = createDispatchEnvelope(
+      envelope ?? xcmEnvelopeBuilder({ intent: normalizedIntent, quote: normalizedQuote }),
+    );
+    const request =
+      typeof submitRequestBuilder === "function"
+        ? await submitRequestBuilder({
+            intent: normalizedIntent,
+            quote: normalizedQuote,
+            envelope: normalizedEnvelope,
+            castBin,
+          })
+        : buildRouterIntentRequest({
+            intent: normalizedIntent,
+            quote: normalizedQuote,
+            envelope: normalizedEnvelope,
+            assetAddress: await assetAddressResolver({
+              chainKey: normalizedIntent.sourceChain,
+              assetKey: normalizedQuote.submission.asset,
+            }),
+            castBin,
+          });
+
+    return Object.freeze({
+      intent: normalizedIntent,
+      quote: normalizedQuote,
+      envelope: normalizedEnvelope,
+      request,
+    });
+  }
 }
 
 export function trackIntentStatus(

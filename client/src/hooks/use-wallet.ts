@@ -5,6 +5,11 @@ import {
   connectInjectedWallet,
   getBrowserWalletAvailability,
 } from "@xroute/sdk";
+import {
+  chainKeysForWalletKind,
+  connectXRouteWallet,
+  disconnectXRouteWalletChain,
+} from "@/lib/xroute";
 
 export type WalletKind = "evm" | "substrate";
 
@@ -27,6 +32,7 @@ export type WalletSessions = Partial<Record<WalletKind, WalletSession>>;
 type WalletState = {
   sessions: WalletSessions;
   isConnecting: boolean;
+  isRestoring: boolean;
   error: string | null;
   availableWallets: {
     evm: boolean;
@@ -35,11 +41,13 @@ type WalletState = {
 };
 
 const DAPP_NAME = "xroute";
+const WALLET_PREFERENCES_STORAGE_KEY = "xroute.wallet.preferences.v1";
 const listeners = new Set<() => void>();
 
 let state: WalletState = {
   sessions: {},
   isConnecting: false,
+  isRestoring: false,
   error: null,
   availableWallets: {
     evm: false,
@@ -50,6 +58,18 @@ let state: WalletState = {
 let boundEvmProvider: EthereumProvider | null = null;
 let boundAccountsListener: ((...args: unknown[]) => void) | null = null;
 let initialized = false;
+let restoreRunId = 0;
+let connectRunId = 0;
+
+type PersistedWalletPreferences = {
+  evm?: {
+    enabled: true;
+  };
+  substrate?: {
+    extensionName: string;
+    accountAddress: string;
+  };
+};
 
 function emit() {
   for (const listener of listeners) {
@@ -62,6 +82,9 @@ function setState(partial: Partial<WalletState>) {
     ...state,
     ...partial,
   };
+  if (partial.sessions !== undefined) {
+    persistWalletPreferences(state.sessions);
+  }
   emit();
 }
 
@@ -127,6 +150,7 @@ function bindEvmProvider(provider: EthereumProvider) {
 }
 
 async function connectEvmWallet() {
+  const currentConnectRunId = ++connectRunId;
   setState({
     isConnecting: true,
     error: null,
@@ -146,13 +170,16 @@ async function connectEvmWallet() {
       error: null,
     });
   } finally {
-    setState({
-      isConnecting: false,
-    });
+    if (connectRunId === currentConnectRunId) {
+      setState({
+        isConnecting: false,
+      });
+    }
   }
 }
 
 async function connectSubstrateWallet() {
+  const currentConnectRunId = ++connectRunId;
   setState({
     isConnecting: true,
     error: null,
@@ -173,9 +200,11 @@ async function connectSubstrateWallet() {
       error: null,
     });
   } finally {
-    setState({
-      isConnecting: false,
-    });
+    if (connectRunId === currentConnectRunId) {
+      setState({
+        isConnecting: false,
+      });
+    }
   }
 }
 
@@ -218,12 +247,146 @@ function initializeStore() {
 
   initialized = true;
   syncAvailableWallets();
+  void restorePersistedWalletSessions();
 
   const handleWindowFocus = () => {
     syncAvailableWallets();
   };
 
   window.addEventListener("focus", handleWindowFocus);
+}
+
+async function restorePersistedWalletSessions() {
+  const currentRestoreRunId = ++restoreRunId;
+  const preferences = readPersistedWalletPreferences();
+  if (!preferences) {
+    setState({
+      isRestoring: false,
+    });
+    return;
+  }
+
+  setState({
+    isRestoring: true,
+  });
+
+  const restoredSessions: WalletSessions = {};
+
+  if (preferences.evm) {
+    try {
+      const session = await connectInjectedWallet("evm", {
+        requestAccess: false,
+      });
+      if (session.kind === "evm") {
+        bindEvmProvider(session.provider);
+        restoredSessions.evm = session;
+      }
+    } catch {
+      // ignore missing/disconnected provider during restore
+    }
+  }
+
+  if (preferences.substrate) {
+    try {
+      const session = await connectInjectedWallet("substrate", {
+        extensionName: preferences.substrate.extensionName,
+        accountAddress: preferences.substrate.accountAddress,
+        extensionDappName: DAPP_NAME,
+      });
+      if (session.kind === "substrate") {
+        restoredSessions.substrate = session;
+      }
+    } catch {
+      // ignore missing extension/account during restore
+    }
+  }
+
+  if (Object.keys(restoredSessions).length > 0) {
+    if (restoreRunId !== currentRestoreRunId) {
+      return;
+    }
+
+    setState({
+      sessions: {
+        ...restoredSessions,
+        ...state.sessions,
+      },
+      isRestoring: false,
+      error: null,
+    });
+    return;
+  }
+
+  if (restoreRunId !== currentRestoreRunId) {
+    return;
+  }
+
+  if (Object.keys(state.sessions).length === 0) {
+    clearPersistedWalletPreferences();
+  }
+  setState({
+    isRestoring: false,
+  });
+}
+
+function persistWalletPreferences(sessions: WalletSessions) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const preferences: PersistedWalletPreferences = {};
+  if (sessions.evm) {
+    preferences.evm = { enabled: true };
+  }
+  if (sessions.substrate?.kind === "substrate") {
+    preferences.substrate = {
+      extensionName: sessions.substrate.extensionName,
+      accountAddress: sessions.substrate.account,
+    };
+  }
+
+  try {
+    if (Object.keys(preferences).length === 0) {
+      window.localStorage.removeItem(WALLET_PREFERENCES_STORAGE_KEY);
+      return;
+    }
+
+    window.localStorage.setItem(
+      WALLET_PREFERENCES_STORAGE_KEY,
+      JSON.stringify(preferences),
+    );
+  } catch {
+    // ignore storage failures
+  }
+}
+
+function readPersistedWalletPreferences(): PersistedWalletPreferences | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(WALLET_PREFERENCES_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    return JSON.parse(raw) as PersistedWalletPreferences;
+  } catch {
+    return null;
+  }
+}
+
+function clearPersistedWalletPreferences() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem(WALLET_PREFERENCES_STORAGE_KEY);
+  } catch {
+    // ignore storage failures
+  }
 }
 
 export function useWallet() {
@@ -233,6 +396,34 @@ export function useWallet() {
   useEffect(() => {
     initializeStore();
   }, []);
+
+  useEffect(() => {
+    for (const chainKey of chainKeysForWalletKind("evm")) {
+      disconnectXRouteWalletChain(chainKey);
+    }
+    for (const chainKey of chainKeysForWalletKind("substrate")) {
+      disconnectXRouteWalletChain(chainKey);
+    }
+
+    if (snapshot.sessions.evm?.kind === "evm") {
+      for (const chainKey of chainKeysForWalletKind("evm")) {
+        connectXRouteWallet("evm", {
+          provider: snapshot.sessions.evm.provider,
+          chainKey,
+        });
+      }
+    }
+
+    if (snapshot.sessions.substrate?.kind === "substrate") {
+      for (const chainKey of chainKeysForWalletKind("substrate")) {
+        connectXRouteWallet("substrate", {
+          extension: snapshot.sessions.substrate.extensionSource,
+          accountAddress: snapshot.sessions.substrate.account,
+          chainKey,
+        });
+      }
+    }
+  }, [snapshot.sessions.evm, snapshot.sessions.substrate]);
 
   return {
     ...snapshot,

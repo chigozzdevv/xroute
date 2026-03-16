@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 
 import {
   actionButtonClass,
@@ -14,8 +14,11 @@ import {
 import { IntentStatusCard } from "./intent-status-card";
 import { PoweredBy } from "./powered-by";
 import { QuoteFooter } from "./quote-footer";
+import { usePersistedState } from "@/lib/persisted-state";
 import {
   type AssetKey,
+  canParseAssetUnits,
+  fromAssetUnits,
   type ChainKey,
   coerceOptionValue,
   createSwapQuoteRequest,
@@ -23,8 +26,6 @@ import {
   getSwapAssetOutOptions,
   getSwapDestinationOptions,
   getSwapSettlementChainOptions,
-  recipientPlaceholderForChain,
-  recipientLabelForChain,
   resolveWalletAccountForChain,
   submitSwapWithWallet,
   swapSourceChainOptions,
@@ -42,9 +43,8 @@ type SwapFormState = {
   assetIn: AssetKey;
   assetOut: AssetKey;
   amountIn: string;
-  minAmountOut: string;
+  slippagePercent: string;
   settlementChain: ChainKey;
-  recipient: string;
 };
 
 function createInitialSwapForm(): SwapFormState {
@@ -54,26 +54,26 @@ function createInitialSwapForm(): SwapFormState {
     assetIn: "DOT",
     assetOut: "USDT",
     amountIn: "10",
-    minAmountOut: "49",
+    slippagePercent: "1",
     settlementChain: "polkadot-hub",
-    recipient: "",
   };
 }
 
-function canBuildQuote(form: SwapFormState, ownerAddress?: string) {
-  if (
-    !form.amountIn.trim() ||
-    !form.minAmountOut.trim() ||
-    !form.recipient.trim() ||
-    !ownerAddress?.trim()
-  ) {
-    return null;
-  }
-  return ownerAddress.trim();
+function canBuildQuote(form: SwapFormState) {
+  return (
+    form.amountIn.trim()
+    && canParseAssetUnits(form.assetIn, form.amountIn)
+    && isValidSlippagePercent(form.slippagePercent)
+  )
+    ? true
+    : null;
 }
 
 export function SwapForm() {
-  const [form, setForm] = useState<SwapFormState>(createInitialSwapForm);
+  const [form, setForm] = usePersistedState(
+    "xroute.form.swap.v2",
+    createInitialSwapForm,
+  );
   const { sessions } = useWallet();
   const destinationOptions = useMemo(
     () => getSwapDestinationOptions(form.sourceChain),
@@ -98,26 +98,44 @@ export function SwapForm() {
     [form.assetIn, form.assetOut, form.destinationChain, form.sourceChain],
   );
   const ownerAddress = resolveWalletAccountForChain(sessions, form.sourceChain) ?? undefined;
+  const resolvedRecipient = resolveWalletAccountForChain(sessions, form.settlementChain) ?? "";
+  const previewMinimumReceived = fromAssetUnits(form.assetOut, BigInt(1));
   const quoteRequest = useMemo(
     () => {
-      const walletAddress = canBuildQuote(form, ownerAddress);
-      if (!walletAddress) {
+      if (!canBuildQuote(form)) {
         return null;
       }
 
       return createSwapQuoteRequest({
         ...form,
-        ownerAddress: walletAddress,
+        minAmountOut: previewMinimumReceived,
+        recipient: resolvedRecipient || undefined,
+        ownerAddress,
       });
     },
-    [form, ownerAddress],
+    [form, ownerAddress, previewMinimumReceived, resolvedRecipient],
   );
-  const { quote, error: quoteError } = useXRouteQuote(quoteRequest);
+  const {
+    quote,
+    sourceCosts,
+    error: quoteError,
+    lastUpdatedAtMs,
+    refreshMs,
+  } = useXRouteQuote(quoteRequest);
   const execution = useXRouteExecution();
-  const walletReady = walletMatchesChain(sessions, form.sourceChain);
+  const sourceWalletReady = walletMatchesChain(sessions, form.sourceChain);
+  const recipientWalletReady = walletMatchesChain(sessions, form.settlementChain);
+  const walletReady = sourceWalletReady && recipientWalletReady;
+  const inlineError = execution.execution ? null : execution.error ?? quoteError;
+  const computedMinimumReceived = quote
+    ? fromAssetUnits(
+        form.assetOut,
+        applySlippageToAmount(quote.expectedOutput.amount, form.slippagePercent),
+      )
+    : "";
 
   async function handleSubmit() {
-    if (!walletReady) {
+    if (!walletReady || !quote || !computedMinimumReceived) {
       return;
     }
 
@@ -125,6 +143,8 @@ export function SwapForm() {
       await execution.execute(() =>
         submitSwapWithWallet(sessions, {
           ...form,
+          minAmountOut: computedMinimumReceived,
+          recipient: resolvedRecipient,
         }),
       );
     } catch {
@@ -173,7 +193,6 @@ export function SwapForm() {
                       assetIn,
                       assetOut,
                       settlementChain,
-                      recipient: resolveWalletAccountForChain(sessions, settlementChain) ?? "",
                     };
                   })
                 }
@@ -226,7 +245,6 @@ export function SwapForm() {
                       assetIn,
                       assetOut,
                       settlementChain,
-                      recipient: resolveWalletAccountForChain(sessions, settlementChain) ?? "",
                     };
                   })
                 }
@@ -272,7 +290,6 @@ export function SwapForm() {
                       assetIn,
                       assetOut,
                       settlementChain,
-                      recipient: resolveWalletAccountForChain(sessions, settlementChain) ?? "",
                     };
                   })
                 }
@@ -310,8 +327,6 @@ export function SwapForm() {
                       ...current,
                       assetOut,
                       settlementChain: nextSettlementChain,
-                      recipient:
-                        resolveWalletAccountForChain(sessions, nextSettlementChain) ?? "",
                     };
                   })
                 }
@@ -345,17 +360,9 @@ export function SwapForm() {
 
             <label className={fieldClass}>
               <span className={labelClass}>Minimum received</span>
-              <input
-                className={inputClass}
-                inputMode="decimal"
-                value={form.minAmountOut}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    minAmountOut: event.target.value,
-                  }))
-                }
-              />
+              <div className={`${inputClass} flex items-center`}>
+                {computedMinimumReceived || "Quote to see minimum"}
+              </div>
             </label>
 
             <label className={fieldClass}>
@@ -366,11 +373,6 @@ export function SwapForm() {
                   setForm((current) => ({
                     ...current,
                     settlementChain: event.target.value as SwapFormState["settlementChain"],
-                    recipient:
-                      resolveWalletAccountForChain(
-                        sessions,
-                        event.target.value as SwapFormState["settlementChain"],
-                      ) ?? "",
                   }))
                 }
               >
@@ -386,32 +388,37 @@ export function SwapForm() {
               </Select>
             </label>
 
-            <label className={fieldFullClass}>
-              <span className={labelClass}>
-                {recipientLabelForChain(form.settlementChain)}
-              </span>
+            <label className={fieldClass}>
+              <span className={labelClass}>Slippage (%)</span>
               <input
                 className={inputClass}
-                value={form.recipient}
-                placeholder={recipientPlaceholderForChain(form.settlementChain)}
+                inputMode="decimal"
+                value={form.slippagePercent}
                 onChange={(event) =>
                   setForm((current) => ({
                     ...current,
-                    recipient: event.target.value,
+                    slippagePercent: event.target.value,
                   }))
                 }
               />
             </label>
+
+            <label className={fieldFullClass}>
+              <span className={labelClass}>Recipient</span>
+              <div className={`${inputClass} flex items-center`}>
+                {resolvedRecipient || `Connect a ${walletRequirementLabel(form.settlementChain).toLowerCase()} for ${form.settlementChain}.`}
+              </div>
+            </label>
       </div>
 
-      <QuoteFooter quote={quote} />
+      <QuoteFooter
+        quote={quote}
+        sourceCosts={sourceCosts}
+        lastUpdatedAtMs={lastUpdatedAtMs}
+        refreshMs={refreshMs}
+      />
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        {!walletReady ? (
-          <p className="m-0 text-sm leading-6 text-muted">
-            {`Connect a ${walletRequirementLabel(form.sourceChain).toLowerCase()} to quote and execute from ${form.sourceChain}.`}
-          </p>
-        ) : <span />}
+      <div className="grid justify-items-center gap-2">
         <button
           type="button"
           className={actionButtonClass}
@@ -420,23 +427,45 @@ export function SwapForm() {
         >
           {execution.isSubmitting ? "Submitting..." : "Swap"}
         </button>
+        {!sourceWalletReady ? (
+          <p className="m-0 text-center text-sm leading-6 text-muted">
+            {`Connect a ${walletRequirementLabel(form.sourceChain).toLowerCase()} to execute from ${form.sourceChain}.`}
+          </p>
+        ) : null}
+        {inlineError ? (
+          <p className="m-0 text-center text-sm leading-6 text-danger">{inlineError}</p>
+        ) : null}
       </div>
 
       <IntentStatusCard
         execution={execution.execution}
         status={execution.status}
         timeline={execution.timeline}
-        error={execution.error ?? quoteError}
+        error={execution.execution ? execution.error : null}
         isSubmitting={execution.isSubmitting}
         isTracking={execution.isTracking}
-        idleMessage={
-          walletReady
-            ? null
-            : `This route requires a ${walletRequirementLabel(form.sourceChain).toLowerCase()}.`
-        }
       />
 
       <PoweredBy />
     </div>
   );
+}
+
+function isValidSlippagePercent(value: string) {
+  const normalized = value.trim();
+  if (normalized === "" || !/^\d+(\.\d+)?$/.test(normalized)) {
+    return false;
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100;
+}
+
+function applySlippageToAmount(amount: bigint, slippagePercent: string) {
+  const basisPoints = Math.floor(Number(slippagePercent.trim()) * 100);
+  const clampedBasisPoints = Number.isFinite(basisPoints)
+    ? Math.min(Math.max(basisPoints, 0), 10_000)
+    : 0;
+  const minimum = amount * BigInt(10_000 - clampedBasisPoints) / BigInt(10_000);
+  return minimum > BigInt(0) ? minimum : BigInt(1);
 }

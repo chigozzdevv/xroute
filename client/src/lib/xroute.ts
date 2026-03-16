@@ -6,6 +6,7 @@ import { createXRouteClient } from "@xroute/sdk";
 import {
   DEFAULT_DEPLOYMENT_PROFILE,
   formatAssetAmount,
+  formatUnits,
   getAssetDecimals,
   getChain,
   getChainWalletType,
@@ -30,6 +31,9 @@ export type Option<T extends string = string> = {
   label: string;
   disabled?: boolean;
 };
+
+const PREVIEW_EVM_ACCOUNT_ADDRESS = "0x1111111111111111111111111111111111111111";
+const PREVIEW_SUBSTRATE_ACCOUNT_ADDRESS = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
 
 export const xrouteClient = createXRouteClient({
   apiKey: process.env.NEXT_PUBLIC_XROUTE_API_KEY?.trim() || undefined,
@@ -56,6 +60,8 @@ export type QuoteResponse = Awaited<ReturnType<QuoteClient["quote"]>>;
 export type QuoteIntent = QuoteResponse["intent"];
 export type Quote = QuoteResponse["quote"];
 export type QuoteAssetAmount = Quote["fees"]["totalFee"];
+export type QuoteSourceCosts = QuoteResponse["sourceCosts"];
+export type SourceCostAmount = NonNullable<QuoteSourceCosts>["lockedAmount"];
 export type XRouteWalletConnection = Parameters<QuoteClient["connectWallet"]>;
 export type TransferRequest = Parameters<QuoteClient["transfer"]>[0];
 export type TransferResponse = Awaited<ReturnType<QuoteClient["transfer"]>>;
@@ -81,6 +87,11 @@ export function connectXRouteWallet(...args: XRouteWalletConnection) {
 
 export function disconnectXRouteWallet() {
   xrouteClient.disconnectWallet();
+  return xrouteClient;
+}
+
+export function disconnectXRouteWalletChain(chainKey: ChainKey) {
+  (xrouteClient.disconnectWallet as (chainKey?: string | null) => QuoteClient)(chainKey);
   return xrouteClient;
 }
 
@@ -157,6 +168,16 @@ export function walletRequirementLabel(chainKey: ChainKey) {
   return walletKindForChain(chainKey) === "evm" ? "EVM wallet" : "Substrate wallet";
 }
 
+export function chainKeysForWalletKind(kind: XRouteWalletKind) {
+  return ALL_CHAIN_KEYS.filter((chainKey) => walletKindForChain(chainKey) === kind);
+}
+
+export function previewAccountForChain(chainKey: ChainKey) {
+  return walletKindForChain(chainKey) === "evm"
+    ? PREVIEW_EVM_ACCOUNT_ADDRESS
+    : PREVIEW_SUBSTRATE_ACCOUNT_ADDRESS;
+}
+
 export function connectWalletSessionForChain(
   sessions: WalletSessions,
   sourceChain: ChainKey,
@@ -189,6 +210,46 @@ export function fromAssetUnits(assetKey: AssetKey, value: string | bigint) {
   return formatAssetAmount(assetKey, value, DEFAULT_DEPLOYMENT_PROFILE);
 }
 
+export function formatSourceCostAmount(
+  amount: SourceCostAmount,
+  options: { trimTrailingZeros?: boolean } = {},
+) {
+  return formatUnits(amount.amount, amount.decimals, options);
+}
+
+export function formatEstimatedTotalSpend(sourceCosts: QuoteSourceCosts) {
+  if (!sourceCosts) {
+    return null;
+  }
+
+  const { lockedAmount, gasFee } = sourceCosts;
+  if (lockedAmount.asset === gasFee.asset) {
+    const targetDecimals = Math.max(lockedAmount.decimals, gasFee.decimals);
+    const lockedScale = BigInt(10) ** BigInt(targetDecimals - lockedAmount.decimals);
+    const gasScale = BigInt(10) ** BigInt(targetDecimals - gasFee.decimals);
+
+    return {
+      kind: "single",
+      value: {
+        asset: lockedAmount.asset,
+        amount: (lockedAmount.amount * lockedScale) + (gasFee.amount * gasScale),
+        decimals: targetDecimals,
+      },
+    } as const;
+  }
+
+  return null;
+}
+
+export function canParseAssetUnits(assetKey: AssetKey, value: string) {
+  try {
+    toAssetUnits(assetKey, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function createTransferQuoteRequest({
   sourceChain,
   destinationChain,
@@ -202,18 +263,18 @@ export function createTransferQuoteRequest({
   destinationChain: ChainKey;
   asset: AssetKey;
   amount: string;
-  recipient: string;
-  ownerAddress: string;
+  recipient?: string;
+  ownerAddress?: string;
   deadline?: number;
 }): QuoteRequest {
   return {
     sourceChain,
     destinationChain,
-    ownerAddress,
+    ownerAddress: ownerAddress ?? previewAccountForChain(sourceChain),
     ...(deadline === undefined ? {} : { deadline }),
     asset,
     amount: toAssetUnits(asset, amount),
-    recipient,
+    recipient: recipient?.trim() || previewAccountForChain(destinationChain),
   };
 }
 
@@ -236,21 +297,21 @@ export function createSwapQuoteRequest({
   amountIn: string;
   minAmountOut: string;
   settlementChain: ChainKey;
-  recipient: string;
-  ownerAddress: string;
+  recipient?: string;
+  ownerAddress?: string;
   deadline?: number;
 }): QuoteRequest {
   return {
     sourceChain,
     destinationChain,
-    ownerAddress,
+    ownerAddress: ownerAddress ?? previewAccountForChain(sourceChain),
     ...(deadline === undefined ? {} : { deadline }),
     assetIn,
     assetOut,
     amountIn: toAssetUnits(assetIn, amountIn),
     minAmountOut: toAssetUnits(assetOut, minAmountOut),
     settlementChain,
-    recipient,
+    recipient: recipient?.trim() || previewAccountForChain(settlementChain),
   };
 }
 
@@ -280,13 +341,13 @@ export function createExecuteQuoteRequest({
   gasLimit: string;
   fallbackRefTime: string;
   fallbackProofSize: string;
-  ownerAddress: string;
+  ownerAddress?: string;
   deadline?: number;
 }): QuoteRequest {
   return {
     sourceChain,
     destinationChain,
-    ownerAddress,
+    ownerAddress: ownerAddress ?? previewAccountForChain(sourceChain),
     ...(deadline === undefined ? {} : { deadline }),
     executionType,
     asset,
@@ -470,7 +531,7 @@ export function useXRouteExecution() {
 
             setState((current) => ({
               ...current,
-              error: error instanceof Error ? error.message : "Tracking failed.",
+              error: describeXRouteClientError(error, "Tracking failed."),
               isTracking: false,
             }));
           });
@@ -481,7 +542,7 @@ export function useXRouteExecution() {
       if (executionRef.current === currentExecutionId) {
         setState({
           ...INITIAL_INTENT_EXECUTION_STATE,
-          error: error instanceof Error ? error.message : "Execution failed.",
+          error: describeXRouteClientError(error, "Execution failed."),
         });
       }
 
@@ -506,15 +567,17 @@ export function useXRouteExecution() {
 type UseXRouteQuoteOptions = {
   enabled?: boolean;
   debounceMs?: number;
+  refreshMs?: number;
 };
 
 export function useXRouteQuote(
   request: QuoteRequest | null,
-  { enabled = true, debounceMs = 250 }: UseXRouteQuoteOptions = {},
+  { enabled = true, debounceMs = 250, refreshMs = 30_000 }: UseXRouteQuoteOptions = {},
 ) {
   const [result, setResult] = useState<QuoteResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastUpdatedAtMs, setLastUpdatedAtMs] = useState<number | null>(null);
   const requestRef = useRef<QuoteRequest | null>(request);
 
   const requestKey = useMemo(
@@ -531,50 +594,73 @@ export function useXRouteQuote(
       setResult(null);
       setIsLoading(false);
       setError(null);
+      setLastUpdatedAtMs(null);
       return;
     }
 
     let cancelled = false;
-    const timeoutId = window.setTimeout(async () => {
+    let activeRequestId = 0;
+
+    async function runQuoteRequest() {
       const nextRequest = requestRef.current;
       if (!nextRequest || cancelled) {
         return;
       }
+      const currentRequestId = ++activeRequestId;
 
       setIsLoading(true);
       setError(null);
 
       try {
         const nextResult = await requestXRouteQuote(nextRequest);
-        if (cancelled) {
+        if (cancelled || currentRequestId !== activeRequestId) {
           return;
         }
         setResult(nextResult);
+        setLastUpdatedAtMs(Date.now());
       } catch (nextError) {
-        if (cancelled) {
+        if (cancelled || currentRequestId !== activeRequestId) {
           return;
         }
         setResult(null);
-        setError(nextError instanceof Error ? nextError.message : "quote failed");
+        setError(describeXRouteClientError(nextError, "Quote failed."));
+        setLastUpdatedAtMs(null);
       } finally {
-        if (!cancelled) {
+        if (!cancelled && currentRequestId === activeRequestId) {
           setIsLoading(false);
         }
       }
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void runQuoteRequest();
     }, debounceMs);
+    const intervalId =
+      refreshMs > 0
+        ? window.setInterval(() => {
+            void runQuoteRequest();
+          }, refreshMs)
+        : null;
 
     return () => {
       cancelled = true;
+      activeRequestId += 1;
       window.clearTimeout(timeoutId);
+      if (intervalId !== null) {
+        window.clearInterval(intervalId);
+      }
     };
-  }, [debounceMs, requestKey]);
+  }, [debounceMs, refreshMs, requestKey]);
 
   return {
     result,
     intent: result?.intent ?? null,
     quote: result?.quote ?? null,
+    sourceCosts: result?.sourceCosts ?? null,
     isLoading,
     error,
+    lastUpdatedAtMs,
+    refreshMs,
     isReady: Boolean(result) && !isLoading && !error,
   };
 }
@@ -835,6 +921,25 @@ export function recipientLabelForChain(chainKey: ChainKey) {
 export function recipientPlaceholderForChain(chainKey: ChainKey) {
   return isEvmChain(chainKey) ? EVM_RECIPIENT_PLACEHOLDER : SS58_RECIPIENT_PLACEHOLDER;
 }
+
+function describeXRouteClientError(error: unknown, fallback: string) {
+  const message = error instanceof Error ? error.message.trim() : "";
+  if (isNetworkFetchError(error)) {
+    return "Unable to reach the XRoute API. If issue persist, reach us here xroute@muwa.io";
+  }
+
+  return message || fallback;
+}
+
+function isNetworkFetchError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.trim().toLowerCase();
+  return message === "failed to fetch" || message.includes("networkerror") || message.includes("load failed");
+}
+
 
 export function coerceOptionValue<T extends string>(currentValue: T, options: readonly Option<T>[]) {
   const currentOption = options.find((candidate) => candidate.value === currentValue);
