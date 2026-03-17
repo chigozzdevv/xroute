@@ -637,24 +637,10 @@ const INITIAL_INTENT_EXECUTION_STATE: IntentExecutionState = Object.freeze({
   isTracking: false,
 });
 
-const RELAYER_JOB_TERMINAL_STATUSES = new Set(["completed"]);
+const RELAYER_JOB_TERMINAL_STATUSES = new Set(["completed", "failed"]);
 
 function isRelayerJobTerminal(status: string | undefined | null): boolean {
   return RELAYER_JOB_TERMINAL_STATUSES.has(status ?? "");
-}
-
-function getXRouteApiBaseUrl(): string {
-  const hostname = globalThis.location?.hostname?.trim().toLowerCase();
-  if (
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "0.0.0.0" ||
-    hostname === "::1"
-  ) {
-    return "http://127.0.0.1:8788/v1";
-  }
-
-  return "https://xroute-api.onrender.com/v1";
 }
 
 async function fetchRelayerJobStatus(jobId: string): Promise<{
@@ -662,14 +648,9 @@ async function fetchRelayerJobStatus(jobId: string): Promise<{
   lastError?: string | null;
 } | null> {
   try {
-    const response = await fetch(
-      `${getXRouteApiBaseUrl()}/jobs/${encodeURIComponent(jobId)}`,
-    );
-    if (!response.ok) {
-      return null;
-    }
-    return await response.json();
-  } catch {
+    return await (xrouteClient as unknown as { getJob(id: string): Promise<Record<string, unknown>> }).getJob(jobId);
+  } catch (err) {
+    console.error("Failed to fetch relayer job status:", err);
     return null;
   }
 }

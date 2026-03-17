@@ -37,7 +37,7 @@ impl ApiApp {
         }
 
         let normalized_path = normalize_public_path(request.uri().path());
-        if request.method() == Method::POST && normalized_path == "/jobs/dispatch" {
+        if normalized_path.starts_with("/jobs") {
             inject_relayer_auth(&mut request, &self.relayer_auth_token);
         }
 

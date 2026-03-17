@@ -753,7 +753,7 @@ test("createEvmWalletAdapter submits intents with approval and extracts intent i
 test("createWallet resolves hosted mainnet defaults for moonbeam evm wallets", async () => {
   const calls = [];
   const ownerAddress = "0x1111111111111111111111111111111111111111";
-  const routerAddress = "0x33810619b522ee56dcd0cfba53822fad5ff48fdd";
+  const routerAddress = "0x377bea6e8cb4a1ed418cbcb99b5608abb9970f7c";
   const tokenAddress = "0xffffffff1fcacbd218edc0eba20fc2308c778080";
   const intentId = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
   const txHashes = {

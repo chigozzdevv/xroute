@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+/// @dev XCM precompile on Polkadot Asset Hub
 address constant XCM_PRECOMPILE_ADDRESS = address(0xA0000);
+/// @dev XCM precompile on Moonbeam
+address constant MOONBEAM_XCM_PRECOMPILE_ADDRESS = address(0x081A);
 
 interface IXcm {
     struct Weight {

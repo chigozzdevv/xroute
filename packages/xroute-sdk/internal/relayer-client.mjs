@@ -146,12 +146,11 @@ export function createHttpExecutorRelayerClient({
         },
       });
     },
-
     async getJob(jobId) {
       return requestJson(`${normalizedEndpoint}/jobs/${encodeURIComponent(jobId)}`, {
         method: "GET",
         fetchImpl,
-        headers: requestHeaders,
+        headers,
       });
     },
 
@@ -159,7 +158,7 @@ export function createHttpExecutorRelayerClient({
       return requestJson(`${normalizedEndpoint}/jobs`, {
         method: "GET",
         fetchImpl,
-        headers: requestHeaders,
+        headers,
       });
     },
   };

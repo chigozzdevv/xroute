@@ -49,7 +49,7 @@ const HOSTED_EVM_WALLET_DEFAULTS = Object.freeze({
       }),
     }),
     moonbeam: Object.freeze({
-      routerAddress: "0x33810619b522ee56dcd0cfba53822fad5ff48fdd",
+      routerAddress: "0x377bea6e8cb4a1ed418cbcb99b5608abb9970f7c",
       gasAssetMetadata: Object.freeze({
         asset: "GLMR",
         decimals: 18,

@@ -24,7 +24,7 @@ use xroute_service_shared::{
     load_chain_deployment_artifact, load_execution_policy_from_file, load_hub_deployment_artifact,
     read_request_body, refund_job_request_from_slice, resolve_workspace_root,
     settle_job_request_from_slice, summarize_execution_policy, summary_json, DispatchRequest,
-    ExecutionPolicy, HttpError, WireIntent,
+    ExecutionPolicy, HttpError,
 };
 
 const DISPATCH_INTENT_SIGNATURE: &str = "dispatchIntent(bytes32,(uint8,bytes,bytes))";
@@ -790,7 +790,7 @@ async fn run_job(state: Arc<RelayerState>, job: &Job) -> Result<Value, String> {
 }
 
 fn run_job_blocking(
-    deployment_profile: DeploymentProfile,
+    _deployment_profile: DeploymentProfile,
     chain_key: &str,
     execution_context: Option<ExecutionContext>,
     gas_limit: Option<u64>,
@@ -802,7 +802,7 @@ fn run_job_blocking(
     match payload {
         JobPayload::Dispatch {
             intent_id,
-            wire_intent,
+            wire_intent: _,
             request,
             source_intent,
             source_dispatch,

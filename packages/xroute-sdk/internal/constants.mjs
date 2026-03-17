@@ -28,18 +28,21 @@ export function resolveDefaultXRouteApiBaseUrl({
   }
 
   if (isLocalBrowserLocation(location)) {
-    return LOCAL_XROUTE_API_BASE_URL;
+    return `http://${location?.hostname || "127.0.0.1"}:8788/v1`;
   }
 
   return HOSTED_XROUTE_API_BASE_URL;
 }
 
 function isLocalBrowserLocation(location) {
-  const hostname = location?.hostname?.trim().toLowerCase();
+  const hostname = location?.hostname?.trim().toLowerCase() || "";
   return (
     hostname === "localhost"
     || hostname === "127.0.0.1"
     || hostname === "0.0.0.0"
     || hostname === "::1"
+    || hostname.startsWith("192.168.")
+    || hostname.startsWith("10.")
+    || /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname)
   );
 }

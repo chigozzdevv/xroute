@@ -417,6 +417,11 @@ function createHostedXRouteClient({
     track(intentId, options) {
       return trackIntentStatus(hostedStatusProvider, intentId, options);
     },
+
+    async getJob(jobId) {
+      const result = await relayer.getJob(jobId);
+      return result?.job ?? result;
+    },
   };
 
   if (wallet) {

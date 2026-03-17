@@ -1,6 +1,7 @@
 import { ACTION_TYPES, DISPATCH_MODES, assertIncluded, assertNonEmptyString } from "../xroute-types/index.mjs";
 
 export const XCM_PRECOMPILE_ADDRESS = "0x00000000000000000000000000000000000a0000";
+export const MOONBEAM_XCM_PRECOMPILE_ADDRESS = "0x000000000000000000000000000000000000081A";
 
 export const DEPLOYMENT_PROFILES = Object.freeze({
   MAINNET: "mainnet",

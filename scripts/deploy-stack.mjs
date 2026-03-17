@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { DEPLOYMENT_PROFILES, XCM_PRECOMPILE_ADDRESS } from "../packages/xroute-precompile-interfaces/index.mjs";
+import { DEPLOYMENT_PROFILES, XCM_PRECOMPILE_ADDRESS, MOONBEAM_XCM_PRECOMPILE_ADDRESS } from "../packages/xroute-precompile-interfaces/index.mjs";
 import { getRouterDeploymentArtifactPath } from "./lib/deployment-artifacts.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -31,7 +31,7 @@ export function deployStack(overrides = {}) {
   const platformFeeBps =
     overrides.platformFeeBps ?? process.env.XROUTE_PLATFORM_FEE_BPS ?? "10";
   const xcmAddress =
-    overrides.xcmAddress ?? process.env.XROUTE_XCM_ADDRESS ?? XCM_PRECOMPILE_ADDRESS;
+    overrides.xcmAddress ?? process.env.XROUTE_XCM_ADDRESS ?? resolveDefaultXcmAddress(chainKey);
   const stackOutputPath =
     overrides.stackOutputPath ??
     process.env.XROUTE_STACK_OUTPUT_PATH ??
@@ -208,6 +208,15 @@ function resolveRpcUrlEnvName(chainKey) {
       return "XROUTE_MOONBEAM_RPC_URL";
     default:
       throw new Error(`unsupported deployment chain key: ${chainKey}`);
+  }
+}
+
+function resolveDefaultXcmAddress(chainKey) {
+  switch (chainKey) {
+    case "moonbeam":
+      return MOONBEAM_XCM_PRECOMPILE_ADDRESS;
+    default:
+      return XCM_PRECOMPILE_ADDRESS;
   }
 }
 
