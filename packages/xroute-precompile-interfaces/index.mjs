@@ -9,10 +9,26 @@ export const DEPLOYMENT_PROFILES = Object.freeze({
 
 export const DEFAULT_DEPLOYMENT_PROFILE = DEPLOYMENT_PROFILES.MAINNET;
 
-export const PRECOMPILE_METADATA = Object.freeze({
-  xcm: Object.freeze({
-    address: XCM_PRECOMPILE_ADDRESS,
-    functions: Object.freeze(["execute(bytes,(uint64,uint64))", "send(bytes,bytes)", "weighMessage(bytes)"]),
+export const XCM_PRECOMPILE = Object.freeze({
+  addresses: Object.freeze({
+    default: XCM_PRECOMPILE_ADDRESS,
+    moonbeam: MOONBEAM_XCM_PRECOMPILE_ADDRESS,
+  }),
+  interfaces: Object.freeze({
+    Xcm: Object.freeze({
+      functions: Object.freeze([
+        "execute(bytes,(uint64,uint64))",
+        "send(bytes,bytes)",
+        "weighMessage(bytes)",
+      ]),
+    }),
+    MoonbeamXcm: Object.freeze({
+      functions: Object.freeze([
+        "xcmExecute(bytes,uint64)",
+        "xcmSend((uint8,bytes[]),bytes)",
+        "weightMessage(bytes)",
+      ]),
+    }),
   }),
 });
 

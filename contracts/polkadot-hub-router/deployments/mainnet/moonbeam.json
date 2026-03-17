@@ -3,10 +3,10 @@
   "chainKey": "moonbeam",
   "chainId": 1284,
   "deployer": "0x7a0a4D513f328FbC800328d8A98BC55cb34a5Feb",
-  "deployedAt": "2026-03-17T08:57:31.748Z",
+  "deployedAt": "2026-03-17T15:59:07.541Z",
   "contracts": {
-    "XRouteHubRouter": "0x377bea6e8cb4a1ed418cbcb99b5608abb9970f7c",
-    "XRouteMoonbeamSlpxAdapter": "0x5b2984a60145ffa298d43292b9635f0930590948"
+    "XRouteHubRouter": "0xd349434b426a2e189dd6582cf77909d1368b8c36",
+    "XRouteMoonbeamSlpxAdapter": "0xe31a6d40ba7462ba9c1e9a51851c66968ff349ef"
   },
   "settings": {
     "adminAddress": "0x7a0a4D513f328FbC800328d8A98BC55cb34a5Feb",

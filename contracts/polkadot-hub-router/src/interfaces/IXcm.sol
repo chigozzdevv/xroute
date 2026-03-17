@@ -18,3 +18,16 @@ interface IXcm {
 
     function weighMessage(bytes calldata message) external view returns (Weight memory weight);
 }
+
+interface IMoonbeamXcm {
+    struct Multilocation {
+        uint8 parents;
+        bytes[] interior;
+    }
+
+    function weightMessage(bytes calldata message) external view returns (uint64 weight);
+
+    function xcmExecute(bytes calldata message, uint64 maxWeight) external;
+
+    function xcmSend(Multilocation calldata dest, bytes calldata message) external;
+}

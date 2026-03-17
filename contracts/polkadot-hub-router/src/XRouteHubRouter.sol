@@ -6,7 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {IXcm} from "./interfaces/IXcm.sol";
+import {IXcm, IMoonbeamXcm, MOONBEAM_XCM_PRECOMPILE_ADDRESS} from "./interfaces/IXcm.sol";
 
 contract XRouteHubRouter is AccessControlDefaultAdminRules, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -221,21 +221,35 @@ contract XRouteHubRouter is AccessControlDefaultAdminRules, Pausable, Reentrancy
 
         intent.status = IntentStatus.Dispatched;
 
-        if (request.mode == DispatchMode.Execute) {
-            IXcm.Weight memory weight = xcm.weighMessage(request.message);
-            xcm.execute(request.message, weight);
+        if (address(xcm) == MOONBEAM_XCM_PRECOMPILE_ADDRESS) {
+            if (request.mode == DispatchMode.Execute) {
+                uint64 weight = IMoonbeamXcm(address(xcm)).weightMessage(request.message);
+                IMoonbeamXcm(address(xcm)).xcmExecute(request.message, weight);
+                if (intent.platformFee != 0) {
+                    _transferAsset(intent.asset, treasury, intent.platformFee);
+                }
+                emit IntentDispatched(intentId, request.mode, weight, 0);
+                return;
+            }
+            
+            revert InvalidDispatchPayload();
+        } else {
+            if (request.mode == DispatchMode.Execute) {
+                IXcm.Weight memory weight = xcm.weighMessage(request.message);
+                xcm.execute(request.message, weight);
+                if (intent.platformFee != 0) {
+                    _transferAsset(intent.asset, treasury, intent.platformFee);
+                }
+                emit IntentDispatched(intentId, request.mode, weight.refTime, weight.proofSize);
+                return;
+            }
+
+            xcm.send(request.destination, request.message);
             if (intent.platformFee != 0) {
                 _transferAsset(intent.asset, treasury, intent.platformFee);
             }
-            emit IntentDispatched(intentId, request.mode, weight.refTime, weight.proofSize);
-            return;
+            emit IntentDispatched(intentId, request.mode, 0, 0);
         }
-
-        xcm.send(request.destination, request.message);
-        if (intent.platformFee != 0) {
-            _transferAsset(intent.asset, treasury, intent.platformFee);
-        }
-        emit IntentDispatched(intentId, request.mode, 0, 0);
     }
 
     function finalizeSuccess(bytes32 intentId, bytes32 outcomeReference, bytes32 resultAssetId, uint128 resultAmount)

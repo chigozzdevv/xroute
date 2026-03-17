@@ -74,7 +74,7 @@ export function IntentStatusCard({
       </div>
 
       {error ? (
-        <p className="m-0 text-sm leading-6 text-danger">{error}</p>
+        <p className="m-0 break-words text-sm leading-6 text-danger">{error}</p>
       ) : null}
 
       {!error && !execution && idleMessage ? (
@@ -128,7 +128,7 @@ export function IntentStatusCard({
           </div>
           {execution.dispatched.relayerJob.status === "failed" &&
           execution.dispatched.relayerJob.lastError ? (
-            <p className="m-0 text-sm leading-6 text-danger">
+            <p className="m-0 break-words text-sm leading-6 text-danger">
               {execution.dispatched.relayerJob.lastError}
             </p>
           ) : null}
