@@ -6,7 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {IXcm, IMoonbeamXcm, MOONBEAM_XCM_PRECOMPILE_ADDRESS} from "./interfaces/IXcm.sol";
+import {IXcm, IMoonbeamXcm, MOONBEAM_XCM_PRECOMPILE_ADDRESS, MOONBEAM_XCM_UTILS_ADDRESS} from "./interfaces/IXcm.sol";
 
 contract XRouteHubRouter is AccessControlDefaultAdminRules, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -222,17 +222,7 @@ contract XRouteHubRouter is AccessControlDefaultAdminRules, Pausable, Reentrancy
         intent.status = IntentStatus.Dispatched;
 
         if (address(xcm) == MOONBEAM_XCM_PRECOMPILE_ADDRESS) {
-            if (request.mode == DispatchMode.Execute) {
-                uint64 weight = IMoonbeamXcm(address(xcm)).weightMessage(request.message);
-                IMoonbeamXcm(address(xcm)).xcmExecute(request.message, weight);
-                if (intent.platformFee != 0) {
-                    _transferAsset(intent.asset, treasury, intent.platformFee);
-                }
-                emit IntentDispatched(intentId, request.mode, weight, 0);
-                return;
-            }
-            
-            revert InvalidDispatchPayload();
+            revert("Moonbeam: Use dispatchIntentWithoutXcm");
         } else {
             if (request.mode == DispatchMode.Execute) {
                 IXcm.Weight memory weight = xcm.weighMessage(request.message);
@@ -250,6 +240,33 @@ contract XRouteHubRouter is AccessControlDefaultAdminRules, Pausable, Reentrancy
             }
             emit IntentDispatched(intentId, request.mode, 0, 0);
         }
+    }
+
+    /**
+     * @dev Mark an intent as dispatched without calling the XCM precompile.
+     * Used on chains like Moonbeam where XCM must be triggered by an EOA (atomic Batch call).
+     */
+    function dispatchIntentWithoutXcm(bytes32 intentId, DispatchRequest calldata request, uint64 weight)
+        external
+        onlyRole(EXECUTOR_ROLE)
+        whenNotPaused
+        nonReentrant
+    {
+        IntentRecord storage intent = intents[intentId];
+        if (intent.owner == address(0)) revert IntentNotFound();
+        if (intent.status != IntentStatus.Submitted) revert InvalidIntentStatus();
+        if (block.timestamp > intent.deadline) revert IntentExpired();
+
+        bytes32 executionHash = keccak256(abi.encode(request.mode, request.destination, request.message));
+        if (executionHash != intent.executionHash) revert InvalidDispatchPayload();
+
+        intent.status = IntentStatus.Dispatched;
+
+        if (intent.platformFee != 0) {
+            _transferAsset(intent.asset, treasury, intent.platformFee);
+        }
+
+        emit IntentDispatched(intentId, request.mode, weight, 0);
     }
 
     function finalizeSuccess(bytes32 intentId, bytes32 outcomeReference, bytes32 resultAssetId, uint128 resultAmount)

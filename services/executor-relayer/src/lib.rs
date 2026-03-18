@@ -33,8 +33,14 @@ const FINALIZE_EXTERNAL_SUCCESS_SIGNATURE: &str =
     "finalizeExternalSuccess(bytes32,bytes32,bytes32,uint128)";
 const FINALIZE_FAILURE_SIGNATURE: &str = "finalizeFailure(bytes32,bytes32,bytes32)";
 const REFUND_FAILED_INTENT_SIGNATURE: &str = "refundFailedIntent(bytes32,uint128)";
+const DISPATCH_INTENT_WITHOUT_XCM_SIGNATURE: &str =
+    "dispatchIntentWithoutXcm(bytes32,(uint8,bytes,bytes),uint64)";
 
-const XCM_PRECOMPILE_ADDRESS: &str = "0x00000000000000000000000000000000000a0000";
+const MOONBEAM_BATCH_PRECOMPILE_ADDRESS: &str = "0x0000000000000000000000000000000000000808";
+const MOONBEAM_XCM_UTILS_ADDRESS: &str = "0x000000000000000000000000000000000000080c";
+const MOONBEAM_BATCH_ALL_SIGNATURE: &str = "batchAll(address[],uint256[],bytes[],uint64[])";
+const MOONBEAM_XCM_EXECUTE_SIGNATURE: &str = "xcmExecute(bytes,uint64)";
+const MOONBEAM_XCM_SEND_SIGNATURE: &str = "xcmSend((uint8,bytes[]),bytes)";
 const SUPPORTED_EXECUTION_CHAINS: &[&str] = &["polkadot-hub", "hydration", "moonbeam", "bifrost"];
 
 #[derive(Clone)]
@@ -837,6 +843,16 @@ fn run_job_blocking(
             let execution_context = execution_context
                 .as_ref()
                 .ok_or_else(|| format!("missing execution context for source chain {chain_key}"))?;
+
+            if chain_key == "moonbeam" {
+                return dispatch_moonbeam_intent_with_batch(
+                    &intent_id,
+                    execution_context,
+                    &request,
+                    gas_limit,
+                );
+            }
+
             let tx_hash = send_transaction(
                 &execution_context.router_address,
                 DISPATCH_INTENT_SIGNATURE,
@@ -1500,11 +1516,101 @@ fn format_dispatch_request_tuple(request: &DispatchRequest) -> String {
     )
 }
 
+fn dispatch_moonbeam_intent_with_batch(
+    intent_id: &str,
+    execution_context: &ExecutionContext,
+    request: &xroute_service_shared::DispatchRequest,
+    gas_limit: Option<u64>,
+) -> Result<Value, String> {
+    // 1. Estimate weight
+    let mut weight_cmd = Command::new("cast");
+    weight_cmd
+        .arg("call")
+        .arg(MOONBEAM_XCM_UTILS_ADDRESS)
+        .arg("weightMessage(bytes)(uint64)")
+        .arg(&request.message)
+        .arg("--rpc-url")
+        .arg(&execution_context.rpc_url);
+
+    let weight_output = weight_cmd
+        .output()
+        .map_err(|error| format!("failed to estimate Moonbeam weight: {error}"))?;
+    if !weight_output.status.success() {
+        return Err(format!(
+            "Moonbeam weight estimation failed: {}",
+            String::from_utf8_lossy(&weight_output.stderr).trim()
+        ));
+    }
+    let weight = String::from_utf8_lossy(&weight_output.stdout).trim().to_owned();
+
+    // 2. Encode sub-calls
+    // a. Router update
+    let router_calldata = encode_calldata(
+        DISPATCH_INTENT_WITHOUT_XCM_SIGNATURE,
+        &[
+            intent_id.to_owned(),
+            format_dispatch_request_tuple(request),
+            weight.clone(),
+        ],
+    )?;
+
+    // b. XCM execute or send
+    let xcm_calldata = if request.mode == 0 {
+        encode_calldata(
+            MOONBEAM_XCM_EXECUTE_SIGNATURE,
+            &[request.message.clone(), weight.clone()],
+        )?
+    } else {
+        encode_calldata(
+            MOONBEAM_XCM_SEND_SIGNATURE,
+            &[request.destination.clone(), request.message.clone()],
+        )?
+    };
+
+    // 3. Batch the calls
+    let tx_hash = send_transaction(
+        MOONBEAM_BATCH_PRECOMPILE_ADDRESS,
+        MOONBEAM_BATCH_ALL_SIGNATURE,
+        &[
+            format!("[\"{}\",\"{}\"]", execution_context.router_address, MOONBEAM_XCM_UTILS_ADDRESS),
+            "[0,0]".to_owned(),
+            format!("[\"{}\",\"{}\"]", router_calldata, xcm_calldata),
+            "[0,0]".to_owned(),
+        ],
+        &execution_context.rpc_url,
+        &execution_context.private_key,
+        gas_limit,
+    )?;
+
+    Ok(json!({
+        "intentId": intent_id,
+        "sourceChain": "moonbeam",
+        "txHash": tx_hash,
+        "strategy": "moonbeam-batch-dispatch",
+        "request": request,
+    }))
+}
+
+fn encode_calldata(signature: &str, args: &[String]) -> Result<String, String> {
+    let mut command = Command::new("cast");
+    command.arg("calldata").arg(signature);
+    for arg in args {
+        command.arg(arg);
+    }
+    let output = command
+        .output()
+        .map_err(|error| format!("failed to run cast calldata: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
 fn dispatch_substrate_source_intent(
     intent_id: &str,
     chain_key: &str,
     execution_context: &ExecutionContext,
-    request: &DispatchRequest,
+    request: &xroute_service_shared::DispatchRequest,
     source_intent: Option<&xroute_service_shared::SourceIntentMetadata>,
     node_bin: &str,
     substrate_dispatch_script: &Path,
