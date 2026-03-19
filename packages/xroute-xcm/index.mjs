@@ -108,6 +108,67 @@ export function buildExecutionEnvelope({
   });
 }
 
+export function buildMoonbeamDispatchMetadata({
+  quote,
+  codecContext = getDefaultXcmCodecContext(),
+}) {
+  const deploymentProfile = normalizeDeploymentProfile(
+    quote?.deploymentProfile ?? DEFAULT_DEPLOYMENT_PROFILE,
+  );
+  assertQuoteSegmentsMatchExecutionPlan(quote);
+  const sendStep = getExecutionStep(quote, "send-xcm");
+  if (sendStep.origin !== "moonbeam") {
+    throw new Error("moonbeamDispatch can only be derived from moonbeam-origin routes");
+  }
+
+  const [withdrawInstruction, reserveWithdrawInstruction, ...rest] = sendStep.instructions ?? [];
+  if (!withdrawInstruction || withdrawInstruction.type !== "withdraw-asset") {
+    throw new Error("moonbeamDispatch requires send-xcm to start with withdraw-asset");
+  }
+  if (
+    !reserveWithdrawInstruction
+    || reserveWithdrawInstruction.type !== "initiate-reserve-withdraw"
+  ) {
+    throw new Error(
+      "moonbeamDispatch requires withdraw-asset to be followed by initiate-reserve-withdraw",
+    );
+  }
+  if (rest.length > 0) {
+    throw new Error(
+      "moonbeamDispatch expects moonbeam source execution to use exactly two top-level routing instructions",
+    );
+  }
+
+  const reserveInstructions = reserveWithdrawInstruction.remoteInstructions ?? [];
+  if (!Array.isArray(reserveInstructions) || reserveInstructions.length === 0) {
+    throw new Error("moonbeamDispatch requires reserve-side remote instructions");
+  }
+
+  const depositReserveInstruction = reserveInstructions.find(
+    (instruction) => instruction.type === "deposit-reserve-asset",
+  );
+  const destinationChain =
+    depositReserveInstruction?.destination ?? reserveWithdrawInstruction.reserve;
+  const customInstructions =
+    depositReserveInstruction?.remoteInstructions ?? reserveInstructions;
+  if (!Array.isArray(customInstructions) || customInstructions.length === 0) {
+    throw new Error("moonbeamDispatch requires destination-side remote instructions");
+  }
+
+  return Object.freeze({
+    asset: withdrawInstruction.asset,
+    destinationChain,
+    remoteReserveChain: reserveWithdrawInstruction.reserve,
+    customXcmOnDest: codecContext.encodeVersionedXcm(
+      buildVersionedInstructionFragment({
+        instructions: customInstructions,
+        currentChain: destinationChain,
+        deploymentProfile,
+      }),
+    ),
+  });
+}
+
 export function computeExecutionHash(envelope, { castBin = "cast" } = {}) {
   void castBin;
   const normalized = createDispatchEnvelope(envelope);
@@ -228,13 +289,11 @@ export function buildVersionedXcmMessage({ quote }) {
 
   return Enum("V5", [
     Enum("SetFeesMode", { jit_withdraw: true }),
-    ...sendStep.instructions.map((instruction) =>
-      buildInstruction({
-        instruction,
-        currentChain: sendStep.origin,
-        deploymentProfile,
-      }),
-    ),
+    ...buildInstructionFragment({
+      instructions: sendStep.instructions,
+      currentChain: sendStep.origin,
+      deploymentProfile,
+    }),
   ]);
 }
 
@@ -438,6 +497,35 @@ function collectTransferChain(instruction) {
     chain.push(nestedTransfer);
     current = nestedTransfer;
   }
+}
+
+function buildVersionedInstructionFragment({
+  instructions,
+  currentChain,
+  deploymentProfile,
+}) {
+  return Enum(
+    "V5",
+    buildInstructionFragment({
+      instructions,
+      currentChain,
+      deploymentProfile,
+    }),
+  );
+}
+
+function buildInstructionFragment({
+  instructions,
+  currentChain,
+  deploymentProfile,
+}) {
+  return instructions.map((instruction) =>
+    buildInstruction({
+      instruction,
+      currentChain,
+      deploymentProfile,
+    }),
+  );
 }
 
 function assertReserveWithdrawExecutionChain(hops, withdrawInstruction, reserveWithdrawInstruction) {

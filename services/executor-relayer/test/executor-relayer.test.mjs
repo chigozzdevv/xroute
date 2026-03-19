@@ -19,6 +19,9 @@ const refundAddress = "0x1111111111111111111111111111111111111111";
 const ss58Recipient = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
 const hubRouterAddress = "0x2222222222222222222222222222222222222222";
 const moonbeamRouterAddress = "0x3333333333333333333333333333333333333333";
+const moonbeamXcDotAssetAddress = "0xffffffff1fcacbd218edc0eba20fc2308c778080";
+const moonbeamBatchPrecompileAddress = "0x0000000000000000000000000000000000000808";
+const moonbeamXcmPrecompileAddress = "0x000000000000000000000000000000000000081a";
 
 test("executor relayer authenticates and dispatches a queued job", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "xroute-relayer-"));
@@ -236,6 +239,7 @@ test("executor relayer routes moonbeam-origin dispatch and failure jobs through 
       XROUTE_MOONBEAM_RPC_URL: moonbeamAnvil.rpcUrl,
       XROUTE_MOONBEAM_PRIVATE_KEY: moonbeamAnvil.privateKey,
       XROUTE_MOONBEAM_ROUTER_ADDRESS: moonbeamRouterAddress,
+      XROUTE_MOONBEAM_XCDOT_ASSET_ADDRESS: moonbeamXcDotAssetAddress,
       XROUTE_RELAYER_JOB_STORE_PATH: join(tempDir, "jobs.json"),
       XROUTE_STATUS_EVENTS_PATH: join(tempDir, "events.ndjson"),
       XROUTE_RELAYER_POLL_INTERVAL_MS: "25",
@@ -281,11 +285,14 @@ test("executor relayer routes moonbeam-origin dispatch and failure jobs through 
     });
     assert.equal(dispatched.status, "completed");
     assert.equal(dispatched.result.sourceChain, "moonbeam");
-    assert.equal(dispatched.result.targetAddress, moonbeamRouterAddress);
+    assert.equal(dispatched.result.targetAddress, moonbeamBatchPrecompileAddress);
+    assert.equal(dispatched.result.xcmAddress, moonbeamXcmPrecompileAddress);
+    assert.equal(dispatched.result.destinationChain, "hydration");
+    assert.equal(dispatched.result.remoteReserveChain, "polkadot-hub");
 
     const moonbeamDispatchTx = await getTransactionByHash(moonbeamAnvil.rpcUrl, dispatched.result.txHash);
     const hubDispatchTx = await getTransactionByHash(hubAnvil.rpcUrl, dispatched.result.txHash);
-    assert.equal(moonbeamDispatchTx?.to?.toLowerCase(), moonbeamRouterAddress);
+    assert.equal(moonbeamDispatchTx?.to?.toLowerCase(), moonbeamBatchPrecompileAddress);
     assert.equal(hubDispatchTx, null);
 
     const queuedFailure = await relayer.fail({
@@ -329,6 +336,7 @@ test("executor relayer completes moonbeam-origin settle and refund lifecycles", 
       XROUTE_MOONBEAM_RPC_URL: moonbeamAnvil.rpcUrl,
       XROUTE_MOONBEAM_PRIVATE_KEY: moonbeamAnvil.privateKey,
       XROUTE_MOONBEAM_ROUTER_ADDRESS: moonbeamRouterAddress,
+      XROUTE_MOONBEAM_XCDOT_ASSET_ADDRESS: moonbeamXcDotAssetAddress,
       XROUTE_RELAYER_JOB_STORE_PATH: join(tempDir, "jobs.json"),
       XROUTE_STATUS_EVENTS_PATH: join(tempDir, "events.ndjson"),
       XROUTE_RELAYER_POLL_INTERVAL_MS: "25",
@@ -376,15 +384,16 @@ test("executor relayer completes moonbeam-origin settle and refund lifecycles", 
     });
     assert.equal(settledDispatch.status, "completed");
     assert.equal(settledDispatch.result.sourceChain, "moonbeam");
-    assert.equal(settledDispatch.result.targetAddress, moonbeamRouterAddress);
+    assert.equal(settledDispatch.result.targetAddress, moonbeamBatchPrecompileAddress);
+    assert.equal(settledDispatch.result.xcmAddress, moonbeamXcmPrecompileAddress);
 
     const moonbeamSettleTx = await getTransactionByHash(moonbeamAnvil.rpcUrl, settledDispatch.result.txHash);
-    assert.equal(moonbeamSettleTx?.to?.toLowerCase(), moonbeamRouterAddress);
+    assert.equal(moonbeamSettleTx?.to?.toLowerCase(), moonbeamBatchPrecompileAddress);
 
     const queuedSettled = await relayer.settle({
       intentId: settledIntentId,
       outcomeReference:
-        "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       resultAssetId:
         "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
       resultAmount: quote.expectedOutput.amount,
@@ -502,6 +511,111 @@ test("executor relayer fails moonbeam-origin jobs when no moonbeam execution con
     });
     assert.equal(failed.status, "failed");
     assert.match(failed.lastError, /missing execution context for source chain moonbeam/i);
+  } finally {
+    await service.close();
+    await anvil.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("executor relayer rejects moonbeam dispatch requests without source metadata", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "xroute-relayer-moonbeam-metadata-"));
+  const anvil = await spawnAnvil();
+  const service = await spawnRustService({
+    packageName: "executor-relayer",
+    cwd: workspaceRoot,
+    env: {
+      XROUTE_RELAYER_PORT: "0",
+      XROUTE_RELAYER_AUTH_TOKEN: "secret-token",
+      XROUTE_HUB_RPC_URL: anvil.rpcUrl,
+      XROUTE_HUB_PRIVATE_KEY: anvil.privateKey,
+      XROUTE_ROUTER_ADDRESS: hubRouterAddress,
+      XROUTE_MOONBEAM_RPC_URL: anvil.rpcUrl,
+      XROUTE_MOONBEAM_PRIVATE_KEY: anvil.privateKey,
+      XROUTE_MOONBEAM_ROUTER_ADDRESS: moonbeamRouterAddress,
+      XROUTE_MOONBEAM_XCDOT_ASSET_ADDRESS: moonbeamXcDotAssetAddress,
+      XROUTE_RELAYER_JOB_STORE_PATH: join(tempDir, "jobs.json"),
+      XROUTE_STATUS_EVENTS_PATH: join(tempDir, "events.ndjson"),
+      XROUTE_WORKSPACE_ROOT: workspaceRoot,
+    },
+  });
+
+  try {
+    const missingSourceIntent = await fetch(`${service.url}/jobs/dispatch`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer secret-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        intentId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        intent: {
+          sourceChain: "moonbeam",
+          destinationChain: "hydration",
+          refundAddress,
+          deadline: 1_773_185_200,
+          action: {
+            type: "transfer",
+            params: {
+              asset: "DOT",
+              amount: "10",
+              recipient: ss58Recipient,
+            },
+          },
+        },
+        request: {
+          mode: 0,
+          destination: "0x",
+          message: "0x1234",
+        },
+        moonbeamDispatch: {
+          asset: "DOT",
+          destinationChain: "hydration",
+          remoteReserveChain: "polkadot-hub",
+          customXcmOnDest: "0x1234",
+        },
+      }),
+    });
+    assert.equal(missingSourceIntent.status, 400);
+    assert.match((await missingSourceIntent.json()).error, /sourceIntent metadata/i);
+
+    const missingMoonbeamDispatch = await fetch(`${service.url}/jobs/dispatch`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer secret-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        intentId: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        intent: {
+          sourceChain: "moonbeam",
+          destinationChain: "hydration",
+          refundAddress,
+          deadline: 1_773_185_200,
+          action: {
+            type: "transfer",
+            params: {
+              asset: "DOT",
+              amount: "10",
+              recipient: ss58Recipient,
+            },
+          },
+        },
+        request: {
+          mode: 0,
+          destination: "0x",
+          message: "0x1234",
+        },
+        sourceIntent: {
+          kind: "router-evm",
+          refundAsset: "DOT",
+          refundableAmount: "13",
+          minOutputAmount: "10",
+        },
+      }),
+    });
+    assert.equal(missingMoonbeamDispatch.status, 400);
+    assert.match((await missingMoonbeamDispatch.json()).error, /moonbeamDispatch metadata/i);
   } finally {
     await service.close();
     await anvil.close();

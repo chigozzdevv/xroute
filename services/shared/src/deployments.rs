@@ -19,6 +19,7 @@ pub struct HubDeploymentArtifact {
     pub moonbeam_slpx_address: Option<String>,
     pub moonbeam_xcdot_asset_address: Option<String>,
     pub moonbeam_vdot_asset_address: Option<String>,
+    pub moonbeam_xcbnc_asset_address: Option<String>,
     pub moonbeam_slpx_destination_chain_id: Option<u64>,
 }
 
@@ -51,6 +52,7 @@ struct DeploymentSettings {
     moonbeam_slpx_address: Option<String>,
     moonbeam_xc_dot_asset_address: Option<String>,
     moonbeam_vdot_asset_address: Option<String>,
+    moonbeam_xc_bnc_asset_address: Option<String>,
     moonbeam_slpx_destination_chain_id: Option<u64>,
 }
 
@@ -142,6 +144,10 @@ pub fn load_chain_deployment_artifact(
             .settings
             .as_ref()
             .and_then(|settings| settings.moonbeam_vdot_asset_address.clone()),
+        moonbeam_xcbnc_asset_address: file
+            .settings
+            .as_ref()
+            .and_then(|settings| settings.moonbeam_xc_bnc_asset_address.clone()),
         moonbeam_slpx_destination_chain_id: file
             .settings
             .as_ref()

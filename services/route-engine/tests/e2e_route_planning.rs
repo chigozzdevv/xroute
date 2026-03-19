@@ -103,6 +103,29 @@ fn quotes_multihop_transfer_from_moonbeam_to_hydration() {
 }
 
 #[test]
+fn quotes_direct_bnc_transfer_between_moonbeam_and_bifrost() {
+    let engine = mainnet_engine();
+    let intent = Intent {
+        source_chain: ChainKey::Moonbeam,
+        destination_chain: ChainKey::Bifrost,
+        action: IntentAction::Transfer(TransferIntent {
+            asset: AssetKey::Bnc,
+            amount: AssetKey::Bnc.units(1),
+            recipient: "5FbifrostRecipient".to_owned(),
+        }),
+        refund_address: REFUND_ADDRESS.to_owned(),
+        deadline: 1_773_185_200,
+    };
+
+    let quote = engine
+        .quote(intent)
+        .expect("direct moonbeam to bifrost BNC transfer should build");
+    assert_eq!(quote.route, vec![ChainKey::Moonbeam, ChainKey::Bifrost]);
+    assert_eq!(quote.submission.asset, AssetKey::Bnc);
+    assert_eq!(quote.expected_output.asset, AssetKey::Bnc);
+}
+
+#[test]
 fn quotes_multihop_swap_from_moonbeam_to_hydration_with_hub_settlement() {
     let engine = mainnet_engine();
     let intent = Intent {

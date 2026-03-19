@@ -32,6 +32,13 @@ export function deployStack(overrides = {}) {
     overrides.platformFeeBps ?? process.env.XROUTE_PLATFORM_FEE_BPS ?? "10";
   const xcmAddress =
     overrides.xcmAddress ?? process.env.XROUTE_XCM_ADDRESS ?? resolveDefaultXcmAddress(chainKey);
+  const moonbeamXcBncAssetAddress =
+    chainKey === "moonbeam"
+      ? normalizeOptionalAddress(
+          overrides.moonbeamXcBncAssetAddress ?? process.env.XROUTE_MOONBEAM_XCBNC_ASSET_ADDRESS,
+          "XROUTE_MOONBEAM_XCBNC_ASSET_ADDRESS",
+        )
+      : null;
   const stackOutputPath =
     overrides.stackOutputPath ??
     process.env.XROUTE_STACK_OUTPUT_PATH ??
@@ -123,6 +130,11 @@ export function deployStack(overrides = {}) {
             moonbeamXcDotAssetAddress: slpxAdapter.dotAssetAddress,
             moonbeamVdotAssetAddress: slpxAdapter.vdotAssetAddress,
             moonbeamSlpxDestinationChainId: String(slpxAdapter.destinationChainId),
+          }
+        : {}),
+      ...(moonbeamXcBncAssetAddress
+        ? {
+            moonbeamXcBncAssetAddress,
           }
         : {}),
     },
@@ -244,6 +256,15 @@ function normalizeAddress(value, name) {
   }
 
   return normalized;
+}
+
+function normalizeOptionalAddress(value, name) {
+  const normalized = String(value ?? "").trim();
+  if (normalized === "") {
+    return null;
+  }
+
+  return normalizeAddress(normalized, name);
 }
 
 function resolveExecutorPrivateKeyEnvName(chainKey) {

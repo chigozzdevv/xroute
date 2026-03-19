@@ -65,6 +65,7 @@ pub enum AssetKey {
     Usdt,
     Hdx,
     Vdot,
+    Bnc,
 }
 
 impl AssetKey {
@@ -74,6 +75,7 @@ impl AssetKey {
             Self::Usdt => "USDT",
             Self::Hdx => "HDX",
             Self::Vdot => "VDOT",
+            Self::Bnc => "BNC",
         }
     }
 
@@ -83,6 +85,7 @@ impl AssetKey {
             Self::Usdt => 6,
             Self::Hdx => 12,
             Self::Vdot => 10,
+            Self::Bnc => 12,
         }
     }
 
@@ -92,6 +95,7 @@ impl AssetKey {
             Self::Usdt => ChainKey::PolkadotHub,
             Self::Hdx => ChainKey::Hydration,
             Self::Vdot => ChainKey::Bifrost,
+            Self::Bnc => ChainKey::Bifrost,
         }
     }
 
@@ -113,6 +117,7 @@ impl FromStr for AssetKey {
             "USDT" => Ok(Self::Usdt),
             "HDX" => Ok(Self::Hdx),
             "VDOT" => Ok(Self::Vdot),
+            "BNC" => Ok(Self::Bnc),
             other => Err(format!("unsupported asset: {other}")),
         }
     }

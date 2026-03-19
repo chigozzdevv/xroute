@@ -9,7 +9,11 @@ import {
   createTransferIntent,
 } from "../../xroute-intents/index.mjs";
 import { createRouteEngineQuoteProvider } from "../../xroute-sdk/internal/route-engine.mjs";
-import { buildExecutionEnvelope, getDefaultXcmCodecContext } from "../index.mjs";
+import {
+  buildExecutionEnvelope,
+  buildMoonbeamDispatchMetadata,
+  getDefaultXcmCodecContext,
+} from "../index.mjs";
 
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const mainnetQuoteProvider = createRouteEngineQuoteProvider({
@@ -318,3 +322,86 @@ function finalRemoteInstructions(decoded) {
 
   return nestedTransfer ? nestedTransfer.value.xcm : outerInstruction.value.xcm;
 }
+
+test("buildMoonbeamDispatchMetadata derives destination-side custom XCM for moonbeam to hydration transfers", async () => {
+  const intent = createTransferIntent({
+    sourceChain: "moonbeam",
+    destinationChain: "hydration",
+    refundAddress,
+    deadline: 1_773_185_200,
+    params: {
+      asset: "DOT",
+      amount: "50000000000",
+      recipient: aliceAddress,
+    },
+  });
+  const quote = await mainnetQuoteProvider.quote(intent);
+
+  const moonbeamDispatch = buildMoonbeamDispatchMetadata({ quote });
+  const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(
+    moonbeamDispatch.customXcmOnDest,
+  );
+
+  assert.equal(moonbeamDispatch.asset, "DOT");
+  assert.equal(moonbeamDispatch.destinationChain, "hydration");
+  assert.equal(moonbeamDispatch.remoteReserveChain, "polkadot-hub");
+  assert.equal(decoded.type, "V5");
+  assert.equal(decoded.value[0].type, "BuyExecution");
+  assert.equal(decoded.value[1].type, "DepositAsset");
+});
+
+test("buildMoonbeamDispatchMetadata derives destination-side custom XCM for moonbeam swaps", async () => {
+  const intent = createSwapIntent({
+    sourceChain: "moonbeam",
+    destinationChain: "hydration",
+    refundAddress,
+    deadline: 1_773_185_200,
+    params: {
+      assetIn: "DOT",
+      assetOut: "USDT",
+      amountIn: "100000000000",
+      minAmountOut: "49000000",
+      settlementChain: "polkadot-hub",
+      recipient: "0x1111111111111111111111111111111111111111",
+    },
+  });
+  const quote = await mainnetQuoteProvider.quote(intent);
+
+  const moonbeamDispatch = buildMoonbeamDispatchMetadata({ quote });
+  const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(
+    moonbeamDispatch.customXcmOnDest,
+  );
+
+  assert.equal(moonbeamDispatch.asset, "DOT");
+  assert.equal(moonbeamDispatch.destinationChain, "hydration");
+  assert.equal(moonbeamDispatch.remoteReserveChain, "polkadot-hub");
+  assert.equal(decoded.value[0].type, "BuyExecution");
+  assert.equal(decoded.value[1].type, "ExchangeAsset");
+  assert.equal(decoded.value[2].type, "InitiateReserveWithdraw");
+});
+
+test("buildMoonbeamDispatchMetadata derives reserve-side custom XCM for moonbeam to bifrost BNC transfers", async () => {
+  const intent = createTransferIntent({
+    sourceChain: "moonbeam",
+    destinationChain: "bifrost",
+    refundAddress,
+    deadline: 1_773_185_200,
+    params: {
+      asset: "BNC",
+      amount: "1000000000000",
+      recipient: aliceAddress,
+    },
+  });
+  const quote = await mainnetQuoteProvider.quote(intent);
+
+  const moonbeamDispatch = buildMoonbeamDispatchMetadata({ quote });
+  const decoded = getDefaultXcmCodecContext().decodeVersionedXcm(
+    moonbeamDispatch.customXcmOnDest,
+  );
+
+  assert.equal(moonbeamDispatch.asset, "BNC");
+  assert.equal(moonbeamDispatch.destinationChain, "bifrost");
+  assert.equal(moonbeamDispatch.remoteReserveChain, "bifrost");
+  assert.equal(decoded.value[0].type, "BuyExecution");
+  assert.equal(decoded.value[1].type, "DepositAsset");
+});

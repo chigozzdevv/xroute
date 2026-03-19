@@ -377,6 +377,65 @@ test("quote service applies live quote inputs from file overrides", async () => 
   }
 });
 
+test("quote service applies moonbeam to bifrost BNC live transfer edge overrides", async () => {
+  const fixture = createLiveInputsFixture({
+    generatedAt: "2026-03-11T12:00:00Z",
+    transferEdges: [
+      {
+        sourceChain: "moonbeam",
+        destinationChain: "bifrost",
+        asset: "BNC",
+        transportFee: "777000000",
+        buyExecutionFee: "333000000",
+      },
+    ],
+    swapRoutes: [],
+    executeRoutes: [],
+    vdotOrders: [],
+  });
+
+  const service = await spawnRustService({
+    packageName: "quote-service",
+    cwd: workspaceRoot,
+    env: fixture.env(),
+  });
+
+  try {
+    const response = await fetch(`${service.url}/quote`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        intent: {
+          sourceChain: "moonbeam",
+          destinationChain: "bifrost",
+          refundAddress,
+          deadline: 1_773_185_200,
+          action: {
+            type: "transfer",
+            params: {
+              asset: "BNC",
+              amount: "1000000000000",
+              recipient: substrateRefundAddress,
+            },
+          },
+        },
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.quote.route.join("->"), "moonbeam->bifrost");
+    assert.equal(payload.quote.fees.xcmFee.amount, "777000000");
+    assert.equal(payload.quote.fees.destinationFee.amount, "333000000");
+    assert.equal(payload.quote.expectedOutput.asset, "BNC");
+  } finally {
+    await service.close();
+    fixture.cleanup();
+  }
+});
+
 test("quote service applies live quote inputs from command overrides", async () => {
   const fixture = createLiveInputsFixture({
     generatedAt: "2026-03-11T12:00:00Z",

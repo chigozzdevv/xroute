@@ -1,249 +1,395 @@
 # xroute
 
-`xroute` is a multihop XCM router for Polkadot.
+**Cross-chain multihop intent execution router for the Polkadot ecosystem.**
 
-It exposes one intent surface for:
+`xroute` is a cross-chain multihop intent execution router for the Polkadot ecosystem. It provides a single intent surface for moving assets, routing swaps, and executing destination-side actions across a selected Polkadot parachain graph. It combines on-chain router contracts, route planning and quote services, relayer infrastructure, and a JavaScript SDK so applications can work with `transfer`, `swap`, and `execute` flows through one consistent interface.
 
-- `transfer`
-- `swap`
-- `execute`
+---
 
-The supported production graph in this repo is:
+## How It Works
+
+```text
+App or wallet creates an intent
+        ↓
+Quote service normalizes the intent and plans the route
+        ↓
+XCM builder turns the plan into the source-chain execution envelope
+        ↓
+Source wallet or relayer submits the source-chain transaction
+        ↓
+Destination execution completes on the target chain
+        ↓
+Relayer records settlement or refund state through the router
+```
+
+**Key flow**
+
+1. A client creates a typed intent for `transfer`, `swap`, or `execute`.
+2. The quote layer validates the route and returns a normalized execution plan.
+3. The XCM builder converts that execution plan into the source-chain payload.
+4. The source-chain wallet or relayer submits the dispatch transaction.
+5. The destination-side action completes through the planned reserve or multihop route.
+6. The relayer finalizes success or refund state so the intent has a stable status timeline.
+
+---
+
+## Action Surface
+
+| Action | What it does | Current execution model |
+|-------|---------------|-------------------------|
+| `transfer` | Moves an asset cross-chain to a recipient | Direct and multihop routes across the supported graph |
+| `swap` | Routes an input asset to the swap venue and returns the output asset | Swap execution is currently on `hydration` |
+| `execute` | Delivers funds and a destination-side action payload | Destination-side execution is currently on `moonbeam` |
+
+This is an intentionally explicit route graph, not a generic any-chain-to-any-chain router. The supported paths are defined in the registry and SDK, and unsupported combinations are rejected at intent creation time.
+
+---
+
+## Supported Chains and Assets
+
+### Chains
 
 - `polkadot-hub`
 - `hydration`
 - `moonbeam`
 - `bifrost`
 
-## Supported Routes
-
-Transfers:
-
-- `polkadot-hub -> hydration`
-- `hydration -> polkadot-hub`
-- `polkadot-hub -> moonbeam`
-- `moonbeam -> polkadot-hub`
-- `polkadot-hub -> bifrost`
-- `bifrost -> polkadot-hub`
-- multihop `moonbeam -> polkadot-hub -> hydration`
-- multihop `bifrost -> polkadot-hub -> moonbeam`
-
-Swaps:
-
-- `DOT -> USDT` on `hydration`
-- `DOT -> HDX` on `hydration`
-- `DOT -> USDT` settles on `hydration` or `polkadot-hub`
-- `DOT -> HDX` settles on `hydration`
-- multihop `moonbeam -> polkadot-hub -> hydration -> polkadot-hub`
-
-Execute:
-
-- `call` on `moonbeam`
-- `mint-vdot` on `moonbeam` via the Moonbeam SLPx adapter
-- multihop `hydration -> polkadot-hub -> moonbeam`
-- multihop `bifrost -> polkadot-hub -> moonbeam`
-
-Assets:
+### Assets
 
 - `DOT`
 - `USDT`
 - `HDX`
 - `VDOT`
+- `BNC`
 
-## Architecture
+### Current Route Surface
 
-Onchain:
+| Route Type | Supported Surface |
+|-----------|-------------------|
+| Transfer | `polkadot-hub <-> hydration`, `polkadot-hub <-> moonbeam`, `polkadot-hub <-> bifrost`, direct `moonbeam <-> bifrost` for `BNC`, plus supported multihop spoke routes |
+| Swap | `DOT -> USDT` and `DOT -> HDX` with swap execution on `hydration` |
+| Execute | Moonbeam-targeted execution, including contract call flows and supported adapter-driven flows |
 
-- `contracts/polkadot-hub-router`
-  - Hub router contract
-  - escrow, dispatch commitment, settlement, refunds
+---
 
-Backend:
+## Multihop Routes
 
-- `services/xroute-api`
-  - single public HTTP API surface
-  - mounts quote, status, timeline, and relayer job routes under one `/v1`
-- `services/route-engine`
-  - Rust route planning and fee construction
-- `services/quote-service`
-  - internal quote module used by `xroute-api`
-- `services/executor-relayer`
-  - internal relayer/status module used by `xroute-api`
-- `services/shared`
-  - request parsing, deployment loading, policy handling
+`xroute` treats multihop delivery as a first-class path instead of a fallback. Current examples in the production graph include:
 
-SDK:
+- `moonbeam -> polkadot-hub -> hydration` for `DOT` transfer
+- `bifrost -> polkadot-hub -> moonbeam` for `DOT` transfer
+- `moonbeam -> polkadot-hub -> hydration` for swaps that execute on `hydration`
+- `hydration -> polkadot-hub -> moonbeam` for execute flows targeting `moonbeam`
+- `bifrost -> polkadot-hub -> moonbeam` for execute flows targeting `moonbeam`
+- direct `moonbeam -> bifrost` and `bifrost -> moonbeam` transfer for `BNC`
 
-- `packages/xroute-sdk`
-- `packages/xroute-intents`
-- `packages/xroute-chain-registry`
-- `packages/xroute-xcm`
-- `packages/xroute-precompile-interfaces`
-- `packages/xroute-types`
+From a product perspective:
 
-## Setup
+- swaps are multihop into `hydration`, because `hydration` is the swap venue
+- execute flows are multihop into `moonbeam`, because `moonbeam` is the current execution destination
+- transfers can be direct or reserve-routed depending on the asset and source chain
 
-Requirements:
+---
 
-- `Node.js 20+`
-- `cargo`
-- `forge`
-- `cast`
-- `anvil`
+## On-Chain and Off-Chain Responsibilities
 
-Install:
+### On-chain
+
+- intent escrow and accounting on EVM router chains
+- dispatch commitment validation via execution hashes
+- settlement, failure, and refund state transitions
+- Moonbeam adapter-based execution support where applicable
+
+### Off-chain
+
+- route discovery
+- quote construction
+- XCM message planning
+- relayer job execution
+- status and timeline aggregation
+
+---
+
+## Project Structure
+
+```text
+xroute/
+├── contracts/
+│   └── polkadot-hub-router/          # Solidity router contracts and tests
+├── services/
+│   ├── xroute-api/                   # Unified public API
+│   ├── route-engine/                 # Route planning and XCM execution planning
+│   ├── quote-service/                # Quote HTTP surface
+│   ├── executor-relayer/             # Dispatch, settlement, and refund job execution
+│   └── shared/                       # Shared Rust types, API parsing, deployment loading
+├── packages/
+│   ├── xroute-sdk/                   # High-level JS SDK
+│   ├── xroute-intents/               # Typed intent builders and validation
+│   ├── xroute-chain-registry/        # Supported chains, assets, and route graph
+│   ├── xroute-xcm/                   # XCM envelope construction
+│   ├── xroute-precompile-interfaces/ # Deployment profile and precompile metadata
+│   └── xroute-types/                 # Shared assertions, enums, and utilities
+└── scripts/                          # Deployment, proof, and local service helpers
+```
+
+### Contracts
+
+- **`XRouteHubRouter.sol`** — core router contract for intent submission, dispatch tracking, settlement, and refunds
+- **`XRouteMoonbeamSlpxAdapter.sol`** — Moonbeam-side adapter used for supported destination execution flows
+
+### Services
+
+| Service | Responsibility |
+|--------|-----------------|
+| `xroute-api` | Unified `/v1` API surface for quote, status, timeline, and relayer-backed execution flows |
+| `route-engine` | Canonical route planning, fee construction, and destination call planning |
+| `quote-service` | Quote API built on top of the route engine |
+| `executor-relayer` | Dispatch, settlement, failure, and refund job execution |
+| `shared` | Shared request parsing, deployment loading, and execution policy utilities |
+
+### SDK Components
+
+| Package | Responsibility |
+|--------|-----------------|
+| `@xroute/sdk` | High-level client for quoting, wallet connection, execution, and status tracking |
+| `xroute-intents` | Public intent constructors such as `createTransferIntent`, `createSwapIntent`, and `createExecuteIntent` |
+| `xroute-chain-registry` | Supported chains, assets, and route assertions |
+| `xroute-xcm` | Source-chain envelope construction and Moonbeam dispatch metadata derivation |
+| `xroute-precompile-interfaces` | Deployment profile helpers and precompile metadata |
+| `xroute-types` | Shared constants, validators, and deterministic ID helpers |
+
+---
+
+## OpenZeppelin Usage
+
+The Solidity contracts in `contracts/polkadot-hub-router/src` build on OpenZeppelin primitives:
+
+- `AccessControlDefaultAdminRules` for admin and executor role management
+- `SafeERC20` and `IERC20` for ERC-20 asset transfers
+- `Pausable` for circuit-breaker controls
+- `ReentrancyGuard` for dispatch, settlement, and refund entrypoints
+
+This keeps the router focused on XCM and intent lifecycle logic while relying on established access control and token safety primitives.
+
+---
+
+## SDK Usage
+
+### 1. Create a Client
+
+```js
+import { createXRouteClient } from "@xroute/sdk";
+
+const client = createXRouteClient();
+```
+
+You can also pass an `apiKey` for higher limits:
+
+```js
+const client = createXRouteClient({
+  apiKey: process.env.XROUTE_API_KEY,
+});
+```
+
+For higher-rate or production access details, contact [xroute@muwa.io](mailto:xroute@muwa.io).
+
+### 2. Connect a Wallet
+
+For quote-only usage, no wallet connection is required.
+
+For source-chain execution, connect the source wallet:
+
+```js
+client.connectWallet("evm", {
+  provider: window.ethereum,
+  chainKey: "moonbeam",
+});
+```
+
+You can also connect a Substrate wallet for supported Substrate source chains:
+
+```js
+client.connectWallet("substrate", {
+  extension: injectedExtension,
+  chainKey: "hydration",
+});
+```
+
+### 3. Quote
+
+`client.quote(...)` returns the normalized intent, the quote, and any available source-cost estimate.
+
+```js
+const { intent, quote, sourceCosts } = await client.quote({
+  sourceChain: "moonbeam",
+  destinationChain: "hydration",
+  ownerAddress: "0x1111111111111111111111111111111111111111",
+  assetIn: "DOT",
+  assetOut: "USDT",
+  amountIn: "1000000000000",
+  minAmountOut: "490000000",
+  settlementChain: "polkadot-hub",
+  recipient: "0x1111111111111111111111111111111111111111",
+});
+```
+
+All asset amounts are base-unit integer strings.
+
+### 4. Transfer
+
+`client.transfer(...)` expects the source chain, destination chain, asset, amount, and recipient. When a wallet is connected, the SDK fills the sender and refund identity automatically.
+
+```js
+const execution = await client.transfer({
+  sourceChain: "moonbeam",
+  destinationChain: "bifrost",
+  asset: "BNC",
+  amount: "1000000000000",
+  recipient: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+});
+```
+
+### 5. Swap
+
+```js
+const execution = await client.swap({
+  sourceChain: "moonbeam",
+  destinationChain: "hydration",
+  assetIn: "DOT",
+  assetOut: "USDT",
+  amountIn: "1000000000000",
+  minAmountOut: "490000000",
+  settlementChain: "polkadot-hub",
+  recipient: "0x1111111111111111111111111111111111111111",
+});
+```
+
+### 6. Execute
+
+For contract call flows, use `client.call(...)` or `client.execute(...)`.
+
+```js
+const execution = await client.call({
+  sourceChain: "hydration",
+  destinationChain: "moonbeam",
+  asset: "DOT",
+  maxPaymentAmount: "200000000",
+  contractAddress: "0x2222222222222222222222222222222222222222",
+  calldata: "0xdeadbeef",
+  value: "0",
+  gasLimit: "250000",
+  fallbackWeight: {
+    refTime: 650000000,
+    proofSize: 12288,
+  },
+});
+```
+
+### 7. Run a Flow
+
+`runFlow(...)` sequences multiple intents. It is not a single atomic on-chain batch; each step is quoted, submitted, dispatched, and awaited independently.
+
+```js
+const flow = await client.runFlow({
+  steps: [
+    {
+      name: "swap",
+      intent: {
+        sourceChain: "moonbeam",
+        destinationChain: "hydration",
+        refundAddress: "0x1111111111111111111111111111111111111111",
+        deadline: 1773185200,
+        action: {
+          type: "swap",
+          params: {
+            assetIn: "DOT",
+            assetOut: "USDT",
+            amountIn: "1000000000000",
+            minAmountOut: "490000000",
+            settlementChain: "polkadot-hub",
+            recipient: "0x1111111111111111111111111111111111111111",
+          },
+        },
+      },
+    },
+    {
+      name: "call",
+      intent: {
+        sourceChain: "hydration",
+        destinationChain: "moonbeam",
+        refundAddress: "0x1111111111111111111111111111111111111111",
+        deadline: 1773185200,
+        action: {
+          type: "execute",
+          params: {
+            executionType: "call",
+            asset: "DOT",
+            maxPaymentAmount: "200000000",
+            contractAddress: "0x2222222222222222222222222222222222222222",
+            calldata: "0xdeadbeef",
+            value: "0",
+            gasLimit: "250000",
+            fallbackWeight: {
+              refTime: 650000000,
+              proofSize: 12288,
+            },
+          },
+        },
+      },
+    },
+  ],
+});
+```
+
+### 8. Track Status
+
+```js
+const status = await client.getStatus(execution.submitted.intentId);
+const timeline = await client.getTimeline(execution.submitted.intentId);
+const finalStatus = await client.wait(execution.submitted.intentId);
+```
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 20+
+- Rust and Cargo
+- Foundry (`forge`, `cast`, `anvil`)
+
+### Install
 
 ```bash
 npm install
 ```
 
-## Scripts
-
-Build and test:
+### Run the test suite
 
 ```bash
 npm test
-npm run build
 ```
 
-Deploy contracts:
-
-```bash
-npm run deploy:mainnet-hub
-npm run deploy:mainnet-moonbeam
-```
-
-Moonbeam adapter deployment inputs:
-
-- `XROUTE_MOONBEAM_SLPX_ADDRESS`
-- `XROUTE_MOONBEAM_XCDOT_ASSET_ADDRESS`
-- `XROUTE_MOONBEAM_VDOT_ASSET_ADDRESS`
-- `XROUTE_MOONBEAM_SLPX_DEST_CHAIN_ID`
-
-Smoke and proof runs:
-
-```bash
-npm run smoke:mainnet
-npm run proof:mainnet
-```
-
-Services:
+### Run the unified API locally
 
 ```bash
 npm run serve:api
 ```
 
-`npm run serve:api` loads `.env`, defaults `XROUTE_WORKSPACE_ROOT` to the repo root, and falls back to `scripts/fetch-live-quote-inputs.mjs` when no live quote input source is set.
+### Build
+
+```bash
+npm run build
+```
+
+---
 
 ## Deployment Artifacts
 
-Canonical artifact paths are:
+Canonical deployment artifacts live under:
 
 - `contracts/polkadot-hub-router/deployments/mainnet/polkadot-hub.json`
 - `contracts/polkadot-hub-router/deployments/mainnet/moonbeam.json`
 
-These are written by `scripts/deploy-stack.mjs` when you deploy with:
-
-- `XROUTE_DEPLOYMENT_CHAIN_KEY=polkadot-hub` or `moonbeam`
-
-## Contract Deployment
-
-Hub router:
-
-```bash
-XROUTE_ALLOW_LIVE_DEPLOY=true \
-XROUTE_DEPLOYMENT_CHAIN_KEY=polkadot-hub \
-XROUTE_HUB_RPC_URL="<POLKADOT_HUB_RPC>" \
-XROUTE_DEPLOYER_PRIVATE_KEY="<HUB_ADMIN_DEPLOYER_KEY>" \
-XROUTE_HUB_PRIVATE_KEY="<HUB_EXECUTOR_KEY>" \
-XROUTE_ROUTER_TREASURY="<TREASURY_ADDRESS>" \
-node scripts/deploy-stack.mjs
-```
-
-Moonbeam router:
-
-```bash
-XROUTE_ALLOW_LIVE_DEPLOY=true \
-XROUTE_DEPLOYMENT_CHAIN_KEY=moonbeam \
-XROUTE_MOONBEAM_RPC_URL="<MOONBEAM_RPC>" \
-XROUTE_DEPLOYER_PRIVATE_KEY="<MOONBEAM_ADMIN_DEPLOYER_KEY>" \
-XROUTE_MOONBEAM_PRIVATE_KEY="<MOONBEAM_EXECUTOR_KEY>" \
-XROUTE_ROUTER_TREASURY="<TREASURY_ADDRESS>" \
-node scripts/deploy-stack.mjs
-```
-
-The deployer/admin key is not the executor. Deployments derive the router executor address from the chain executor key and reject overlapping admin, executor, and treasury roles.
-
-## Service Configuration
-
-`xroute-api` requirements:
-
-- `XROUTE_WORKSPACE_ROOT`
-- one of:
-  - `XROUTE_LIVE_QUOTE_INPUTS_PATH`
-  - `XROUTE_LIVE_QUOTE_INPUTS_COMMAND`
-- optional live-input refresh tuning:
-  - `XROUTE_LIVE_QUOTE_INPUTS_REFRESH_MS`
-  - `XROUTE_LIVE_QUOTE_INPUTS_MAX_STALE_MS`
-- `XROUTE_RELAYER_AUTH_TOKEN`
-- Hub execution context:
-  - `XROUTE_HUB_RPC_URL`
-  - `XROUTE_HUB_PRIVATE_KEY` (`HUB_EXECUTOR_KEY`)
-- Moonbeam execution context:
-  - `XROUTE_MOONBEAM_RPC_URL`
-  - `XROUTE_MOONBEAM_PRIVATE_KEY` (`MOONBEAM_EXECUTOR_KEY`)
-- Hydration execution context:
-  - `XROUTE_HYDRATION_RPC_URL`
-  - `XROUTE_HYDRATION_PRIVATE_KEY` (`HYDRATION_EXECUTOR_KEY`)
-- Bifrost execution context:
-  - `XROUTE_BIFROST_RPC_URL`
-  - `XROUTE_BIFROST_PRIVATE_KEY` (`BIFROST_EXECUTOR_KEY`)
-- optional:
-  - `XROUTE_EVM_POLICY_PATH`
-  - `XROUTE_SUBSTRATE_DISPATCH_SCRIPT`
-  - dedicated read-only quote RPCs:
-    - `XROUTE_HUB_XCM_RPC_URL`
-    - `XROUTE_MOONBEAM_XCM_RPC_URL`
-    - `XROUTE_HYDRATION_XCM_RPC_URL`
-    - `XROUTE_BIFROST_XCM_RPC_URL`
-    - `XROUTE_HUB_XCM_RPC_URL` must be a Substrate/XCM RPC for Asset Hub, not `https://eth-rpc.polkadot.io/`
-    - `XROUTE_BIFROST_XCM_RPC_URL` should be a Substrate-capable Bifrost RPC; if you use the public Liebi endpoint, use `wss://hk.p.bifrost-rpc.liebi.com/ws`, not bare `https://hk.p.bifrost-rpc.liebi.com`
-
-The quote path is fail-closed. `XROUTE_LIVE_QUOTE_INPUTS_FAIL_OPEN=true` is rejected.
-
-## Example Service Run
-
-```bash
-npm run serve:api
-```
-
-If you want the raw process without `.env` loading, use:
-
-```bash
-npm run serve:api:raw
-```
-
-## Render
-
-`render.yaml` is included for the unified API. Render should use:
-
-- build command: `npm install && cargo build --release -p xroute-api`
-- start command: `./target/release/xroute-api`
-
-Render injects `PORT`; `xroute-api` now falls back to that automatically and binds `0.0.0.0` when `PORT` is present.
-
-## Operational Notes
-
-- Refunds are full-refund only for failed intents.
-- Mainnet quote inputs must be live; static fallback is not allowed.
-- Quote refresh now serves the last successful live snapshot during short upstream outages, bounded by `XROUTE_LIVE_QUOTE_INPUTS_MAX_STALE_MS`.
-- `scripts/fetch-live-quote-inputs.mjs` pulls live inputs from:
-  - Polkadot Hub `XcmPaymentApi`
-  - Hydration Omnipool oracle precompiles
-  - Moonbeam XCM payment APIs
-  - Bifrost vDOT pricing via the official Moonbeam XCM oracle mirror
-- Prefer dedicated read-only RPC URLs for live quote inputs instead of reusing executor RPCs; the protocol must match the chain endpoint, and the fetcher will keep websocket fallbacks where that is the working public transport.
-- `execute/call` should be protected with a Moonbeam execution allowlist policy.
-- `execute/mint-vdot` submits a Moonbeam SLPx order; it is an async asset-order flow, not immediate final asset settlement.
-- The relayer should stay behind auth, rate limits, and your own control plane.
-- Keep the deployer/admin key cold and separate from the relayer executor keys.
+These artifacts provide the deployed router addresses, executor addresses, treasury configuration, and chain-specific settings used by the services and SDK.

@@ -49,7 +49,7 @@ const HOSTED_EVM_WALLET_DEFAULTS = Object.freeze({
       }),
     }),
     moonbeam: Object.freeze({
-      routerAddress: "0x338b5717531138b0c5f2c7150abf662de3e53634",
+      routerAddress: "0x1cf06764e0d154347827ebe031efc96202375b65",
       gasAssetMetadata: Object.freeze({
         asset: "GLMR",
         decimals: 18,
@@ -73,6 +73,7 @@ const HOSTED_EVM_WALLET_DEFAULTS = Object.freeze({
       assetAddresses: Object.freeze({
         moonbeam: Object.freeze({
           DOT: "0xffffffff1fcacbd218edc0eba20fc2308c778080",
+          BNC: "0xffffffff7cc06abdf7201b350a1265c62c8601d2",
         }),
       }),
     }),
@@ -176,6 +177,7 @@ function createEvmWallet({
   routerAddress,
   statusProvider,
   assetAddresses,
+  fetchImpl,
   deploymentProfile = DEFAULT_DEPLOYMENT_PROFILE,
   gasLimit,
   gasAssetMetadata,
@@ -207,6 +209,7 @@ function createEvmWallet({
       defaultConfig?.assetAddresses,
       normalizeAssetAddressOverrides(assetAddresses, normalizedChainKey),
     ),
+    fetchImpl,
     gasLimit,
     gasAssetMetadata: gasAssetMetadata ?? defaultConfig?.gasAssetMetadata ?? null,
     autoApprove,

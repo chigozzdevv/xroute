@@ -129,6 +129,20 @@ impl RouteRegistry {
                     transport_fee: AssetAmount::new(AssetKey::Dot, 170_000_000),
                     buy_execution_fee: AssetAmount::new(AssetKey::Dot, 100_000_000),
                 },
+                TransferEdge {
+                    source: ChainKey::Moonbeam,
+                    destination: ChainKey::Bifrost,
+                    asset: AssetKey::Bnc,
+                    transport_fee: AssetAmount::new(AssetKey::Bnc, 1_000_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Bnc, 500_000_000),
+                },
+                TransferEdge {
+                    source: ChainKey::Bifrost,
+                    destination: ChainKey::Moonbeam,
+                    asset: AssetKey::Bnc,
+                    transport_fee: AssetAmount::new(AssetKey::Bnc, 1_000_000_000),
+                    buy_execution_fee: AssetAmount::new(AssetKey::Bnc, 500_000_000),
+                },
             ],
             swap_routes: vec![
                 SwapRoute {

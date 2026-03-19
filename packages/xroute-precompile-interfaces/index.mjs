@@ -24,8 +24,7 @@ export const XCM_PRECOMPILE = Object.freeze({
     }),
     MoonbeamXcm: Object.freeze({
       functions: Object.freeze([
-        "xcmExecute(bytes,uint64)",
-        "xcmSend((uint8,bytes[]),bytes)",
+        "transferAssetsUsingTypeAndThenAddress((uint8,bytes[]),(address,uint256)[],uint8,bytes,(uint8,bytes[]))",
         "weightMessage(bytes)",
       ]),
     }),

@@ -273,6 +273,12 @@ function buildScenarios(settings) {
   if (!settings.hydration.ready) {
     hydrationMissing.push(...settings.hydration.missing);
   }
+  const moonbeamBncMissing = [...moonbeamMissing];
+  if (!settings.moonbeam.bncAssetAddress) {
+    moonbeamBncMissing.push(
+      "XROUTE_MOONBEAM_XCBNC_ASSET_ADDRESS or moonbeam deployment artifact moonbeamXcBncAssetAddress",
+    );
+  }
 
   const scenarios = [
     {
@@ -316,6 +322,28 @@ function buildScenarios(settings) {
             amountIn: "1000000000000",
             minAmountOut: "490000000",
             settlementChain: "polkadot-hub",
+            recipient: defaultRecipient,
+          },
+        });
+      },
+      cleanup: cleanupEvmSourceIntent,
+    },
+    {
+      name: "transfer moonbeam -> bifrost",
+      sourceChain: "moonbeam",
+      destinationChain: "bifrost",
+      missing: [...moonbeamBncMissing, ...(!settings.bifrost.ready ? settings.bifrost.missing : [])],
+      owner: settings.moonbeam.ownerAddress,
+      createIntent() {
+        return createTransferIntent({
+          deploymentProfile,
+          sourceChain: "moonbeam",
+          destinationChain: "bifrost",
+          refundAddress: settings.hub.ownerAddress,
+          deadline: Math.floor(Date.now() / 1000) + 3600,
+          params: {
+            asset: "BNC",
+            amount: "1000000000000",
             recipient: defaultRecipient,
           },
         });
@@ -438,6 +466,15 @@ function resolveAssetAddress({ chainKey, assetKey, settings }) {
     );
   }
 
+  if (chainKey === "moonbeam" && assetKey === "BNC") {
+    if (settings.moonbeam.bncAssetAddress) {
+      return settings.moonbeam.bncAssetAddress;
+    }
+    throw new Error(
+      "missing XROUTE_MOONBEAM_XCBNC_ASSET_ADDRESS or moonbeam deployment artifact moonbeamXcBncAssetAddress",
+    );
+  }
+
   throw new Error(`unsupported source asset ${assetKey} on ${chainKey}`);
 }
 
@@ -510,6 +547,7 @@ async function resolveSettings() {
           ? await runCast(["wallet", "address", "--private-key", moonbeamPrivateKey])
           : null,
       dotAssetAddress: resolveMoonbeamDotAssetAddress(),
+      bncAssetAddress: resolveMoonbeamBncAssetAddress(),
     },
     hydration: {
       ready: hydrationMissing.length === 0,
@@ -527,15 +565,43 @@ async function resolveSettings() {
 }
 
 function resolveMoonbeamDotAssetAddress() {
+  const deploymentArtifact = readRouterDeploymentArtifact({
+    workspaceRoot,
+    deploymentProfile,
+    chainKey: "moonbeam",
+  });
   const explicit =
     process.env.XROUTE_MOONBEAM_XCDOT_ASSET_ADDRESS?.trim() ||
     process.env.XROUTE_MOONBEAM_DOT_ASSET_ADDRESS?.trim();
   if (explicit) {
     return explicit;
   }
+  const fromArtifact = deploymentArtifact?.artifact?.settings?.moonbeamXcDotAssetAddress;
+  if (typeof fromArtifact === "string" && fromArtifact.trim() !== "") {
+    return fromArtifact.trim();
+  }
 
   if (parseBool(process.env.XROUTE_MOONBEAM_DOT_IS_NATIVE ?? "false")) {
     return NATIVE_ASSET_ADDRESS;
+  }
+
+  return null;
+}
+
+function resolveMoonbeamBncAssetAddress() {
+  const explicit = process.env.XROUTE_MOONBEAM_XCBNC_ASSET_ADDRESS?.trim();
+  if (explicit) {
+    return explicit;
+  }
+
+  const deploymentArtifact = readRouterDeploymentArtifact({
+    workspaceRoot,
+    deploymentProfile,
+    chainKey: "moonbeam",
+  });
+  const fromArtifact = deploymentArtifact?.artifact?.settings?.moonbeamXcBncAssetAddress;
+  if (typeof fromArtifact === "string" && fromArtifact.trim() !== "") {
+    return fromArtifact.trim();
   }
 
   return null;

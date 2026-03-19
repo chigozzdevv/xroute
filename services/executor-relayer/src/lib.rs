@@ -24,7 +24,7 @@ use xroute_service_shared::{
     load_chain_deployment_artifact, load_execution_policy_from_file, load_hub_deployment_artifact,
     read_request_body, refund_job_request_from_slice, resolve_workspace_root,
     settle_job_request_from_slice, summarize_execution_policy, summary_json, DispatchRequest,
-    ExecutionPolicy, HttpError,
+    ExecutionPolicy, HttpError, MoonbeamDispatchMetadata, SourceIntentMetadata,
 };
 
 const DISPATCH_INTENT_SIGNATURE: &str = "dispatchIntent(bytes32,(uint8,bytes,bytes))";
@@ -33,14 +33,12 @@ const FINALIZE_EXTERNAL_SUCCESS_SIGNATURE: &str =
     "finalizeExternalSuccess(bytes32,bytes32,bytes32,uint128)";
 const FINALIZE_FAILURE_SIGNATURE: &str = "finalizeFailure(bytes32,bytes32,bytes32)";
 const REFUND_FAILED_INTENT_SIGNATURE: &str = "refundFailedIntent(bytes32,uint128)";
-const DISPATCH_INTENT_WITHOUT_XCM_SIGNATURE: &str =
-    "dispatchIntentWithoutXcm(bytes32,(uint8,bytes,bytes),uint64)";
-
+const XCM_PRECOMPILE_ADDRESS: &str = "0x00000000000000000000000000000000000a0000";
 const MOONBEAM_BATCH_PRECOMPILE_ADDRESS: &str = "0x0000000000000000000000000000000000000808";
 const MOONBEAM_XCM_UTILS_ADDRESS: &str = "0x000000000000000000000000000000000000080c";
-const MOONBEAM_BATCH_ALL_SIGNATURE: &str = "batchAll(address[],uint256[],bytes[],uint64[])";
-const MOONBEAM_XCM_EXECUTE_SIGNATURE: &str = "xcmExecute(bytes,uint64)";
-const MOONBEAM_XCM_SEND_SIGNATURE: &str = "xcmSend((uint8,bytes[]),bytes)";
+const MOONBEAM_BATCH_ALL_SELECTOR: &str = "0x96e292b8";
+const DISPATCH_INTENT_WITHOUT_XCM_SELECTOR: &str = "0x7b458b58";
+const MOONBEAM_TRANSFER_ASSETS_SELECTOR: &str = "0xaaecfc62";
 const SUPPORTED_EXECUTION_CHAINS: &[&str] = &["polkadot-hub", "hydration", "moonbeam", "bifrost"];
 
 #[derive(Clone)]
@@ -50,6 +48,9 @@ struct ExecutionContext {
     private_key: String,
     router_address: String,
     xcm_address: String,
+    moonbeam_xcdot_asset_address: Option<String>,
+    moonbeam_vdot_asset_address: Option<String>,
+    moonbeam_xcbnc_asset_address: Option<String>,
 }
 
 #[derive(Clone)]
@@ -70,6 +71,7 @@ struct RelayerState {
     poll_interval_ms: u64,
     node_bin: String,
     substrate_dispatch_script: PathBuf,
+    evm_transaction_script: PathBuf,
 }
 
 #[derive(Clone)]
@@ -221,6 +223,9 @@ fn load_state() -> Result<RelayerState, String> {
         private_key,
         router_address,
         xcm_address: default_xcm_address,
+        moonbeam_xcdot_asset_address: None,
+        moonbeam_vdot_asset_address: None,
+        moonbeam_xcbnc_asset_address: None,
     };
     let mut execution_contexts = load_chain_specific_execution_contexts(
         &base_execution_context,
@@ -260,6 +265,17 @@ fn load_state() -> Result<RelayerState, String> {
                 .join("executor-relayer")
                 .join("scripts")
                 .join("dispatch-substrate-xcm.mjs")
+        });
+    let evm_transaction_script = env::var("XROUTE_EVM_TRANSACTION_SCRIPT")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            workspace_root
+                .join("services")
+                .join("executor-relayer")
+                .join("scripts")
+                .join("send-evm-transaction.mjs")
         });
 
     Ok(RelayerState {
@@ -301,6 +317,7 @@ fn load_state() -> Result<RelayerState, String> {
         )?,
         node_bin,
         substrate_dispatch_script,
+        evm_transaction_script,
     })
 }
 
@@ -397,6 +414,11 @@ async fn route_authenticated_request(
                     normalized_source_chain
                 )));
             }
+            if normalized_source_chain == "moonbeam" && parsed.moonbeam_dispatch.is_none() {
+                return Err(HttpError::bad_request(
+                    "moonbeam source dispatch requires moonbeamDispatch metadata",
+                ));
+            }
             if let Some(source_intent) = parsed
                 .source_intent
                 .as_ref()
@@ -421,6 +443,7 @@ async fn route_authenticated_request(
                     wire_intent: parsed.wire_intent,
                     request: parsed.request,
                     source_intent: parsed.source_intent,
+                    moonbeam_dispatch: parsed.moonbeam_dispatch,
                     source_dispatch: parsed.source_dispatch,
                 },
                 state.max_attempts,
@@ -779,6 +802,7 @@ async fn run_job(state: Arc<RelayerState>, job: &Job) -> Result<Value, String> {
     let gas_limit = state.gas_limit;
     let node_bin = state.node_bin.clone();
     let substrate_dispatch_script = state.substrate_dispatch_script.clone();
+    let evm_transaction_script = state.evm_transaction_script.clone();
     task::spawn_blocking(move || {
         run_job_blocking(
             deployment_profile,
@@ -789,6 +813,7 @@ async fn run_job(state: Arc<RelayerState>, job: &Job) -> Result<Value, String> {
             source_intent,
             &node_bin,
             &substrate_dispatch_script,
+            &evm_transaction_script,
         )
     })
     .await
@@ -804,6 +829,7 @@ fn run_job_blocking(
     source_intent: Option<SourceIntentRecord>,
     node_bin: &str,
     substrate_dispatch_script: &Path,
+    evm_transaction_script: &Path,
 ) -> Result<Value, String> {
     match payload {
         JobPayload::Dispatch {
@@ -811,6 +837,7 @@ fn run_job_blocking(
             wire_intent: _,
             request,
             source_intent,
+            moonbeam_dispatch,
             source_dispatch,
         } => {
             if is_substrate_source_metadata(source_intent.as_ref()) {
@@ -845,10 +872,20 @@ fn run_job_blocking(
                 .ok_or_else(|| format!("missing execution context for source chain {chain_key}"))?;
 
             if chain_key == "moonbeam" {
+                let source_intent = source_intent.as_ref().ok_or_else(|| {
+                    format!("moonbeam source dispatch requires sourceIntent metadata for {intent_id}")
+                })?;
+                let moonbeam_dispatch = moonbeam_dispatch.as_ref().ok_or_else(|| {
+                    format!("moonbeam source dispatch requires moonbeamDispatch metadata for {intent_id}")
+                })?;
                 return dispatch_moonbeam_intent_with_batch(
                     &intent_id,
                     execution_context,
                     &request,
+                    source_intent,
+                    moonbeam_dispatch,
+                    node_bin,
+                    evm_transaction_script,
                     gas_limit,
                 );
             }
@@ -1211,7 +1248,7 @@ fn assert_refund_amount_allowed(
 }
 
 fn source_chain_requires_source_intent_metadata(chain_key: &str) -> bool {
-    matches!(chain_key, "hydration" | "bifrost")
+    matches!(chain_key, "hydration" | "bifrost" | "moonbeam")
 }
 
 fn resolve_substrate_refund_asset(
@@ -1262,12 +1299,16 @@ fn send_transaction(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    let tx_hash = extract_transaction_hash(&stdout)?;
+    finalize_transaction_result(&stdout, rpc_url)
+}
+
+fn finalize_transaction_result(stdout: &str, rpc_url: &str) -> Result<String, String> {
+    let tx_hash = extract_transaction_hash(stdout)?;
     let receipt = read_transaction_receipt(&tx_hash, rpc_url)?;
 
     if !receipt_status_succeeded(&receipt).unwrap_or(false) {
         let revert_reason = extract_revert_reason(&receipt)
-            .or_else(|| extract_revert_reason_from_output(&stdout))
+            .or_else(|| extract_revert_reason_from_output(stdout))
             .unwrap_or_else(|| format!("transaction {tx_hash} reverted"));
         return Err(revert_reason);
     }
@@ -1284,6 +1325,10 @@ fn should_use_external_settlement(
     rpc_url: &str,
     intent_id: &str,
 ) -> Result<bool, String> {
+    if !contract_has_code(router_address, rpc_url)? {
+        return Ok(false);
+    }
+
     let output = Command::new("cast")
         .arg("call")
         .arg(router_address)
@@ -1321,6 +1366,22 @@ fn should_use_external_settlement(
         .map_err(|error| format!("invalid status in getIntent tuple: {error}"))?;
 
     Ok(status == 1 && asset == "0x0000000000000000000000000000000000000000")
+}
+
+fn contract_has_code(contract_address: &str, rpc_url: &str) -> Result<bool, String> {
+    let output = Command::new("cast")
+        .arg("code")
+        .arg(contract_address)
+        .arg("--rpc-url")
+        .arg(rpc_url)
+        .output()
+        .map_err(|error| format!("failed to run cast code: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+    }
+
+    let code = String::from_utf8_lossy(&output.stdout).trim().to_ascii_lowercase();
+    Ok(!code.is_empty() && code != "0x")
 }
 
 impl RelayerState {
@@ -1421,7 +1482,31 @@ fn load_chain_specific_execution_contexts(
                 },
                 xcm_address: optional_chain_env(&env_prefix, "XCM_ADDRESS")
                     .or_else(|| deployment.as_ref().and_then(|artifact| artifact.xcm_address.clone()))
-                    .unwrap_or_else(|| base_execution_context.xcm_address.clone()),
+                    .unwrap_or_else(|| default_xcm_address_for_chain(chain_key, &base_execution_context.xcm_address)),
+                moonbeam_xcdot_asset_address: optional_chain_env(&env_prefix, "XCDOT_ASSET_ADDRESS")
+                    .or_else(|| {
+                        deployment
+                            .as_ref()
+                            .and_then(|artifact| artifact.moonbeam_xcdot_asset_address.clone())
+                    })
+                    .map(|value| normalize_evm_address(&value, "moonbeam xcDOT asset address"))
+                    .transpose()?,
+                moonbeam_vdot_asset_address: optional_chain_env(&env_prefix, "VDOT_ASSET_ADDRESS")
+                    .or_else(|| {
+                        deployment
+                            .as_ref()
+                            .and_then(|artifact| artifact.moonbeam_vdot_asset_address.clone())
+                    })
+                    .map(|value| normalize_evm_address(&value, "moonbeam VDOT asset address"))
+                    .transpose()?,
+                moonbeam_xcbnc_asset_address: optional_chain_env(&env_prefix, "XCBNC_ASSET_ADDRESS")
+                    .or_else(|| {
+                        deployment
+                            .as_ref()
+                            .and_then(|artifact| artifact.moonbeam_xcbnc_asset_address.clone())
+                    })
+                    .map(|value| normalize_evm_address(&value, "moonbeam xcBNC asset address"))
+                    .transpose()?,
             },
         );
     }
@@ -1500,6 +1585,14 @@ fn chain_uses_substrate_dispatch(chain_key: &str) -> bool {
     matches!(chain_key, "hydration" | "bifrost")
 }
 
+fn default_xcm_address_for_chain(chain_key: &str, fallback: &str) -> String {
+    if chain_key == "moonbeam" {
+        return "0x000000000000000000000000000000000000081A".to_owned();
+    }
+
+    fallback.to_owned()
+}
+
 fn execution_context_to_json(context: &ExecutionContext) -> Value {
     json!({
         "chainKey": context.chain_key,
@@ -1520,63 +1613,47 @@ fn dispatch_moonbeam_intent_with_batch(
     intent_id: &str,
     execution_context: &ExecutionContext,
     request: &xroute_service_shared::DispatchRequest,
+    source_intent: &SourceIntentMetadata,
+    moonbeam_dispatch: &MoonbeamDispatchMetadata,
+    node_bin: &str,
+    evm_transaction_script: &Path,
     gas_limit: Option<u64>,
 ) -> Result<Value, String> {
-    // 1. Estimate weight
-    let mut weight_cmd = Command::new("cast");
-    weight_cmd
-        .arg("call")
-        .arg(MOONBEAM_XCM_UTILS_ADDRESS)
-        .arg("weightMessage(bytes)(uint64)")
-        .arg(&request.message)
-        .arg("--rpc-url")
-        .arg(&execution_context.rpc_url);
 
-    let weight_output = weight_cmd
-        .output()
-        .map_err(|error| format!("failed to estimate Moonbeam weight: {error}"))?;
-    if !weight_output.status.success() {
-        return Err(format!(
-            "Moonbeam weight estimation failed: {}",
-            String::from_utf8_lossy(&weight_output.stderr).trim()
-        ));
-    }
-    let weight = String::from_utf8_lossy(&weight_output.stdout).trim().to_owned();
+    let parsed_weight = estimate_moonbeam_message_weight(
+        &execution_context.rpc_url,
+        &request.message,
+    )
+    .unwrap_or(0);
+    let refundable_amount = source_intent
+        .refundable_amount
+        .trim()
+        .parse::<u128>()
+        .map_err(|error| format!("invalid sourceIntent.refundableAmount: {error}"))?;
+    let source_asset_address =
+        resolve_moonbeam_source_asset_address(execution_context, &moonbeam_dispatch.asset)?;
 
-    // 2. Encode sub-calls
-    // a. Router update
-    let router_calldata = encode_calldata(
-        DISPATCH_INTENT_WITHOUT_XCM_SIGNATURE,
-        &[
-            intent_id.to_owned(),
-            format_dispatch_request_tuple(request),
-            weight.clone(),
-        ],
+    let router_calldata =
+        encode_dispatch_intent_without_xcm_calldata(intent_id, request, parsed_weight)?;
+    let xcm_calldata = encode_moonbeam_transfer_assets_calldata(
+        &moonbeam_dispatch.destination_chain,
+        &source_asset_address,
+        refundable_amount,
+        &moonbeam_dispatch.custom_xcm_on_dest,
+        &moonbeam_dispatch.remote_reserve_chain,
+    )?;
+    let batch_calldata = encode_moonbeam_batch_all_calldata(
+        &execution_context.router_address,
+        &execution_context.xcm_address,
+        &router_calldata,
+        &xcm_calldata,
     )?;
 
-    // b. XCM execute or send
-    let xcm_calldata = if request.mode == 0 {
-        encode_calldata(
-            MOONBEAM_XCM_EXECUTE_SIGNATURE,
-            &[request.message.clone(), weight.clone()],
-        )?
-    } else {
-        encode_calldata(
-            MOONBEAM_XCM_SEND_SIGNATURE,
-            &[request.destination.clone(), request.message.clone()],
-        )?
-    };
-
-    // 3. Batch the calls
-    let tx_hash = send_transaction(
+    let tx_hash = send_raw_evm_transaction_with_helper(
+        node_bin,
+        evm_transaction_script,
         MOONBEAM_BATCH_PRECOMPILE_ADDRESS,
-        MOONBEAM_BATCH_ALL_SIGNATURE,
-        &[
-            format!("[\"{}\",\"{}\"]", execution_context.router_address, MOONBEAM_XCM_UTILS_ADDRESS),
-            "[0,0]".to_owned(),
-            format!("[\"{}\",\"{}\"]", router_calldata, xcm_calldata),
-            "[0,0]".to_owned(),
-        ],
+        &batch_calldata,
         &execution_context.rpc_url,
         &execution_context.private_key,
         gas_limit,
@@ -1587,23 +1664,326 @@ fn dispatch_moonbeam_intent_with_batch(
         "sourceChain": "moonbeam",
         "txHash": tx_hash,
         "strategy": "moonbeam-batch-dispatch",
+        "targetAddress": MOONBEAM_BATCH_PRECOMPILE_ADDRESS,
+        "xcmAddress": execution_context.xcm_address.to_ascii_lowercase(),
+        "asset": moonbeam_dispatch.asset,
+        "destinationChain": moonbeam_dispatch.destination_chain,
+        "remoteReserveChain": moonbeam_dispatch.remote_reserve_chain,
         "request": request,
     }))
 }
 
-fn encode_calldata(signature: &str, args: &[String]) -> Result<String, String> {
-    let mut command = Command::new("cast");
-    command.arg("calldata").arg(signature);
+fn resolve_moonbeam_source_asset_address(
+    execution_context: &ExecutionContext,
+    asset_symbol: &str,
+) -> Result<String, String> {
+    match asset_symbol.trim().to_ascii_uppercase().as_str() {
+        "DOT" => execution_context
+            .moonbeam_xcdot_asset_address
+            .clone()
+            .ok_or_else(|| {
+                "missing moonbeam xcDOT asset address; configure XROUTE_MOONBEAM_XCDOT_ASSET_ADDRESS or moonbeam deployment settings".to_owned()
+            }),
+        "VDOT" => execution_context
+            .moonbeam_vdot_asset_address
+            .clone()
+            .ok_or_else(|| {
+                "missing moonbeam VDOT asset address; configure XROUTE_MOONBEAM_VDOT_ASSET_ADDRESS or moonbeam deployment settings".to_owned()
+            }),
+        "BNC" => execution_context
+            .moonbeam_xcbnc_asset_address
+            .clone()
+            .ok_or_else(|| {
+                "missing moonbeam xcBNC asset address; configure XROUTE_MOONBEAM_XCBNC_ASSET_ADDRESS or moonbeam deployment settings".to_owned()
+            }),
+        other => Err(format!("unsupported moonbeam source asset: {other}")),
+    }
+}
+
+fn encode_moonbeam_transfer_assets_calldata(
+    destination_chain: &str,
+    asset_address: &str,
+    refundable_amount: u128,
+    custom_xcm_on_dest: &str,
+    remote_reserve_chain: &str,
+) -> Result<String, String> {
+    encode_abi_call(
+        MOONBEAM_TRANSFER_ASSETS_SELECTOR,
+        &[
+            AbiArg::Dynamic(encode_moonbeam_multilocation(destination_chain)?),
+            AbiArg::Dynamic(encode_moonbeam_asset_array(asset_address, refundable_amount)?),
+            AbiArg::Static(encode_u256_word(0)),
+            AbiArg::Dynamic(encode_abi_bytes(custom_xcm_on_dest)?),
+            AbiArg::Dynamic(encode_moonbeam_multilocation(remote_reserve_chain)?),
+        ],
+    )
+}
+
+fn encode_dispatch_intent_without_xcm_calldata(
+    intent_id: &str,
+    request: &DispatchRequest,
+    weight: u64,
+) -> Result<String, String> {
+    encode_abi_call(
+        DISPATCH_INTENT_WITHOUT_XCM_SELECTOR,
+        &[
+            AbiArg::Static(encode_bytes32_word(intent_id, "intentId")?),
+            AbiArg::Dynamic(encode_dispatch_request_tuple(request)?),
+            AbiArg::Static(encode_u256_word(weight as u128)),
+        ],
+    )
+}
+
+fn encode_moonbeam_batch_all_calldata(
+    router_address: &str,
+    xcm_address: &str,
+    router_calldata: &str,
+    xcm_calldata: &str,
+) -> Result<String, String> {
+    encode_abi_call(
+        MOONBEAM_BATCH_ALL_SELECTOR,
+        &[
+            AbiArg::Dynamic(encode_address_array(&[
+                router_address.to_owned(),
+                xcm_address.to_owned(),
+            ])?),
+            AbiArg::Dynamic(encode_u256_array(&[0, 0])),
+            AbiArg::Dynamic(encode_abi_bytes_array(&[
+                router_calldata.to_owned(),
+                xcm_calldata.to_owned(),
+            ])?),
+            AbiArg::Dynamic(encode_u256_array(&[0, 0])),
+        ],
+    )
+}
+
+enum AbiArg {
+    Static(String),
+    Dynamic(String),
+}
+
+fn encode_abi_call(selector: &str, args: &[AbiArg]) -> Result<String, String> {
+    let selector = selector.trim_start_matches("0x");
+    if selector.len() != 8 {
+        return Err(format!("invalid ABI selector: 0x{selector}"));
+    }
+
+    let mut head = String::new();
+    let mut tail = String::new();
+    let mut next_offset = 32usize
+        .checked_mul(args.len())
+        .ok_or_else(|| "ABI head overflow".to_owned())?;
+
     for arg in args {
-        command.arg(arg);
+        match arg {
+            AbiArg::Static(word) => head.push_str(word),
+            AbiArg::Dynamic(encoded) => {
+                head.push_str(&encode_u256_word(next_offset as u128));
+                next_offset = next_offset
+                    .checked_add(encoded.len() / 2)
+                    .ok_or_else(|| "ABI tail overflow".to_owned())?;
+                tail.push_str(encoded);
+            }
+        }
     }
-    let output = command
+
+    Ok(format!("0x{selector}{head}{tail}"))
+}
+
+fn encode_moonbeam_multilocation(chain_key: &str) -> Result<String, String> {
+    let parachain_id = match normalize_chain_key(chain_key)?.as_str() {
+        "polkadot-hub" => 1000u32,
+        "hydration" => 2034u32,
+        "bifrost" => 2030u32,
+        other => {
+            return Err(format!(
+                "unsupported moonbeam destination/reserve chain: {other}"
+            ))
+        }
+    };
+    let interior = encode_abi_bytes_array(&[format!("0x{parachain_id:08x}")])?;
+    let tuple_tail = format!(
+        "{}{}{}",
+        encode_u256_word(1),
+        encode_u256_word(64),
+        interior
+    );
+    Ok(tuple_tail)
+}
+
+fn encode_dispatch_request_tuple(request: &DispatchRequest) -> Result<String, String> {
+    let destination = encode_abi_bytes(&request.destination)?;
+    let message = encode_abi_bytes(&request.message)?;
+    let message_offset = 96usize
+        .checked_add(destination.len() / 2)
+        .ok_or_else(|| "dispatch request tuple overflow".to_owned())?;
+
+    Ok(format!(
+        "{}{}{}{}{}",
+        encode_u256_word(u128::from(request.mode)),
+        encode_u256_word(96),
+        encode_u256_word(message_offset as u128),
+        destination,
+        message,
+    ))
+}
+
+fn estimate_moonbeam_message_weight(rpc_url: &str, message: &str) -> Result<u64, String> {
+    let mut weight_cmd = Command::new("cast");
+    weight_cmd
+        .arg("call")
+        .arg(MOONBEAM_XCM_UTILS_ADDRESS)
+        .arg("weightMessage(bytes)")
+        .arg(message)
+        .arg("--rpc-url")
+        .arg(rpc_url);
+
+    let output = weight_cmd
         .output()
-        .map_err(|error| format!("failed to run cast calldata: {error}"))?;
+        .map_err(|error| format!("failed to estimate Moonbeam weight: {error}"))?;
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+        return Err(format!(
+            "Moonbeam weight estimation failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+
+    parse_u64_scalar(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "moonbeam weight",
+    )
+}
+
+fn encode_moonbeam_asset_array(asset_address: &str, amount: u128) -> Result<String, String> {
+    let normalized_address = normalize_evm_address(asset_address, "moonbeam source asset address")?;
+    Ok(format!(
+        "{}{}{}",
+        encode_u256_word(1),
+        encode_address_word(&normalized_address)?,
+        encode_u256_word(amount),
+    ))
+}
+
+fn encode_address_array(values: &[String]) -> Result<String, String> {
+    let mut encoded = encode_u256_word(values.len() as u128);
+    for value in values {
+        encoded.push_str(&encode_address_word(value)?);
+    }
+
+    Ok(encoded)
+}
+
+fn encode_u256_array(values: &[u128]) -> String {
+    let mut encoded = encode_u256_word(values.len() as u128);
+    for value in values {
+        encoded.push_str(&encode_u256_word(*value));
+    }
+
+    encoded
+}
+
+fn encode_abi_bytes_array(values: &[String]) -> Result<String, String> {
+    let mut head = String::new();
+    let mut tail = String::new();
+    let mut next_offset = 32usize
+        .checked_mul(values.len())
+        .ok_or_else(|| "ABI bytes[] head overflow".to_owned())?;
+
+    for value in values {
+        let encoded = encode_abi_bytes(value)?;
+        head.push_str(&encode_u256_word(next_offset as u128));
+        next_offset = next_offset
+            .checked_add(encoded.len() / 2)
+            .ok_or_else(|| "ABI bytes[] tail overflow".to_owned())?;
+        tail.push_str(&encoded);
+    }
+
+    Ok(format!("{}{}{}", encode_u256_word(values.len() as u128), head, tail))
+}
+
+fn encode_abi_bytes(value: &str) -> Result<String, String> {
+    let normalized = strip_hex_prefix(value);
+    if normalized.len() % 2 != 0 {
+        return Err(format!("invalid hex bytes length: 0x{normalized}"));
+    }
+    if !normalized.chars().all(|character| character.is_ascii_hexdigit()) {
+        return Err(format!("invalid hex bytes value: 0x{normalized}"));
+    }
+
+    let padded_len = if normalized.is_empty() {
+        0
+    } else {
+        ((normalized.len() + 63) / 64) * 64
+    };
+    let padded = if padded_len == 0 {
+        String::new()
+    } else {
+        let mut value = normalized.to_owned();
+        value.push_str(&"0".repeat(padded_len - normalized.len()));
+        value
+    };
+
+    Ok(format!(
+        "{}{}",
+        encode_u256_word((normalized.len() / 2) as u128),
+        padded,
+    ))
+}
+
+fn encode_address_word(value: &str) -> Result<String, String> {
+    let normalized = strip_hex_prefix(value);
+    if normalized.len() != 40 || !normalized.chars().all(|character| character.is_ascii_hexdigit())
+    {
+        return Err(format!("invalid EVM address: {value}"));
+    }
+
+    Ok(format!("{normalized:0>64}"))
+}
+
+fn encode_bytes32_word(value: &str, field: &str) -> Result<String, String> {
+    let normalized = strip_hex_prefix(value);
+    if normalized.len() != 64 || !normalized.chars().all(|character| character.is_ascii_hexdigit())
+    {
+        return Err(format!("invalid {field}: {value}"));
+    }
+
+    Ok(normalized.to_ascii_lowercase())
+}
+
+fn encode_u256_word(value: u128) -> String {
+    format!("{value:0>64x}")
+}
+
+fn normalize_evm_address(value: &str, field: &str) -> Result<String, String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    let hex = strip_hex_prefix(&normalized);
+    if hex.len() != 40 || !hex.chars().all(|character| character.is_ascii_hexdigit()) {
+        return Err(format!("invalid {field}: {value}"));
+    }
+
+    Ok(format!("0x{hex}"))
+}
+
+fn strip_hex_prefix(value: &str) -> &str {
+    value.strip_prefix("0x").unwrap_or(value)
+}
+
+fn parse_u64_scalar(value: &str, field: &str) -> Result<u64, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(0);
+    }
+    if let Some(hex) = trimmed.strip_prefix("0x") {
+        if hex.is_empty() {
+            return Ok(0);
+        }
+        return u64::from_str_radix(hex, 16)
+            .map_err(|error| format!("invalid {field}: {error}"));
+    }
+
+    trimmed
+        .parse::<u64>()
+        .map_err(|error| format!("invalid {field}: {error}"))
 }
 
 fn dispatch_substrate_source_intent(
@@ -1700,6 +2080,83 @@ fn dispatch_substrate_source_intent(
         "strategy": strategy,
         "request": request,
     }))
+}
+
+fn send_raw_evm_transaction_with_helper(
+    node_bin: &str,
+    script_path: &Path,
+    to: &str,
+    data: &str,
+    rpc_url: &str,
+    private_key: &str,
+    gas_limit: Option<u64>,
+) -> Result<String, String> {
+    let payload = json!({
+        "to": to,
+        "data": data,
+        "rpcUrl": rpc_url,
+        "privateKey": private_key,
+        "gasLimit": gas_limit,
+    });
+
+    let mut child = Command::new(node_bin)
+        .arg(script_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| {
+            format!(
+                "failed to start evm transaction helper {} with {}: {error}",
+                script_path.display(),
+                node_bin
+            )
+        })?;
+
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(payload.to_string().as_bytes())
+            .map_err(|error| {
+                format!(
+                    "failed to write evm transaction payload to {}: {error}",
+                    script_path.display()
+                )
+            })?;
+    }
+
+    let output = child.wait_with_output().map_err(|error| {
+        format!(
+            "failed to read evm transaction helper output from {}: {error}",
+            script_path.display()
+        )
+    })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        let detail = if !stderr.is_empty() { stderr } else { stdout };
+        return Err(format!(
+            "evm transaction helper {} failed: {}",
+            script_path.display(),
+            detail
+        ));
+    }
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).map_err(|error| {
+        format!(
+            "failed to decode evm transaction helper output from {}: {error}",
+            script_path.display()
+        )
+    })?;
+    let tx_hash = parsed
+        .get("txHash")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            format!(
+                "evm transaction helper {} did not return txHash",
+                script_path.display()
+            )
+        })?;
+    Ok(tx_hash.to_ascii_lowercase())
 }
 
 fn extract_transaction_hash(value: &str) -> Result<String, String> {
@@ -1938,4 +2395,60 @@ fn now_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .expect("clock must be after unix epoch")
         .as_millis() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        default_xcm_address_for_chain, encode_moonbeam_batch_all_calldata,
+        resolve_moonbeam_source_asset_address, ExecutionContext, MOONBEAM_BATCH_ALL_SELECTOR,
+    };
+
+    fn test_context() -> ExecutionContext {
+        ExecutionContext {
+            chain_key: "moonbeam".to_owned(),
+            rpc_url: "http://127.0.0.1:8545".to_owned(),
+            private_key: "0x11".repeat(32),
+            router_address: "0x3333333333333333333333333333333333333333".to_owned(),
+            xcm_address: "0x000000000000000000000000000000000000081a".to_owned(),
+            moonbeam_xcdot_asset_address: Some(
+                "0xffffffff1fcacbd218edc0eba20fc2308c778080".to_owned(),
+            ),
+            moonbeam_vdot_asset_address: Some(
+                "0xffffffff15e1b7e3df971dd813bc394deb899abf".to_owned(),
+            ),
+            moonbeam_xcbnc_asset_address: Some(
+                "0xffffffff7cc06abdf7201b350a1265c62c8601d2".to_owned(),
+            ),
+        }
+    }
+
+    #[test]
+    fn moonbeam_batch_all_calldata_uses_expected_selector() {
+        let calldata = encode_moonbeam_batch_all_calldata(
+            "0x3333333333333333333333333333333333333333",
+            "0x000000000000000000000000000000000000081a",
+            "0x1234",
+            "0xabcd",
+        )
+        .expect("batch calldata should encode");
+
+        assert!(calldata.starts_with(MOONBEAM_BATCH_ALL_SELECTOR));
+    }
+
+    #[test]
+    fn resolve_moonbeam_source_asset_address_supports_bnc() {
+        let resolved = resolve_moonbeam_source_asset_address(&test_context(), "BNC")
+            .expect("BNC address should resolve");
+
+        assert_eq!(resolved, "0xffffffff7cc06abdf7201b350a1265c62c8601d2");
+    }
+
+    #[test]
+    fn moonbeam_uses_dedicated_xcm_default() {
+        assert_eq!(
+            default_xcm_address_for_chain("moonbeam", "0x00000000000000000000000000000000000a0000"),
+            "0x000000000000000000000000000000000000081A"
+        );
+    }
 }

@@ -9,11 +9,18 @@ import {
 import {
   buildExecutionEnvelope,
   buildDispatchRequest,
+  buildMoonbeamDispatchMetadata,
   createDispatchEnvelope,
 } from "../../xroute-xcm/index.mjs";
 import { normalizeQuote } from "../quote/index.mjs";
 
-const SUBSTRATE_SOURCE_CHAINS = new Set(["polkadot-hub", "hydration", "bifrost"]);
+const SUBSTRATE_SOURCE_CHAINS = new Set(["hydration", "bifrost"]);
+const DISPATCH_CHAINS_REQUIRING_QUOTE = new Set([
+  "polkadot-hub",
+  "hydration",
+  "bifrost",
+  "moonbeam",
+]);
 
 export function createHttpExecutorRelayerClient({
   endpoint,
@@ -73,7 +80,7 @@ export function createHttpExecutorRelayerClient({
           ),
         );
       const normalizedQuote = quote ? normalizeQuote(quote) : null;
-      if (requiresSubstrateSourceMetadata(normalizedIntent.sourceChain) && !normalizedQuote) {
+      if (requiresQuoteForDispatch(normalizedIntent.sourceChain) && !normalizedQuote) {
         throw new Error(
           `quote is required when dispatching ${normalizedIntent.sourceChain} source intents through the relayer`,
         );
@@ -81,9 +88,15 @@ export function createHttpExecutorRelayerClient({
       const sourceIntent = normalizedQuote
         ? buildSourceIntentMetadata({
             intent: normalizedIntent,
-            quote: normalizedQuote,
-          })
+          quote: normalizedQuote,
+        })
         : undefined;
+      const moonbeamDispatch =
+        normalizedQuote && normalizedIntent.sourceChain === "moonbeam"
+          ? buildMoonbeamDispatchMetadata({
+              quote: normalizedQuote,
+            })
+          : undefined;
       const sourceDispatch = dispatchResult
         ? normalizeSourceDispatch(dispatchResult)
         : undefined;
@@ -97,6 +110,7 @@ export function createHttpExecutorRelayerClient({
           intent: toPlainIntent(normalizedIntent),
           request: toPlainObject(normalizedRequest),
           sourceIntent,
+          moonbeamDispatch,
           sourceDispatch,
         },
       });
@@ -150,7 +164,7 @@ export function createHttpExecutorRelayerClient({
       return requestJson(`${normalizedEndpoint}/jobs/${encodeURIComponent(jobId)}`, {
         method: "GET",
         fetchImpl,
-        headers,
+        headers: requestHeaders,
       });
     },
 
@@ -158,7 +172,7 @@ export function createHttpExecutorRelayerClient({
       return requestJson(`${normalizedEndpoint}/jobs`, {
         method: "GET",
         fetchImpl,
-        headers,
+        headers: requestHeaders,
       });
     },
   };
@@ -177,6 +191,10 @@ function buildSourceIntentMetadata({ intent, quote }) {
 
 function inferSourceIntentKind(sourceChain) {
   return requiresSubstrateSourceMetadata(sourceChain) ? "substrate-source" : "router-evm";
+}
+
+function requiresQuoteForDispatch(sourceChain) {
+  return DISPATCH_CHAINS_REQUIRING_QUOTE.has(sourceChain);
 }
 
 function requiresSubstrateSourceMetadata(sourceChain) {

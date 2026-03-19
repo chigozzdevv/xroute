@@ -19,9 +19,10 @@ test("mainnet exposes hub, hydration, moonbeam, and bifrost", () => {
   assert.equal(getChain("bifrost").key, "bifrost");
   assert.equal(getAsset("DOT").symbol, "DOT");
   assert.equal(getAsset("VDOT").symbol, "VDOT");
+  assert.equal(getAsset("BNC").symbol, "BNC");
   assert.equal(listChains().length, 4);
-  assert.equal(listAssets().length, 4);
-  assert.equal(listRoutes().length, 6);
+  assert.equal(listAssets().length, 5);
+  assert.equal(listRoutes().length, 8);
 });
 
 test("findTransferPath composes the supported mainnet multihop spokes", () => {
@@ -33,6 +34,14 @@ test("findTransferPath composes the supported mainnet multihop spokes", () => {
   assert.deepEqual(findTransferPath("bifrost", "moonbeam", "DOT"), [
     "bifrost",
     "polkadot-hub",
+    "moonbeam",
+  ]);
+  assert.deepEqual(findTransferPath("moonbeam", "bifrost", "BNC"), [
+    "moonbeam",
+    "bifrost",
+  ]);
+  assert.deepEqual(findTransferPath("bifrost", "moonbeam", "BNC"), [
+    "bifrost",
     "moonbeam",
   ]);
   assert.equal(findTransferPath("hydration", "moonbeam", "VDOT"), null);
@@ -100,4 +109,5 @@ test("assertExecuteRoute accepts mainnet execute targets and rejects unsupported
   assert.throws(() => assertExecuteRoute("bifrost", "hydration", "DOT", "call"));
   assert.throws(() => assertExecuteRoute("hydration", "moonbeam", "DOT", "mint-vdot"));
   assert.throws(() => assertExecuteRoute("bifrost", "moonbeam", "VDOT", "redeem-vdot"));
+  assert.throws(() => assertExecuteRoute("moonbeam", "moonbeam", "BNC", "call"));
 });

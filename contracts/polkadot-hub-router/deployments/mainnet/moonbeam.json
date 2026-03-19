@@ -17,6 +17,7 @@
     "moonbeamSlpxAddress": "0xf1d4797e51a4640a76769a50b57abe7479add3d8",
     "moonbeamXcDotAssetAddress": "0xffffffff1fcacbd218edc0eba20fc2308c778080",
     "moonbeamVdotAssetAddress": "0xffffffff15e1b7e3df971dd813bc394deb899abf",
+    "moonbeamXcBncAssetAddress": "0xFFffffFf7cC06abdF7201b350A1265c62C8601d2",
     "moonbeamSlpxDestinationChainId": "1284"
   }
 }

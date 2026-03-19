@@ -213,6 +213,27 @@ const MAINNET_PROFILE = Object.freeze({
         }),
       }),
     }),
+    BNC: Object.freeze({
+      symbol: "BNC",
+      decimals: 12,
+      supportedChains: Object.freeze(["bifrost", "moonbeam"]),
+      xcmLocations: Object.freeze({
+        bifrost: Object.freeze({
+          parents: 0,
+          interior: Object.freeze({ type: "here" }),
+        }),
+        moonbeam: Object.freeze({
+          parents: 1,
+          interior: Object.freeze({
+            type: "x1",
+            value: Object.freeze({
+              type: "parachain",
+              value: 2030,
+            }),
+          }),
+        }),
+      }),
+    }),
   }),
   routes: Object.freeze([
     route({
@@ -265,6 +286,18 @@ const MAINNET_PROFILE = Object.freeze({
       destinationChain: "polkadot-hub",
       actions: [ACTION_TYPES.TRANSFER],
       transferableAssets: ["DOT"],
+    }),
+    route({
+      sourceChain: "moonbeam",
+      destinationChain: "bifrost",
+      actions: [ACTION_TYPES.TRANSFER],
+      transferableAssets: ["BNC"],
+    }),
+    route({
+      sourceChain: "bifrost",
+      destinationChain: "moonbeam",
+      actions: [ACTION_TYPES.TRANSFER],
+      transferableAssets: ["BNC"],
     }),
   ]),
 });

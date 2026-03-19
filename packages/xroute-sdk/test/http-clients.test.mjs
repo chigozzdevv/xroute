@@ -190,7 +190,7 @@ test("sdk resolves the local api base url automatically for localhost browsers",
       env: {},
       location: { hostname: "localhost" },
     }),
-    "http://127.0.0.1:8788/v1",
+    "http://localhost:8788/v1",
   );
 });
 
@@ -753,7 +753,7 @@ test("createEvmWalletAdapter submits intents with approval and extracts intent i
 test("createWallet resolves hosted mainnet defaults for moonbeam evm wallets", async () => {
   const calls = [];
   const ownerAddress = "0x1111111111111111111111111111111111111111";
-  const routerAddress = "0x338b5717531138b0c5f2c7150abf662de3e53634";
+  const routerAddress = "0x1cf06764e0d154347827ebe031efc96202375b65";
   const tokenAddress = "0xffffffff1fcacbd218edc0eba20fc2308c778080";
   const intentId = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
   const txHashes = {
@@ -833,6 +833,9 @@ test("createWallet resolves hosted mainnet defaults for moonbeam evm wallets", a
     provider,
     chainKey: "moonbeam",
     deploymentProfile: "mainnet",
+    fetchImpl: async () => {
+      throw new Error("readonly rpc unavailable in test");
+    },
   });
 
   const submitted = await wallet.routerAdapter.submitIntent({
@@ -916,6 +919,9 @@ test("createEvmWalletAdapter blocks intent submission before signature when the 
         DOT: tokenAddress,
       },
     },
+    fetchImpl: async () => {
+      throw new Error("readonly rpc unavailable in test");
+    },
   });
 
   await assert.rejects(
@@ -991,6 +997,9 @@ test("createEvmWalletAdapter blocks intent submission before signature when nati
         DOT: tokenAddress,
       },
     },
+    fetchImpl: async () => {
+      throw new Error("readonly rpc unavailable in test");
+    },
   });
 
   await assert.rejects(
@@ -1040,6 +1049,9 @@ test("createEvmWalletAdapter blocks Polkadot Hub native DOT submission before op
       nativeCurrency: { name: "DOT", symbol: "DOT", decimals: 18 },
       rpcUrls: ["https://eth-rpc.polkadot.io/"],
       blockExplorerUrls: ["https://blockscout.polkadot.io/"],
+    },
+    fetchImpl: async () => {
+      throw new Error("readonly rpc unavailable in test");
     },
   });
 
@@ -1099,6 +1111,9 @@ test("createEvmWalletAdapter can estimate submit costs before signature", async 
       nativeCurrency: { name: "DOT", symbol: "DOT", decimals: 18 },
       rpcUrls: ["https://eth-rpc.polkadot.io/"],
       blockExplorerUrls: ["https://blockscout.polkadot.io/"],
+    },
+    fetchImpl: async () => {
+      throw new Error("readonly rpc unavailable in test");
     },
   });
 
@@ -2011,7 +2026,30 @@ test("hosted createXRouteClient runs mixed-source flows across registered wallet
                   quoteId: "ignored",
                   deploymentProfile: "mainnet",
                   route: ["moonbeam", "polkadot-hub", "hydration"],
-                  segments: [],
+                  segments: [
+                    {
+                      kind: "execution",
+                      route: ["moonbeam", "polkadot-hub", "hydration"],
+                      hops: [
+                        {
+                          source: "moonbeam",
+                          destination: "polkadot-hub",
+                          asset: "DOT",
+                          transportFee: { asset: "DOT", amount: "1" },
+                          buyExecutionFee: { asset: "DOT", amount: "2" },
+                        },
+                        {
+                          source: "polkadot-hub",
+                          destination: "hydration",
+                          asset: "DOT",
+                          transportFee: { asset: "DOT", amount: "3" },
+                          buyExecutionFee: { asset: "DOT", amount: "4" },
+                        },
+                      ],
+                      xcmFee: { asset: "DOT", amount: "1" },
+                      destinationFee: { asset: "DOT", amount: "2" },
+                    },
+                  ],
                   fees: {
                     xcmFee: { asset: "DOT", amount: "1" },
                     destinationFee: { asset: "DOT", amount: "2" },
@@ -2030,7 +2068,50 @@ test("hosted createXRouteClient runs mixed-source flows across registered wallet
                   },
                   executionPlan: {
                     route: ["moonbeam", "polkadot-hub", "hydration"],
-                    steps: [],
+                    steps: [
+                      {
+                        type: "send-xcm",
+                        origin: "moonbeam",
+                        destination: "polkadot-hub",
+                        instructions: [
+                          {
+                            type: "withdraw-asset",
+                            asset: "DOT",
+                            amount: "10000000000",
+                          },
+                          {
+                            type: "initiate-reserve-withdraw",
+                            assetCount: 1,
+                            reserve: "polkadot-hub",
+                            remoteInstructions: [
+                              {
+                                type: "buy-execution",
+                                asset: "DOT",
+                                amount: "2",
+                              },
+                              {
+                                type: "deposit-reserve-asset",
+                                assetCount: 1,
+                                destination: "hydration",
+                                remoteInstructions: [
+                                  {
+                                    type: "buy-execution",
+                                    asset: "DOT",
+                                    amount: "4",
+                                  },
+                                  {
+                                    type: "deposit-asset",
+                                    asset: "DOT",
+                                    recipient: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+                                    assetCount: 1,
+                                  },
+                                ],
+                              },
+                            ],
+                          },
+                        ],
+                      },
+                    ],
                   },
                 },
               };
@@ -2510,7 +2591,7 @@ test("createHttpExecutorRelayerClient builds and sends dispatch requests", async
   const payload = JSON.parse(seen[0][1].body);
   assert.equal(payload.intent.quoteId, "0xfeedface");
   assert.equal(payload.request.mode, 0);
-  assert.equal(payload.sourceIntent.kind, "substrate-source");
+  assert.equal(payload.sourceIntent.kind, "router-evm");
   assert.equal(payload.sourceIntent.refundAsset, "DOT");
   assert.equal(payload.sourceIntent.refundableAmount, "13");
   assert.equal(payload.sourceIntent.minOutputAmount, "10");
@@ -2691,6 +2772,153 @@ test("createHttpExecutorRelayerClient sends hydration source metadata without so
   const payload = JSON.parse(seen[0][1].body);
   assert.equal(payload.sourceIntent.kind, "substrate-source");
   assert.equal(payload.sourceDispatch, undefined);
+});
+
+test("createHttpExecutorRelayerClient sends moonbeam source metadata and destination-side dispatch details", async () => {
+  const seen = [];
+  const client = createHttpExecutorRelayerClient({
+    endpoint: "https://example.test",
+    authToken: "secret-token",
+    fetchImpl: async (url, request) => {
+      seen.push([url, request]);
+      return {
+        ok: true,
+        async json() {
+          return {
+            job: {
+              id: "job-moonbeam",
+              status: "queued",
+            },
+          };
+        },
+      };
+    },
+  });
+
+  await client.dispatch({
+    intentId: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    intent: {
+      quoteId: "0xfeedf33d",
+      sourceChain: "moonbeam",
+      destinationChain: "hydration",
+      refundAddress: "0x1111111111111111111111111111111111111111",
+      deadline: 1_773_185_200,
+      action: {
+        type: "transfer",
+        params: {
+          asset: "DOT",
+          amount: "10",
+          recipient: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+        },
+      },
+    },
+    quote: {
+      quoteId: "0xfeedf33d",
+      deploymentProfile: "mainnet",
+      route: ["moonbeam", "polkadot-hub", "hydration"],
+      segments: [
+        {
+          kind: "execution",
+          route: ["moonbeam", "polkadot-hub", "hydration"],
+          hops: [
+            {
+              source: "moonbeam",
+              destination: "polkadot-hub",
+              asset: "DOT",
+              transportFee: { asset: "DOT", amount: "1" },
+              buyExecutionFee: { asset: "DOT", amount: "2" },
+            },
+            {
+              source: "polkadot-hub",
+              destination: "hydration",
+              asset: "DOT",
+              transportFee: { asset: "DOT", amount: "3" },
+              buyExecutionFee: { asset: "DOT", amount: "4" },
+            },
+          ],
+          xcmFee: { asset: "DOT", amount: "4" },
+          destinationFee: { asset: "DOT", amount: "4" },
+        },
+      ],
+      fees: {
+        xcmFee: { asset: "DOT", amount: "4" },
+        destinationFee: { asset: "DOT", amount: "4" },
+        platformFee: { asset: "DOT", amount: "1" },
+        totalFee: { asset: "DOT", amount: "9" },
+      },
+      expectedOutput: { asset: "DOT", amount: "10" },
+      minOutput: { asset: "DOT", amount: "10" },
+      submission: {
+        action: "transfer",
+        asset: "DOT",
+        amount: "10",
+        xcmFee: "4",
+        destinationFee: "4",
+        minOutputAmount: "10",
+      },
+      executionPlan: {
+        route: ["moonbeam", "polkadot-hub", "hydration"],
+        steps: [
+          {
+            type: "send-xcm",
+            origin: "moonbeam",
+            destination: "polkadot-hub",
+            instructions: [
+              {
+                type: "withdraw-asset",
+                asset: "DOT",
+                amount: "10",
+              },
+              {
+                type: "initiate-reserve-withdraw",
+                assetCount: 1,
+                reserve: "polkadot-hub",
+                remoteInstructions: [
+                  {
+                    type: "buy-execution",
+                    asset: "DOT",
+                    amount: "2",
+                  },
+                  {
+                    type: "deposit-reserve-asset",
+                    assetCount: 1,
+                    destination: "hydration",
+                    remoteInstructions: [
+                      {
+                        type: "buy-execution",
+                        asset: "DOT",
+                        amount: "4",
+                      },
+                      {
+                        type: "deposit-asset",
+                        asset: "DOT",
+                        recipient: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+                        assetCount: 1,
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    },
+    request: {
+      mode: 0,
+      destination: "0x",
+      message: "0x1234",
+    },
+  });
+
+  const payload = JSON.parse(seen[0][1].body);
+  assert.equal(payload.sourceIntent.kind, "router-evm");
+  assert.equal(payload.sourceIntent.refundAsset, "DOT");
+  assert.equal(payload.sourceIntent.refundableAmount, "18");
+  assert.equal(payload.moonbeamDispatch.asset, "DOT");
+  assert.equal(payload.moonbeamDispatch.destinationChain, "hydration");
+  assert.equal(payload.moonbeamDispatch.remoteReserveChain, "polkadot-hub");
+  assert.match(payload.moonbeamDispatch.customXcmOnDest, /^0x[0-9a-f]+$/);
 });
 
 test("createHttpExecutorRelayerClient registers pre-broadcast bifrost dispatch metadata", async () => {

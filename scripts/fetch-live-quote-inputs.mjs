@@ -31,6 +31,8 @@ const directTransferEdges = Object.freeze([
   { sourceChain: 'moonbeam', destinationChain: 'polkadot-hub', asset: 'DOT' },
   { sourceChain: 'polkadot-hub', destinationChain: 'bifrost', asset: 'DOT' },
   { sourceChain: 'bifrost', destinationChain: 'polkadot-hub', asset: 'DOT' },
+  { sourceChain: 'moonbeam', destinationChain: 'bifrost', asset: 'BNC' },
+  { sourceChain: 'bifrost', destinationChain: 'moonbeam', asset: 'BNC' },
 ]);
 const hydrationSwapSpecs = Object.freeze([
   { assetIn: 'DOT', assetOut: 'USDT', assetInId: 5, assetOutId: 10, dexFeeBps: 30 },
@@ -542,6 +544,8 @@ function reserveChainForAsset(assetKey) {
     case 'HDX':
       return 'hydration';
     case 'VDOT':
+      return 'bifrost';
+    case 'BNC':
       return 'bifrost';
     default:
       throw new Error(`unsupported asset: ${assetKey}`);

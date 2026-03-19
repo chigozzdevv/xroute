@@ -58,6 +58,15 @@ pub struct SourceDispatchMetadata {
     pub strategy: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MoonbeamDispatchMetadata {
+    pub asset: String,
+    pub destination_chain: String,
+    pub remote_reserve_chain: String,
+    pub custom_xcm_on_dest: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct DispatchJobRequest {
     pub intent_id: String,
@@ -65,6 +74,7 @@ pub struct DispatchJobRequest {
     pub intent: Intent,
     pub request: DispatchRequest,
     pub source_intent: Option<SourceIntentMetadata>,
+    pub moonbeam_dispatch: Option<MoonbeamDispatchMetadata>,
     pub source_dispatch: Option<SourceDispatchMetadata>,
 }
 
@@ -102,6 +112,7 @@ struct DispatchJobBody {
     intent: WireIntent,
     request: DispatchRequest,
     source_intent: Option<SourceIntentMetadata>,
+    moonbeam_dispatch: Option<MoonbeamDispatchMetadata>,
     source_dispatch: Option<SourceDispatchMetadata>,
 }
 
@@ -223,6 +234,11 @@ pub fn dispatch_job_request_from_slice(body: &[u8]) -> Result<DispatchJobRequest
         source_intent: payload
             .source_intent
             .map(normalize_source_intent_metadata)
+            .transpose()
+            .map_err(HttpError::bad_request)?,
+        moonbeam_dispatch: payload
+            .moonbeam_dispatch
+            .map(normalize_moonbeam_dispatch_metadata)
             .transpose()
             .map_err(HttpError::bad_request)?,
         source_dispatch: payload
@@ -775,6 +791,7 @@ fn parse_asset(value: &str) -> Result<AssetKey, String> {
         "USDT" => Ok(AssetKey::Usdt),
         "HDX" => Ok(AssetKey::Hdx),
         "VDOT" => Ok(AssetKey::Vdot),
+        "BNC" => Ok(AssetKey::Bnc),
         other => Err(format!("unsupported asset: {other}")),
     }
 }
@@ -810,6 +827,22 @@ fn normalize_source_dispatch_metadata(
             .strategy
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty()),
+    })
+}
+
+fn normalize_moonbeam_dispatch_metadata(
+    metadata: MoonbeamDispatchMetadata,
+) -> Result<MoonbeamDispatchMetadata, String> {
+    Ok(MoonbeamDispatchMetadata {
+        asset: parse_asset(&metadata.asset)?.symbol().to_owned(),
+        destination_chain: parse_chain(&metadata.destination_chain)?.as_str().to_owned(),
+        remote_reserve_chain: parse_chain(&metadata.remote_reserve_chain)?
+            .as_str()
+            .to_owned(),
+        custom_xcm_on_dest: normalize_hex(
+            &metadata.custom_xcm_on_dest,
+            "moonbeamDispatch.customXcmOnDest",
+        )?,
     })
 }
 

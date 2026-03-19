@@ -129,6 +129,7 @@ fn parse_asset(value: &str) -> Result<AssetKey, String> {
         "USDT" => Ok(AssetKey::Usdt),
         "HDX" => Ok(AssetKey::Hdx),
         "VDOT" => Ok(AssetKey::Vdot),
+        "BNC" => Ok(AssetKey::Bnc),
         other => Err(format!("unsupported asset: {other}")),
     }
 }

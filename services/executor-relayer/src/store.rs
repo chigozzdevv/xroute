@@ -5,7 +5,8 @@ use std::fs::{create_dir_all, read_to_string, rename, write};
 use std::path::{Path, PathBuf};
 use tokio::sync::Mutex;
 use xroute_service_shared::{
-    DispatchRequest, SourceDispatchMetadata, SourceIntentMetadata, WireIntent,
+    DispatchRequest, MoonbeamDispatchMetadata, SourceDispatchMetadata, SourceIntentMetadata,
+    WireIntent,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -44,6 +45,7 @@ pub enum JobPayload {
         wire_intent: WireIntent,
         request: DispatchRequest,
         source_intent: Option<SourceIntentMetadata>,
+        moonbeam_dispatch: Option<MoonbeamDispatchMetadata>,
         source_dispatch: Option<SourceDispatchMetadata>,
     },
     Settle {
