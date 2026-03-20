@@ -387,9 +387,56 @@ npm run build
 
 ## Deployment Artifacts
 
-Canonical deployment artifacts live under:
+Canonical deployment artifacts live under `contracts/polkadot-hub-router/deployments/mainnet/`. 
 
-- `contracts/polkadot-hub-router/deployments/mainnet/polkadot-hub.json`
-- `contracts/polkadot-hub-router/deployments/mainnet/moonbeam.json`
+### `polkadot-hub.json`
 
+```json
+{
+  "deploymentProfile": "mainnet",
+  "chainKey": "polkadot-hub",
+  "chainId": 420420419,
+  "deployer": "0x7a0a4D513f328FbC800328d8A98BC55cb34a5Feb",
+  "deployedAt": "2026-03-19T15:27:34.488Z",
+  "contracts": {
+    "XcmRouterHubRouter": "0x2a9566d5ce6526797fb9be174b1b07db8bc30d2f"
+  },
+  "settings": {
+    "adminAddress": "0x7a0a4D513f328FbC800328d8A98BC55cb34a5Feb",
+    "xcmAddress": "0x00000000000000000000000000000000000a0000",
+    "executorAddress": "0xdacb0a265deafbc7dc5679b699819a43cc3e8a48",
+    "treasuryAddress": "0xbc3aa247c4fdbd30e94dd86513d80092deeb1fef",
+    "platformFeeBps": "10"
+  }
+}
+```
+
+### `moonbeam.json`
+
+```json
+{
+  "deploymentProfile": "mainnet",
+  "chainKey": "moonbeam",
+  "chainId": 1284,
+  "deployer": "0x7a0a4D513f328FbC800328d8A98BC55cb34a5Feb",
+  "deployedAt": "2026-03-19T10:41:31.431Z",
+  "contracts": {
+    "XcmRouterHubRouter": "0xe90d4bf9155d6fd843844253a647f63ed9d57a54",
+    "XcmRouterMoonbeamSlpxAdapter": "0x3695618908fb0d390be082a4de8874571d89d104",
+    "XRouteMoonbeamGuestbookDemo": "0xb80d44181941f6993ecb0378dd29b301dc3d85ca"
+  },
+  "settings": {
+    "adminAddress": "0x7a0a4D513f328FbC800328d8A98BC55cb34a5Feb",
+    "xcmAddress": "0x000000000000000000000000000000000000081A",
+    "executorAddress": "0x65b938c83990b254228d4a44435d44d488466083",
+    "treasuryAddress": "0xbc3aa247c4fdbd30e94dd86513d80092deeb1fef",
+    "platformFeeBps": "10",
+    "moonbeamSlpxAddress": "0xf1d4797e51a4640a76769a50b57abe7479add3d8",
+    "moonbeamXcDotAssetAddress": "0xffffffff1fcacbd218edc0eba20fc2308c778080",
+    "moonbeamVdotAssetAddress": "0xffffffff15e1b7e3df971dd813bc394deb899abf",
+    "moonbeamXcBncAssetAddress": "0xffffffff7cc06abdf7201b350a1265c62c8601d2",
+    "moonbeamSlpxDestinationChainId": "1284"
+  }
+}
+```
 These artifacts provide the deployed router addresses, executor addresses, treasury configuration, and chain-specific settings used by the services and SDK.
