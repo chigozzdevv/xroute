@@ -13,7 +13,7 @@
     "@polkadot-api/metadata-builders": "0.13.9",
     "@polkadot-api/substrate-bindings": "0.17.0",
     "@scure/sr25519": "^1.0.0",
-    "@xcm-router/sdk": "^0.1.1",
+    "@xcm-router/sdk": "^0.1.2",
     "next": "16.1.6",
     "polkadot-api": "1.23.3",
     "react": "19.2.3",

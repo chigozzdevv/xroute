@@ -46,8 +46,8 @@ export { createQuote } from "./quote/index.mjs";
 export { createStatusClient } from "./status/index.mjs";
 const DEFAULT_INTENT_DEADLINE_SECONDS = 60 * 60;
 
-export function createXcmRouterClient(options = {}) {
-  assertNoBaseUrlOverride("createXcmRouterClient", options);
+export function createXRouteClient(options = {}) {
+  assertNoBaseUrlOverride("createXRouteClient", options);
   return createHostedXRouteClient(options);
 }
 
