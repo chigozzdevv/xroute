@@ -731,7 +731,16 @@ fn build_reserve_withdraw_transfer_instructions(
     }];
 
     if hops.len() == 1 {
-        reserve_remote_instructions.extend(final_remote_instructions);
+        if first_hop.destination == reserve_chain {
+            reserve_remote_instructions.extend(final_remote_instructions);
+        } else {
+            reserve_remote_instructions.push(build_deposit_reserve_instruction(
+                hops,
+                0,
+                amount,
+                final_remote_instructions,
+            )?);
+        }
     } else {
         reserve_remote_instructions.push(build_deposit_reserve_instruction(
             &hops[1..],
@@ -816,7 +825,10 @@ fn build_legacy_multihop_transfer_instruction(
 }
 
 fn effective_source_reserve_chain(source_chain: ChainKey, asset: AssetKey) -> ChainKey {
-    if source_chain == ChainKey::Moonbeam && asset == AssetKey::Dot {
+    if asset == AssetKey::Dot
+        && source_chain != ChainKey::PolkadotHub
+        && source_chain != ChainKey::PolkadotRelay
+    {
         return ChainKey::PolkadotRelay;
     }
 

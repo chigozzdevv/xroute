@@ -38,6 +38,10 @@ async function readBalance({ chainKey, rpcUrl, asset, recipient }) {
     return readNativeBalance(rpcUrl, recipient);
   }
 
+  if (chainKey === "polkadot-hub" && asset === "DOT") {
+    return readNativeBalance(rpcUrl, recipient);
+  }
+
   throw new Error(`unsupported substrate balance target: ${chainKey} ${asset}`);
 }
 

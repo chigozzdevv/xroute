@@ -1643,11 +1643,6 @@ export function WorkflowForm() {
             </button>
           </div>
 
-          {steps.length === 0 ? (
-            <p className="m-0 text-sm leading-6 text-muted">
-              Add at least one step to run a workflow.
-            </p>
-          ) : null}
 
           {steps.length > 0 && !walletReady ? (
             <p className="m-0 text-sm leading-6 text-muted">

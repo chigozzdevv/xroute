@@ -413,12 +413,6 @@ fn load_live_inputs_config(
         Some(value) => parse_bool(value, "XROUTE_LIVE_QUOTE_INPUTS_FAIL_OPEN")?,
         None => deployment_profile != DeploymentProfile::Mainnet,
     };
-    if deployment_profile == DeploymentProfile::Mainnet && fail_open {
-        return Err(
-            "mainnet quote service must fail closed; set XROUTE_LIVE_QUOTE_INPUTS_FAIL_OPEN=false"
-                .to_owned(),
-        );
-    }
 
     Ok(Some(LiveQuoteInputsConfig {
         source,

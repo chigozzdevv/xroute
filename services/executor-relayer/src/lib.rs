@@ -21,7 +21,7 @@ use tokio::time::sleep;
 use xroute_service_shared::{
     assert_bearer_token, assert_intent_allowed_by_execution_policy,
     dispatch_job_request_from_slice, fail_job_request_from_slice, health_json, json_response,
-    load_chain_deployment_artifact, load_execution_policy_from_file, load_hub_deployment_artifact,
+    load_execution_policy_from_file, load_hub_deployment_artifact,
     read_request_body, refund_job_request_from_slice, resolve_workspace_root,
     settle_job_request_from_slice, summarize_execution_policy, summary_json, DispatchRequest,
     ExecutionPolicy, HttpError, MoonbeamDispatchMetadata, SourceIntentMetadata,
@@ -51,6 +51,7 @@ struct ExecutionContext {
     moonbeam_xcdot_asset_address: Option<String>,
     moonbeam_vdot_asset_address: Option<String>,
     moonbeam_xcbnc_asset_address: Option<String>,
+    observation_rpc_url: Option<String>,
 }
 
 #[derive(Clone)]
@@ -226,17 +227,47 @@ fn load_state() -> Result<RelayerState, String> {
         chain_key: primary_chain_key.clone(),
         rpc_url,
         private_key,
-        router_address,
-        xcm_address: default_xcm_address,
-        moonbeam_xcdot_asset_address: None,
-        moonbeam_vdot_asset_address: None,
-        moonbeam_xcbnc_asset_address: None,
+        router_address: router_address.clone(),
+        xcm_address: default_xcm_address.clone(),
+        moonbeam_xcdot_asset_address: env::var("XROUTE_MOONBEAM_XCDOT_ASSET_ADDRESS").ok(),
+        moonbeam_vdot_asset_address: env::var("XROUTE_MOONBEAM_VDOT_ASSET_ADDRESS").ok(),
+        moonbeam_xcbnc_asset_address: env::var("XROUTE_MOONBEAM_XCBNC_ASSET_ADDRESS").ok(),
+        observation_rpc_url: env::var("XROUTE_HUB_XCM_RPC_URL").ok(),
     };
-    let mut execution_contexts = load_chain_specific_execution_contexts(
-        &base_execution_context,
-        &workspace_root,
-        deployment_profile,
-    )?;
+
+    let mut execution_contexts = BTreeMap::new();
+    execution_contexts.insert(primary_chain_key.clone(), base_execution_context.clone());
+
+    for chain_key in SUPPORTED_EXECUTION_CHAINS {
+        if *chain_key == primary_chain_key {
+            continue;
+        }
+
+        let prefix = chain_key.to_uppercase().replace('-', "_");
+        let rpc_url_key = format!("XROUTE_{}_RPC_URL", prefix);
+        let private_key_key = format!("XROUTE_{}_PRIVATE_KEY", prefix);
+        let router_address_key = format!("XROUTE_{}_ROUTER_ADDRESS", prefix);
+        let xcm_address_key = format!("XROUTE_{}_XCM_ADDRESS", prefix);
+        let observation_rpc_url_key = format!("XROUTE_{}_XCM_RPC_URL", prefix);
+
+        if let (Some(rpc_url), Some(private_key)) = (env::var(&rpc_url_key).ok(), env::var(&private_key_key).ok()) {
+             let router_address = env::var(&router_address_key).ok().unwrap_or_else(|| router_address.clone());
+             let xcm_address = env::var(&xcm_address_key).ok().unwrap_or_else(|| default_xcm_address.clone());
+             let observation_rpc_url = env::var(&observation_rpc_url_key).ok();
+
+             execution_contexts.insert(chain_key.to_string(), ExecutionContext {
+                 chain_key: chain_key.to_string(),
+                 rpc_url,
+                 private_key,
+                 router_address,
+                 xcm_address,
+                 moonbeam_xcdot_asset_address: env::var("XROUTE_MOONBEAM_XCDOT_ASSET_ADDRESS").ok(),
+                 moonbeam_vdot_asset_address: env::var("XROUTE_MOONBEAM_VDOT_ASSET_ADDRESS").ok(),
+                 moonbeam_xcbnc_asset_address: env::var("XROUTE_MOONBEAM_XCBNC_ASSET_ADDRESS").ok(),
+                 observation_rpc_url,
+             });
+        }
+    }
     let primary_execution_context = execution_contexts
         .remove(&primary_chain_key)
         .unwrap_or_else(|| base_execution_context.clone());
@@ -1470,6 +1501,7 @@ fn supports_destination_balance_observation(target: &SettlementObservationTarget
             | ("hydration", "USDT")
             | ("hydration", "HDX")
             | ("bifrost", "BNC")
+            | ("polkadot-hub", "DOT")
     )
 }
 
@@ -1539,10 +1571,6 @@ fn finalize_transaction_result(stdout: &str, rpc_url: &str) -> Result<String, St
 
     Ok(tx_hash)
 }
-
-
-
-
 
 fn should_use_external_settlement(
     router_address: &str,
@@ -1625,10 +1653,19 @@ impl RelayerState {
         let mut rpc_by_chain = BTreeMap::new();
         rpc_by_chain.insert(
             self.primary_chain_key.clone(),
-            self.primary_execution_context.rpc_url.clone(),
+            self.primary_execution_context
+                .observation_rpc_url
+                .clone()
+                .unwrap_or_else(|| self.primary_execution_context.rpc_url.clone()),
         );
         for (chain_key, context) in &self.execution_contexts {
-            rpc_by_chain.insert(chain_key.clone(), context.rpc_url.clone());
+            rpc_by_chain.insert(
+                chain_key.clone(),
+                context
+                    .observation_rpc_url
+                    .clone()
+                    .unwrap_or_else(|| context.rpc_url.clone()),
+            );
         }
 
         rpc_by_chain
@@ -1666,115 +1703,6 @@ async fn resolve_source_chain_for_payload(
             })
             .and_then(|chain_key| normalize_chain_key(&chain_key)),
     }
-}
-
-fn load_chain_specific_execution_contexts(
-    base_execution_context: &ExecutionContext,
-    workspace_root: &Path,
-    deployment_profile: DeploymentProfile,
-) -> Result<BTreeMap<String, ExecutionContext>, String> {
-    let mut contexts = BTreeMap::new();
-
-    for chain_key in SUPPORTED_EXECUTION_CHAINS {
-        let env_prefix = env_prefix_for_chain(chain_key);
-        if !has_chain_specific_execution_context(&env_prefix) {
-            continue;
-        }
-        let deployment =
-            load_chain_deployment_artifact(workspace_root, deployment_profile, chain_key).ok();
-
-        contexts.insert(
-            (*chain_key).to_owned(),
-            ExecutionContext {
-                chain_key: (*chain_key).to_owned(),
-                rpc_url: required_chain_env(&env_prefix, "RPC_URL")?,
-                private_key: required_chain_env(&env_prefix, "PRIVATE_KEY")?,
-                router_address: if chain_uses_substrate_dispatch(chain_key) {
-                    optional_chain_env(&env_prefix, "ROUTER_ADDRESS")
-                        .or_else(|| deployment.as_ref().map(|artifact| artifact.router_address.clone()))
-                        .unwrap_or_else(|| base_execution_context.router_address.clone())
-                } else {
-                    optional_chain_env(&env_prefix, "ROUTER_ADDRESS")
-                        .or_else(|| deployment.as_ref().map(|artifact| artifact.router_address.clone()))
-                        .ok_or_else(|| {
-                            format!(
-                                "missing required setting: {}; configure {} for this source chain or add {}",
-                                chain_env_name(&env_prefix, "ROUTER_ADDRESS"),
-                                chain_env_name(&env_prefix, "ROUTER_ADDRESS"),
-                                deployment
-                                    .as_ref()
-                                    .map(|artifact| artifact.artifact_path.display().to_string())
-                                    .unwrap_or_else(|| {
-                                        workspace_root
-                                            .join("contracts")
-                                            .join("polkadot-hub-router")
-                                            .join("deployments")
-                                            .join(deployment_profile.as_str())
-                                            .join(format!("{chain_key}.json"))
-                                            .display()
-                                            .to_string()
-                                    }),
-                            )
-                        })?
-                },
-                xcm_address: optional_chain_env(&env_prefix, "XCM_ADDRESS")
-                    .or_else(|| deployment.as_ref().and_then(|artifact| artifact.xcm_address.clone()))
-                    .unwrap_or_else(|| default_xcm_address_for_chain(chain_key, &base_execution_context.xcm_address)),
-                moonbeam_xcdot_asset_address: optional_chain_env(&env_prefix, "XCDOT_ASSET_ADDRESS")
-                    .or_else(|| {
-                        deployment
-                            .as_ref()
-                            .and_then(|artifact| artifact.moonbeam_xcdot_asset_address.clone())
-                    })
-                    .map(|value| normalize_evm_address(&value, "moonbeam xcDOT asset address"))
-                    .transpose()?,
-                moonbeam_vdot_asset_address: optional_chain_env(&env_prefix, "VDOT_ASSET_ADDRESS")
-                    .or_else(|| {
-                        deployment
-                            .as_ref()
-                            .and_then(|artifact| artifact.moonbeam_vdot_asset_address.clone())
-                    })
-                    .map(|value| normalize_evm_address(&value, "moonbeam VDOT asset address"))
-                    .transpose()?,
-                moonbeam_xcbnc_asset_address: optional_chain_env(&env_prefix, "XCBNC_ASSET_ADDRESS")
-                    .or_else(|| {
-                        deployment
-                            .as_ref()
-                            .and_then(|artifact| artifact.moonbeam_xcbnc_asset_address.clone())
-                    })
-                    .map(|value| normalize_evm_address(&value, "moonbeam xcBNC asset address"))
-                    .transpose()?,
-            },
-        );
-    }
-
-    Ok(contexts)
-}
-
-fn has_chain_specific_execution_context(env_prefix: &str) -> bool {
-    ["RPC_URL", "ROUTER_ADDRESS", "PRIVATE_KEY", "XCM_ADDRESS"]
-        .iter()
-        .any(|suffix| env::var(chain_env_name(env_prefix, suffix)).is_ok())
-}
-
-fn required_chain_env(env_prefix: &str, suffix: &str) -> Result<String, String> {
-    optional_chain_env(env_prefix, suffix).ok_or_else(|| {
-        format!(
-            "missing required setting: {}; configure {} for this source chain",
-            chain_env_name(env_prefix, suffix),
-            chain_env_name(env_prefix, suffix),
-        )
-    })
-}
-
-fn optional_chain_env(env_prefix: &str, suffix: &str) -> Option<String> {
-    env::var(chain_env_name(env_prefix, suffix))
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-}
-
-fn chain_env_name(env_prefix: &str, suffix: &str) -> String {
-    format!("XROUTE_{env_prefix}_{suffix}")
 }
 
 fn env_prefix_for_chain(chain_key: &str) -> String {
@@ -1823,12 +1751,8 @@ fn chain_uses_substrate_dispatch(chain_key: &str) -> bool {
     matches!(chain_key, "hydration" | "bifrost")
 }
 
-fn default_xcm_address_for_chain(chain_key: &str, fallback: &str) -> String {
-    if chain_key == "moonbeam" {
-        return "0x000000000000000000000000000000000000081A".to_owned();
-    }
-
-    fallback.to_owned()
+fn chain_env_name(env_prefix: &str, suffix: &str) -> String {
+    format!("XROUTE_{}_{}", env_prefix, suffix)
 }
 
 fn execution_context_to_json(context: &ExecutionContext) -> Value {
@@ -1975,8 +1899,8 @@ fn encode_moonbeam_transfer_assets_calldata(
         MOONBEAM_TRANSFER_ASSETS_SELECTOR,
         &[
             AbiArg::Dynamic(encode_moonbeam_multilocation_relative(
-                destination_chain,
                 remote_reserve_chain,
+                "moonbeam",
             )?),
             AbiArg::Dynamic(encode_moonbeam_asset_array(asset_address, refundable_amount)?),
             AbiArg::Static(encode_u256_word(0)),
@@ -2097,7 +2021,7 @@ fn encode_moonbeam_multilocation_relative(
         let interior = match junction {
             Some(parachain_id) => encode_abi_bytes_array(&[format!(
                 "0x00{}",
-                bytes_to_lower_hex(&parachain_id.to_le_bytes()),
+                bytes_to_lower_hex(&parachain_id.to_be_bytes()),
             )])?,
             None => encode_abi_bytes_array(&[])?,
         };
@@ -2938,9 +2862,8 @@ mod tests {
             moonbeam_vdot_asset_address: Some(
                 "0xffffffff15e1b7e3df971dd813bc394deb899abf".to_owned(),
             ),
-            moonbeam_xcbnc_asset_address: Some(
-                "0xffffffff7cc06abdf7201b350a1265c62c8601d2".to_owned(),
-            ),
+            moonbeam_xcbnc_asset_address: None,
+            observation_rpc_url: None,
         }
     }
 

@@ -15,7 +15,7 @@ const defaultAccountId32 = '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY';
 const defaultAccountKey20 = '0x1111111111111111111111111111111111111111';
 const moonbeamVdotOracleAddress = '0xEF81930Aa8ed07C17948B2E26b7bfAF20144eF2a';
 const moonbeamExecuteFallbackWeight = Object.freeze({ refTime: 650000000n, proofSize: 12288n });
-const rpcTimeoutMs = 15_000;
+const rpcTimeoutMs = 5_000;
 const defaultVdotOrder = Object.freeze({
   amount: 10_000_000_000n,
   gasLimit: 500_000n,
@@ -99,7 +99,9 @@ async function collectSequentially(items, worker, label) {
   const results = [];
   for (const item of items) {
     try {
+      process.stderr.write(`estimating ${label(item)}...\n`);
       results.push(await worker(item));
+      process.stderr.write(`  done ${label(item)}\n`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (item?.optionalLiveInputs) {
@@ -583,7 +585,9 @@ async function getRuntimeClient(chainKey) {
 
 async function createRuntimeClient(chainKey) {
   const rpcUrl = resolveRuntimeRpcUrl(chainKey);
+  process.stderr.write(`    fetching metadata for ${chainKey} from ${rpcUrl}...\n`);
   const metadataHex = await rpcRequest(rpcUrl, 'state_getMetadata', []);
+  process.stderr.write(`    decoding metadata for ${chainKey}...\n`);
   const decodedMetadata = unifyMetadata(metadata.dec(metadataHex));
   const dynamicBuilder = getDynamicBuilder(getLookupFn(decodedMetadata));
   const versionedLocation = dynamicBuilder.buildDefinition(
