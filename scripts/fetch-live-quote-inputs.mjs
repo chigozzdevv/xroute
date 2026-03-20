@@ -139,7 +139,7 @@ async function estimateTransferEdge({ sourceChain, destinationChain, asset }) {
   );
 
   if (asset === 'DOT') {
-    buyExecutionFee = (buyExecutionFee * 3n);
+    buyExecutionFee = (buyExecutionFee * 5n);
   }
 
   return {
