@@ -3,9 +3,9 @@
   "chainKey": "polkadot-hub",
   "chainId": 420420419,
   "deployer": "0x7a0a4D513f328FbC800328d8A98BC55cb34a5Feb",
-  "deployedAt": "2026-03-13T09:47:38.111Z",
+  "deployedAt": "2026-03-19T15:27:34.488Z",
   "contracts": {
-    "XRouteHubRouter": "0xaa696e1929b0284f3a0bbc2cab2653cae6c8f7a8"
+    "XRouteHubRouter": "0x2a9566d5ce6526797fb9be174b1b07db8bc30d2f"
   },
   "settings": {
     "adminAddress": "0x7a0a4D513f328FbC800328d8A98BC55cb34a5Feb",

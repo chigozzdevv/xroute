@@ -227,25 +227,15 @@ contract XRouteHubRouter is AccessControlDefaultAdminRules, Pausable, Reentrancy
             if (request.mode == DispatchMode.Execute) {
                 IXcm.Weight memory weight = xcm.weighMessage(request.message);
                 xcm.execute(request.message, weight);
-                if (intent.platformFee != 0) {
-                    _transferAsset(intent.asset, treasury, intent.platformFee);
-                }
                 emit IntentDispatched(intentId, request.mode, weight.refTime, weight.proofSize);
                 return;
             }
 
             xcm.send(request.destination, request.message);
-            if (intent.platformFee != 0) {
-                _transferAsset(intent.asset, treasury, intent.platformFee);
-            }
             emit IntentDispatched(intentId, request.mode, 0, 0);
         }
     }
 
-    /**
-     * @dev Mark an intent as dispatched without calling the XCM precompile.
-     * Used on chains like Moonbeam where XCM must be triggered by an EOA (atomic Batch call).
-     */
     function dispatchIntentWithoutXcm(bytes32 intentId, DispatchRequest calldata request, uint64 weight)
         external
         onlyRole(EXECUTOR_ROLE)
@@ -261,10 +251,6 @@ contract XRouteHubRouter is AccessControlDefaultAdminRules, Pausable, Reentrancy
         if (executionHash != intent.executionHash) revert InvalidDispatchPayload();
 
         intent.status = IntentStatus.Dispatched;
-
-        if (intent.platformFee != 0) {
-            _transferAsset(intent.asset, treasury, intent.platformFee);
-        }
 
         emit IntentDispatched(intentId, request.mode, weight, 0);
     }
@@ -288,6 +274,10 @@ contract XRouteHubRouter is AccessControlDefaultAdminRules, Pausable, Reentrancy
         intent.resultAmount = resultAmount;
         intent.refundAmount = 0;
 
+        if (intent.platformFee != 0) {
+            _transferAsset(intent.asset, treasury, intent.platformFee);
+        }
+
         emit IntentSettled(intentId, outcomeReference, resultAssetId, resultAmount);
     }
 
@@ -299,7 +289,9 @@ contract XRouteHubRouter is AccessControlDefaultAdminRules, Pausable, Reentrancy
     ) external onlyRole(EXECUTOR_ROLE) whenNotPaused nonReentrant {
         IntentRecord storage intent = intents[intentId];
         if (intent.owner == address(0)) revert IntentNotFound();
-        if (intent.status != IntentStatus.Submitted) revert InvalidIntentStatus();
+        if (intent.status != IntentStatus.Submitted && intent.status != IntentStatus.Dispatched) {
+            revert InvalidIntentStatus();
+        }
         if (outcomeReference == bytes32(0)) revert InvalidOutcomeReference();
         if (resultAmount < intent.minOutputAmount) revert InsufficientResultAmount();
 
@@ -418,6 +410,30 @@ contract XRouteHubRouter is AccessControlDefaultAdminRules, Pausable, Reentrancy
         emit PlatformFeeUpdated(newFeeBps);
     }
 
+    function emergencyWithdraw(address asset, address to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (to == address(0)) revert ZeroAddress();
+        _transferAsset(asset, to, amount);
+    }
+
+    function emergencyWithdrawNative(address payable to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (to == address(0)) revert ZeroAddress();
+        _safeNativeTransfer(to, amount);
+    }
+
+    function rescueIntent(bytes32 intentId) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        IntentRecord storage intent = intents[intentId];
+        if (intent.owner == address(0)) revert IntentNotFound();
+        if (intent.status == IntentStatus.Settled || intent.status == IntentStatus.Refunded || intent.status == IntentStatus.Cancelled) {
+            revert InvalidIntentStatus();
+        }
+
+        intent.status = IntentStatus.Refunded;
+        uint128 refundableAmount = intent.amount + intent.xcmFee + intent.destinationFee + intent.platformFee;
+        _transferAsset(intent.asset, intent.refundAddress, refundableAmount);
+
+        emit IntentRefunded(intentId, refundableAmount);
+    }
+
     function getIntent(bytes32 intentId) external view returns (IntentRecord memory) {
         return intents[intentId];
     }
@@ -448,7 +464,7 @@ contract XRouteHubRouter is AccessControlDefaultAdminRules, Pausable, Reentrancy
     }
 
     function _refundableAmount(IntentRecord storage intent) internal view returns (uint128) {
-        uint128 lockedNetAmount = intent.amount + intent.xcmFee + intent.destinationFee;
+        uint128 lockedNetAmount = intent.amount + intent.xcmFee + intent.destinationFee + intent.platformFee;
         return lockedNetAmount - intent.refundAmount;
     }
 

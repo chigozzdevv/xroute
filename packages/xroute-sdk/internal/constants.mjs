@@ -16,6 +16,8 @@ export function resolveDefaultXRouteApiBaseUrl({
   location = globalThis.location,
 } = {}) {
   const candidates = [
+    env?.NEXT_PUBLIC_XROUTE_API_BASE_URL,
+    env?.NEXT_PUBLIC_XROUTE_API_SERVER_BASE_URL,
     env?.XROUTE_API_BASE_URL,
     env?.XROUTE_API_SERVER_BASE_URL,
   ];

@@ -574,6 +574,7 @@ export function createEvmWalletAdapter({
   }
 
   const routerAdapter = {
+    routerAddress: normalizedRouterAddress,
     async estimateSubmissionCost({ owner, request }) {
       const normalizedRequest = normalizeRouterIntentRequest(request);
       const signerAddress = await getAddress();

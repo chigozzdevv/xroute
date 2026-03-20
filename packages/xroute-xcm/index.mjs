@@ -144,13 +144,11 @@ export function buildMoonbeamDispatchMetadata({
     throw new Error("moonbeamDispatch requires reserve-side remote instructions");
   }
 
-  const depositReserveInstruction = reserveInstructions.find(
-    (instruction) => instruction.type === "deposit-reserve-asset",
+  const reserveDelivery = reserveInstructions.find(
+    (instruction) => instruction?.type === "deposit-reserve-asset",
   );
-  const destinationChain =
-    depositReserveInstruction?.destination ?? reserveWithdrawInstruction.reserve;
-  const customInstructions =
-    depositReserveInstruction?.remoteInstructions ?? reserveInstructions;
+  const destinationChain = reserveDelivery?.destination ?? reserveWithdrawInstruction.reserve;
+  const customInstructions = reserveDelivery?.remoteInstructions ?? reserveInstructions;
   if (!Array.isArray(customInstructions) || customInstructions.length === 0) {
     throw new Error("moonbeamDispatch requires destination-side remote instructions");
   }
@@ -539,7 +537,11 @@ function assertReserveWithdrawExecutionChain(hops, withdrawInstruction, reserveW
   if (withdrawInstruction.asset !== firstHop.asset) {
     throw new Error("withdraw-asset asset must match the first execution hop asset");
   }
-  if (reserveWithdrawInstruction.reserve !== firstHop.destination) {
+  const usesMoonbeamRelayReserve =
+    firstHop.source === "moonbeam"
+    && firstHop.asset === "DOT"
+    && reserveWithdrawInstruction.reserve === "polkadot-relay";
+  if (!usesMoonbeamRelayReserve && reserveWithdrawInstruction.reserve !== firstHop.destination) {
     throw new Error(
       "initiate-reserve-withdraw reserve must match the first execution hop destination",
     );
@@ -631,7 +633,11 @@ function buildInstruction({
             ),
           }),
         ],
-        dest: buildParachainLocation(instruction.destination, deploymentProfile),
+        dest: buildParachainLocation({
+          currentChain,
+          targetChain: instruction.destination,
+          deploymentProfile,
+        }),
         xcm: instruction.remoteInstructions.map((nestedInstruction) =>
           buildInstruction({
             instruction: nestedInstruction,
@@ -679,7 +685,11 @@ function buildInstruction({
     case "deposit-reserve-asset":
       return Enum("DepositReserveAsset", {
         assets: buildCountedAssetFilter(instruction.assetCount),
-        dest: buildParachainLocation(instruction.destination, deploymentProfile),
+        dest: buildParachainLocation({
+          currentChain,
+          targetChain: instruction.destination,
+          deploymentProfile,
+        }),
         xcm: instruction.remoteInstructions.map((nestedInstruction) =>
           buildInstruction({
             instruction: nestedInstruction,
@@ -691,7 +701,11 @@ function buildInstruction({
     case "initiate-teleport":
       return Enum("InitiateTeleport", {
         assets: buildCountedAssetFilter(instruction.assetCount),
-        dest: buildParachainLocation(instruction.destination, deploymentProfile),
+        dest: buildParachainLocation({
+          currentChain,
+          targetChain: instruction.destination,
+          deploymentProfile,
+        }),
         xcm: instruction.remoteInstructions.map((nestedInstruction) =>
           buildInstruction({
             instruction: nestedInstruction,
@@ -702,7 +716,11 @@ function buildInstruction({
       });
     case "initiate-transfer":
       return Enum("InitiateTransfer", {
-        destination: buildParachainLocation(instruction.destination, deploymentProfile),
+        destination: buildParachainLocation({
+          currentChain,
+          targetChain: instruction.destination,
+          deploymentProfile,
+        }),
         remote_fees: Enum(
           "Teleport",
           Enum("Definite", [
@@ -732,7 +750,11 @@ function buildInstruction({
     case "initiate-reserve-withdraw":
       return Enum("InitiateReserveWithdraw", {
         assets: buildCountedAssetFilter(instruction.assetCount),
-        reserve: buildParachainLocation(instruction.reserve, deploymentProfile),
+        reserve: buildParachainLocation({
+          currentChain,
+          targetChain: instruction.reserve,
+          deploymentProfile,
+        }),
         xcm: instruction.remoteInstructions.map((nestedInstruction) =>
           buildInstruction({
             instruction: nestedInstruction,
@@ -760,7 +782,7 @@ function buildInstruction({
 }
 
 function buildAsset({ chainKey, assetKey, amount, deploymentProfile }) {
-  const location = getAssetLocation(assetKey, chainKey, deploymentProfile);
+  const location = getInternalAssetLocation(assetKey, chainKey, deploymentProfile);
 
   return {
     id: {
@@ -778,11 +800,42 @@ function buildCountedAssetFilter(assetCount) {
   );
 }
 
-function buildParachainLocation(chainKey, deploymentProfile) {
+function buildParachainLocation({ currentChain, targetChain, deploymentProfile }) {
+  if (targetChain === currentChain) {
+    return {
+      parents: 0,
+      interior: Enum("Here", undefined),
+    };
+  }
+
+  if (targetChain === "polkadot-relay") {
+    return {
+      parents: currentChain === "polkadot-relay" ? 0 : 1,
+      interior: Enum("Here", undefined),
+    };
+  }
+
   return {
-    parents: 1,
-    interior: Enum("X1", Enum("Parachain", getParachainId(chainKey, deploymentProfile))),
+    parents: currentChain === "polkadot-relay" ? 0 : 1,
+    interior: Enum("X1", Enum("Parachain", getParachainId(targetChain, deploymentProfile))),
   };
+}
+
+function getInternalAssetLocation(assetKey, chainKey, deploymentProfile) {
+  if (chainKey === "polkadot-relay") {
+    if (assetKey !== "DOT") {
+      throw new Error(`missing XCM location for ${assetKey} on polkadot-relay`);
+    }
+
+    return {
+      parents: 0,
+      interior: {
+        type: "here",
+      },
+    };
+  }
+
+  return getAssetLocation(assetKey, chainKey, deploymentProfile);
 }
 
 function buildBeneficiaryLocation(chainKey, recipient) {

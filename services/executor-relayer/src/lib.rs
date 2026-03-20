@@ -71,6 +71,7 @@ struct RelayerState {
     poll_interval_ms: u64,
     node_bin: String,
     substrate_dispatch_script: PathBuf,
+    substrate_balance_script: PathBuf,
     evm_transaction_script: PathBuf,
 }
 
@@ -101,6 +102,10 @@ impl RelayerApp {
         tokio::spawn(async move {
             loop {
                 if let Err(error) = process_ready_jobs(Arc::clone(&worker_state)).await {
+                    eprintln!("{error}");
+                }
+                if let Err(error) = monitor_dispatched_source_intents(Arc::clone(&worker_state)).await
+                {
                     eprintln!("{error}");
                 }
                 sleep(Duration::from_millis(worker_state.poll_interval_ms)).await;
@@ -266,6 +271,17 @@ fn load_state() -> Result<RelayerState, String> {
                 .join("scripts")
                 .join("dispatch-substrate-xcm.mjs")
         });
+    let substrate_balance_script = env::var("XROUTE_SUBSTRATE_BALANCE_SCRIPT")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            workspace_root
+                .join("services")
+                .join("executor-relayer")
+                .join("scripts")
+                .join("read-substrate-balance.mjs")
+        });
     let evm_transaction_script = env::var("XROUTE_EVM_TRANSACTION_SCRIPT")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -317,6 +333,7 @@ fn load_state() -> Result<RelayerState, String> {
         )?,
         node_bin,
         substrate_dispatch_script,
+        substrate_balance_script,
         evm_transaction_script,
     })
 }
@@ -419,11 +436,7 @@ async fn route_authenticated_request(
                     "moonbeam source dispatch requires moonbeamDispatch metadata",
                 ));
             }
-            if let Some(source_intent) = parsed
-                .source_intent
-                .as_ref()
-                .filter(|metadata| metadata.kind == "substrate-source")
-            {
+            if let Some(source_intent) = parsed.source_intent.as_ref() {
                 state
                     .job_store
                     .record_source_intent_submission(
@@ -770,6 +783,9 @@ async fn process_ready_jobs(state: Arc<RelayerState>) -> Result<(), String> {
                 };
                 state.job_store.upsert(finished.clone()).await?;
                 append_status_event(&state.event_log_path, status_event(&finished, &result))?;
+                if let Some(event) = destination_execution_started_event(&current.payload, &result) {
+                    append_status_event(&state.event_log_path, event)?;
+                }
             }
             Err(error) => {
                 let should_retry = current.attempts < current.max_attempts;
@@ -789,6 +805,62 @@ async fn process_ready_jobs(state: Arc<RelayerState>) -> Result<(), String> {
     Ok(())
 }
 
+async fn monitor_dispatched_source_intents(state: Arc<RelayerState>) -> Result<(), String> {
+    let records = state.job_store.list_source_intents().await;
+    for record in records {
+        if record.status != crate::store::SourceIntentStatus::Dispatched {
+            continue;
+        }
+
+        let Some(target) = settlement_target_from_record(&record)? else {
+            continue;
+        };
+        if !supports_destination_balance_observation(&target) {
+            continue;
+        }
+        if state
+            .job_store
+            .has_job_for_intent_type(JobType::Settle, &record.intent_id)
+            .await
+        {
+            continue;
+        }
+
+        let rpc_url = state
+            .observation_rpcs()
+            .get(&target.chain_key)
+            .cloned()
+            .ok_or_else(|| format!("missing destination observation rpc for {}", target.chain_key))?;
+        let current_balance = read_substrate_destination_balance(
+            &state.node_bin,
+            &state.substrate_balance_script,
+            &rpc_url,
+            &target.chain_key,
+            &target.asset,
+            &target.recipient,
+        )?;
+        let delivered_amount = current_balance.saturating_sub(target.balance_before.unwrap_or(0));
+        if delivered_amount < target.minimum_amount {
+            continue;
+        }
+
+        enqueue_job(
+            &state.job_store,
+            JobType::Settle,
+            JobPayload::Settle {
+                intent_id: record.intent_id.clone(),
+                outcome_reference: settlement_outcome_reference(&record),
+                result_asset_id: settlement_result_asset_id(&target.asset),
+                result_amount: delivered_amount.to_string(),
+            },
+            state.max_attempts,
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
 async fn run_job(state: Arc<RelayerState>, job: &Job) -> Result<Value, String> {
     let deployment_profile = state.deployment_profile;
     let payload = job.payload.clone();
@@ -802,17 +874,21 @@ async fn run_job(state: Arc<RelayerState>, job: &Job) -> Result<Value, String> {
     let gas_limit = state.gas_limit;
     let node_bin = state.node_bin.clone();
     let substrate_dispatch_script = state.substrate_dispatch_script.clone();
+    let substrate_balance_script = state.substrate_balance_script.clone();
     let evm_transaction_script = state.evm_transaction_script.clone();
+    let observation_rpcs = state.observation_rpcs();
     task::spawn_blocking(move || {
         run_job_blocking(
             deployment_profile,
             &source_chain,
             execution_context,
+            observation_rpcs,
             gas_limit,
             payload,
             source_intent,
             &node_bin,
             &substrate_dispatch_script,
+            &substrate_balance_script,
             &evm_transaction_script,
         )
     })
@@ -824,11 +900,13 @@ fn run_job_blocking(
     _deployment_profile: DeploymentProfile,
     chain_key: &str,
     execution_context: Option<ExecutionContext>,
+    observation_rpcs: BTreeMap<String, String>,
     gas_limit: Option<u64>,
     payload: JobPayload,
-    source_intent: Option<SourceIntentRecord>,
+    source_intent_record: Option<SourceIntentRecord>,
     node_bin: &str,
     substrate_dispatch_script: &Path,
+    substrate_balance_script: &Path,
     evm_transaction_script: &Path,
 ) -> Result<Value, String> {
     match payload {
@@ -840,6 +918,12 @@ fn run_job_blocking(
             moonbeam_dispatch,
             source_dispatch,
         } => {
+            let settlement_balance_before = read_settlement_balance_before(
+                source_intent.as_ref(),
+                &observation_rpcs,
+                node_bin,
+                substrate_balance_script,
+            )?;
             if is_substrate_source_metadata(source_intent.as_ref()) {
                 if let Some(registered_dispatch) = source_dispatch {
                     return Ok(json!({
@@ -849,6 +933,7 @@ fn run_job_blocking(
                         "strategy": registered_dispatch
                             .strategy
                             .unwrap_or_else(|| "substrate-source-dispatch".to_owned()),
+                        "settlementBalanceBefore": settlement_balance_before.map(|value| value.to_string()),
                         "request": request,
                     }));
                 }
@@ -862,6 +947,7 @@ fn run_job_blocking(
                     execution_context,
                     &request,
                     source_intent.as_ref(),
+                    settlement_balance_before,
                     node_bin,
                     substrate_dispatch_script,
                 );
@@ -870,6 +956,11 @@ fn run_job_blocking(
             let execution_context = execution_context
                 .as_ref()
                 .ok_or_else(|| format!("missing execution context for source chain {chain_key}"))?;
+            let router_address = resolve_source_router_address(
+                execution_context,
+                source_intent_record.as_ref(),
+                source_intent.as_ref(),
+            );
 
             if chain_key == "moonbeam" {
                 let source_intent = source_intent.as_ref().ok_or_else(|| {
@@ -881,9 +972,11 @@ fn run_job_blocking(
                 return dispatch_moonbeam_intent_with_batch(
                     &intent_id,
                     execution_context,
+                    router_address,
                     &request,
                     source_intent,
                     moonbeam_dispatch,
+                    settlement_balance_before,
                     node_bin,
                     evm_transaction_script,
                     gas_limit,
@@ -891,7 +984,7 @@ fn run_job_blocking(
             }
 
             let tx_hash = send_transaction(
-                &execution_context.router_address,
+                router_address,
                 DISPATCH_INTENT_SIGNATURE,
                 &[intent_id.clone(), format_dispatch_request_tuple(&request)],
                 &execution_context.rpc_url,
@@ -903,7 +996,8 @@ fn run_job_blocking(
                 "sourceChain": chain_key,
                 "txHash": tx_hash,
                 "strategy": "router-dispatch",
-                "targetAddress": &execution_context.router_address,
+                "targetAddress": router_address,
+                "settlementBalanceBefore": settlement_balance_before.map(|value| value.to_string()),
                 "request": request,
             }))
         }
@@ -913,8 +1007,9 @@ fn run_job_blocking(
             result_asset_id,
             result_amount,
         } => {
-            if is_substrate_source_record(source_intent.as_ref()) {
-                let record = require_substrate_source_intent(source_intent.as_ref(), &intent_id)?;
+            if is_substrate_source_record(source_intent_record.as_ref()) {
+                let record =
+                    require_substrate_source_intent(source_intent_record.as_ref(), &intent_id)?;
                 assert_source_intent_status(&record, &intent_id, "dispatched")?;
                 assert_result_amount_meets_minimum(&record, &result_amount)?;
                 return Ok(json!({
@@ -930,17 +1025,21 @@ fn run_job_blocking(
             let execution_context = execution_context
                 .as_ref()
                 .ok_or_else(|| format!("missing execution context for source chain {chain_key}"))?;
-            let settle_signature = if should_use_external_settlement(
-                &execution_context.router_address,
-                &execution_context.rpc_url,
-                &intent_id,
-            )? {
+            let router_address =
+                resolve_source_router_address(execution_context, source_intent_record.as_ref(), None);
+            let settle_signature = if chain_key == "moonbeam"
+                || should_use_external_settlement(
+                    router_address,
+                    &execution_context.rpc_url,
+                    &intent_id,
+                )?
+            {
                 FINALIZE_EXTERNAL_SUCCESS_SIGNATURE
             } else {
                 FINALIZE_SUCCESS_SIGNATURE
             };
             let tx_hash = send_transaction(
-                &execution_context.router_address,
+                router_address,
                 settle_signature,
                 &[
                     intent_id.clone(),
@@ -956,7 +1055,12 @@ fn run_job_blocking(
                 "intentId": intent_id,
                 "sourceChain": chain_key,
                 "txHash": tx_hash,
-                "routerAddress": &execution_context.router_address,
+                "routerAddress": router_address,
+                "settlementStrategy": if settle_signature == FINALIZE_EXTERNAL_SUCCESS_SIGNATURE {
+                    "external-success"
+                } else {
+                    "router-success"
+                },
                 "outcomeReference": outcome_reference,
                 "resultAssetId": result_asset_id,
                 "resultAmount": result_amount,
@@ -967,8 +1071,9 @@ fn run_job_blocking(
             outcome_reference,
             failure_reason_hash,
         } => {
-            if is_substrate_source_record(source_intent.as_ref()) {
-                let record = require_substrate_source_intent(source_intent.as_ref(), &intent_id)?;
+            if is_substrate_source_record(source_intent_record.as_ref()) {
+                let record =
+                    require_substrate_source_intent(source_intent_record.as_ref(), &intent_id)?;
                 assert_source_intent_status(&record, &intent_id, "dispatched")?;
                 return Ok(json!({
                     "intentId": intent_id,
@@ -982,8 +1087,10 @@ fn run_job_blocking(
             let execution_context = execution_context
                 .as_ref()
                 .ok_or_else(|| format!("missing execution context for source chain {chain_key}"))?;
+            let router_address =
+                resolve_source_router_address(execution_context, source_intent_record.as_ref(), None);
             let tx_hash = send_transaction(
-                &execution_context.router_address,
+                router_address,
                 FINALIZE_FAILURE_SIGNATURE,
                 &[
                     intent_id.clone(),
@@ -998,7 +1105,7 @@ fn run_job_blocking(
                 "intentId": intent_id,
                 "sourceChain": chain_key,
                 "txHash": tx_hash,
-                "routerAddress": &execution_context.router_address,
+                "routerAddress": router_address,
                 "outcomeReference": outcome_reference,
                 "failureReasonHash": failure_reason_hash,
             }))
@@ -1008,8 +1115,9 @@ fn run_job_blocking(
             refund_amount,
             refund_asset,
         } => {
-            if is_substrate_source_record(source_intent.as_ref()) {
-                let record = require_substrate_source_intent(source_intent.as_ref(), &intent_id)?;
+            if is_substrate_source_record(source_intent_record.as_ref()) {
+                let record =
+                    require_substrate_source_intent(source_intent_record.as_ref(), &intent_id)?;
                 assert_source_intent_status(&record, &intent_id, "failed")?;
                 let resolved_refund_asset =
                     resolve_substrate_refund_asset(&record, refund_asset.as_deref());
@@ -1026,8 +1134,10 @@ fn run_job_blocking(
             let execution_context = execution_context
                 .as_ref()
                 .ok_or_else(|| format!("missing execution context for source chain {chain_key}"))?;
+            let router_address =
+                resolve_source_router_address(execution_context, source_intent_record.as_ref(), None);
             let tx_hash = send_transaction(
-                &execution_context.router_address,
+                router_address,
                 REFUND_FAILED_INTENT_SIGNATURE,
                 &[intent_id.clone(), refund_amount.clone()],
                 &execution_context.rpc_url,
@@ -1038,7 +1148,7 @@ fn run_job_blocking(
                 "intentId": intent_id,
                 "sourceChain": chain_key,
                 "txHash": tx_hash,
-                "routerAddress": &execution_context.router_address,
+                "routerAddress": router_address,
                 "refundAmount": refund_amount,
                 "refundAsset": refund_asset,
             }))
@@ -1068,11 +1178,14 @@ async fn record_source_intent_progress(
             intent_id,
             source_intent,
             ..
-        } if is_substrate_source_metadata(source_intent.as_ref()) => {
+        } if source_intent.is_some() => {
             let tx_hash = result
                 .get("txHash")
                 .and_then(Value::as_str)
                 .ok_or_else(|| format!("missing txHash in dispatch result for {intent_id}"))?;
+            let settlement_balance_before = result
+                .get("settlementBalanceBefore")
+                .and_then(Value::as_str);
             let strategy = result
                 .get("strategy")
                 .and_then(Value::as_str)
@@ -1084,6 +1197,7 @@ async fn record_source_intent_progress(
                         tx_hash: tx_hash.to_owned(),
                         strategy,
                     }),
+                    settlement_balance_before,
                 )
                 .await
         }
@@ -1093,17 +1207,15 @@ async fn record_source_intent_progress(
             result_asset_id,
             result_amount,
         } => {
-            if let Some(record) = job_store.source_intent(intent_id).await {
-                if record.kind == "substrate-source" {
-                    job_store
-                        .mark_source_intent_settled(
-                            intent_id,
-                            outcome_reference,
-                            result_asset_id,
-                            result_amount,
-                        )
-                        .await?;
-                }
+            if job_store.source_intent(intent_id).await.is_some() {
+                job_store
+                    .mark_source_intent_settled(
+                        intent_id,
+                        outcome_reference,
+                        result_asset_id,
+                        result_amount,
+                    )
+                    .await?;
             }
             Ok(())
         }
@@ -1112,16 +1224,14 @@ async fn record_source_intent_progress(
             outcome_reference,
             failure_reason_hash,
         } => {
-            if let Some(record) = job_store.source_intent(intent_id).await {
-                if record.kind == "substrate-source" {
-                    job_store
-                        .mark_source_intent_failed(
-                            intent_id,
-                            outcome_reference,
-                            failure_reason_hash,
-                        )
-                        .await?;
-                }
+            if job_store.source_intent(intent_id).await.is_some() {
+                job_store
+                    .mark_source_intent_failed(
+                        intent_id,
+                        outcome_reference,
+                        failure_reason_hash,
+                    )
+                    .await?;
             }
             Ok(())
         }
@@ -1130,16 +1240,14 @@ async fn record_source_intent_progress(
             refund_amount,
             refund_asset,
         } => {
-            if let Some(record) = job_store.source_intent(intent_id).await {
-                if record.kind == "substrate-source" {
-                    job_store
-                        .mark_source_intent_refunded(
-                            intent_id,
-                            refund_amount,
-                            refund_asset.as_deref(),
-                        )
-                        .await?;
-                }
+            if job_store.source_intent(intent_id).await.is_some() {
+                job_store
+                    .mark_source_intent_refunded(
+                        intent_id,
+                        refund_amount,
+                        refund_asset.as_deref(),
+                    )
+                    .await?;
             }
             Ok(())
         }
@@ -1258,6 +1366,122 @@ fn resolve_substrate_refund_asset(
     refund_asset
         .map(str::to_owned)
         .unwrap_or_else(|| record.refund_asset.clone())
+}
+
+#[derive(Debug, Clone)]
+struct SettlementObservationTarget {
+    chain_key: String,
+    asset: String,
+    recipient: String,
+    minimum_amount: u128,
+    balance_before: Option<u128>,
+}
+
+fn read_settlement_balance_before(
+    metadata: Option<&SourceIntentMetadata>,
+    observation_rpcs: &BTreeMap<String, String>,
+    node_bin: &str,
+    substrate_balance_script: &Path,
+) -> Result<Option<u128>, String> {
+    let Some(target) = settlement_target_from_metadata(metadata)? else {
+        return Ok(None);
+    };
+    if !supports_destination_balance_observation(&target) {
+        return Ok(None);
+    }
+    let rpc_url = observation_rpcs
+        .get(&target.chain_key)
+        .ok_or_else(|| format!("missing destination observation rpc for {}", target.chain_key))?;
+
+    read_substrate_destination_balance(
+        node_bin,
+        substrate_balance_script,
+        rpc_url,
+        &target.chain_key,
+        &target.asset,
+        &target.recipient,
+    )
+    .map(Some)
+}
+
+fn settlement_target_from_metadata(
+    metadata: Option<&SourceIntentMetadata>,
+) -> Result<Option<SettlementObservationTarget>, String> {
+    let Some(metadata) = metadata else {
+        return Ok(None);
+    };
+    let (Some(chain_key), Some(asset), Some(recipient)) = (
+        metadata.settlement_chain.as_deref(),
+        metadata.settlement_asset.as_deref(),
+        metadata.settlement_recipient.as_deref(),
+    ) else {
+        return Ok(None);
+    };
+    let minimum_amount = metadata
+        .minimum_settlement_amount
+        .as_deref()
+        .map(|value| parse_stored_u128(value, "minimumSettlementAmount"))
+        .transpose()?
+        .unwrap_or(0);
+
+    Ok(Some(SettlementObservationTarget {
+        chain_key: normalize_chain_key(chain_key)?,
+        asset: asset.trim().to_ascii_uppercase(),
+        recipient: recipient.trim().to_owned(),
+        minimum_amount,
+        balance_before: None,
+    }))
+}
+
+fn settlement_target_from_record(
+    record: &SourceIntentRecord,
+) -> Result<Option<SettlementObservationTarget>, String> {
+    let (Some(chain_key), Some(asset), Some(recipient), Some(balance_before)) = (
+        record.settlement_chain.as_deref(),
+        record.settlement_asset.as_deref(),
+        record.settlement_recipient.as_deref(),
+        record.settlement_balance_before.as_deref(),
+    ) else {
+        return Ok(None);
+    };
+
+    Ok(Some(SettlementObservationTarget {
+        chain_key: normalize_chain_key(chain_key)?,
+        asset: asset.trim().to_ascii_uppercase(),
+        recipient: recipient.trim().to_owned(),
+        minimum_amount: record
+            .minimum_settlement_amount
+            .as_deref()
+            .map(|value| parse_stored_u128(value, "minimumSettlementAmount"))
+            .transpose()?
+            .unwrap_or(0),
+        balance_before: Some(parse_stored_u128(balance_before, "settlementBalanceBefore")?),
+    }))
+}
+
+fn supports_destination_balance_observation(target: &SettlementObservationTarget) -> bool {
+    if target.recipient.starts_with("0x") {
+        return false;
+    }
+
+    matches!(
+        (target.chain_key.as_str(), target.asset.as_str()),
+        ("hydration", "DOT")
+            | ("hydration", "USDT")
+            | ("hydration", "HDX")
+            | ("bifrost", "BNC")
+    )
+}
+
+fn resolve_source_router_address<'a>(
+    execution_context: &'a ExecutionContext,
+    record: Option<&'a SourceIntentRecord>,
+    metadata: Option<&'a xroute_service_shared::SourceIntentMetadata>,
+) -> &'a str {
+    record
+        .and_then(|value| value.router_address.as_deref())
+        .or_else(|| metadata.and_then(|value| value.router_address.as_deref()))
+        .unwrap_or(&execution_context.router_address)
 }
 
 fn parse_stored_u128(value: &str, field: &str) -> Result<u128, String> {
@@ -1395,6 +1619,19 @@ impl RelayerState {
             .get(&normalized_chain_key)
             .cloned()
             .ok_or_else(|| missing_execution_context_message(&normalized_chain_key))
+    }
+
+    fn observation_rpcs(&self) -> BTreeMap<String, String> {
+        let mut rpc_by_chain = BTreeMap::new();
+        rpc_by_chain.insert(
+            self.primary_chain_key.clone(),
+            self.primary_execution_context.rpc_url.clone(),
+        );
+        for (chain_key, context) in &self.execution_contexts {
+            rpc_by_chain.insert(chain_key.clone(), context.rpc_url.clone());
+        }
+
+        rpc_by_chain
     }
 
     fn execution_context_summary(&self) -> Value {
@@ -1560,6 +1797,7 @@ fn normalize_chain_key(value: &str) -> Result<String, String> {
 
     Ok(match normalized.as_str() {
         "asset-hub" => "polkadot-hub".to_owned(),
+        "relay" | "polkadot-relay" => "polkadot-relay".to_owned(),
         "bifrost" => "bifrost".to_owned(),
         other => other.to_owned(),
     })
@@ -1612,9 +1850,11 @@ fn format_dispatch_request_tuple(request: &DispatchRequest) -> String {
 fn dispatch_moonbeam_intent_with_batch(
     intent_id: &str,
     execution_context: &ExecutionContext,
+    router_address: &str,
     request: &xroute_service_shared::DispatchRequest,
     source_intent: &SourceIntentMetadata,
     moonbeam_dispatch: &MoonbeamDispatchMetadata,
+    settlement_balance_before: Option<u128>,
     node_bin: &str,
     evm_transaction_script: &Path,
     gas_limit: Option<u64>,
@@ -1632,6 +1872,17 @@ fn dispatch_moonbeam_intent_with_batch(
         .map_err(|error| format!("invalid sourceIntent.refundableAmount: {error}"))?;
     let source_asset_address =
         resolve_moonbeam_source_asset_address(execution_context, &moonbeam_dispatch.asset)?;
+    let remote_reserve_chain = resolve_moonbeam_remote_reserve_chain(
+        &moonbeam_dispatch.asset,
+        &moonbeam_dispatch.remote_reserve_chain,
+    )?;
+    let executor_address = derive_evm_address_from_private_key(&execution_context.private_key)?;
+    assert_moonbeam_executor_asset_balance(
+        &execution_context.rpc_url,
+        &source_asset_address,
+        &executor_address,
+        refundable_amount,
+    )?;
 
     let router_calldata =
         encode_dispatch_intent_without_xcm_calldata(intent_id, request, parsed_weight)?;
@@ -1640,10 +1891,10 @@ fn dispatch_moonbeam_intent_with_batch(
         &source_asset_address,
         refundable_amount,
         &moonbeam_dispatch.custom_xcm_on_dest,
-        &moonbeam_dispatch.remote_reserve_chain,
+        &remote_reserve_chain,
     )?;
     let batch_calldata = encode_moonbeam_batch_all_calldata(
-        &execution_context.router_address,
+        router_address,
         &execution_context.xcm_address,
         &router_calldata,
         &xcm_calldata,
@@ -1664,11 +1915,13 @@ fn dispatch_moonbeam_intent_with_batch(
         "sourceChain": "moonbeam",
         "txHash": tx_hash,
         "strategy": "moonbeam-batch-dispatch",
+        "routerAddress": router_address,
         "targetAddress": MOONBEAM_BATCH_PRECOMPILE_ADDRESS,
         "xcmAddress": execution_context.xcm_address.to_ascii_lowercase(),
         "asset": moonbeam_dispatch.asset,
         "destinationChain": moonbeam_dispatch.destination_chain,
-        "remoteReserveChain": moonbeam_dispatch.remote_reserve_chain,
+        "remoteReserveChain": remote_reserve_chain,
+        "settlementBalanceBefore": settlement_balance_before.map(|value| value.to_string()),
         "request": request,
     }))
 }
@@ -1700,6 +1953,17 @@ fn resolve_moonbeam_source_asset_address(
     }
 }
 
+fn resolve_moonbeam_remote_reserve_chain(
+    asset_symbol: &str,
+    requested_remote_reserve_chain: &str,
+) -> Result<String, String> {
+    match asset_symbol.trim().to_ascii_uppercase().as_str() {
+        "DOT" => Ok("polkadot-relay".to_owned()),
+        "BNC" | "VDOT" => Ok("bifrost".to_owned()),
+        _ => normalize_chain_key(requested_remote_reserve_chain),
+    }
+}
+
 fn encode_moonbeam_transfer_assets_calldata(
     destination_chain: &str,
     asset_address: &str,
@@ -1710,11 +1974,17 @@ fn encode_moonbeam_transfer_assets_calldata(
     encode_abi_call(
         MOONBEAM_TRANSFER_ASSETS_SELECTOR,
         &[
-            AbiArg::Dynamic(encode_moonbeam_multilocation(destination_chain)?),
+            AbiArg::Dynamic(encode_moonbeam_multilocation_relative(
+                destination_chain,
+                remote_reserve_chain,
+            )?),
             AbiArg::Dynamic(encode_moonbeam_asset_array(asset_address, refundable_amount)?),
             AbiArg::Static(encode_u256_word(0)),
             AbiArg::Dynamic(encode_abi_bytes(custom_xcm_on_dest)?),
-            AbiArg::Dynamic(encode_moonbeam_multilocation(remote_reserve_chain)?),
+            AbiArg::Dynamic(encode_moonbeam_multilocation_relative(
+                remote_reserve_chain,
+                "moonbeam",
+            )?),
         ],
     )
 }
@@ -1790,21 +2060,53 @@ fn encode_abi_call(selector: &str, args: &[AbiArg]) -> Result<String, String> {
     Ok(format!("0x{selector}{head}{tail}"))
 }
 
-fn encode_moonbeam_multilocation(chain_key: &str) -> Result<String, String> {
-    let parachain_id = match normalize_chain_key(chain_key)?.as_str() {
-        "polkadot-hub" => 1000u32,
-        "hydration" => 2034u32,
-        "bifrost" => 2030u32,
-        other => {
-            return Err(format!(
-                "unsupported moonbeam destination/reserve chain: {other}"
-            ))
-        }
+fn encode_moonbeam_multilocation_relative(
+    target_chain: &str,
+    current_chain: &str,
+) -> Result<String, String> {
+    let normalized_target_chain = normalize_chain_key(target_chain)?;
+    let normalized_current_chain = normalize_chain_key(current_chain)?;
+
+    let (parents, interior) = if normalized_target_chain == normalized_current_chain {
+        (0u128, encode_abi_bytes_array(&[])?)
+    } else {
+        let parents = match normalized_current_chain.as_str() {
+            "moonbeam" => 1u128,
+            "polkadot-relay" => 0u128,
+            "polkadot-hub" | "hydration" | "bifrost" => 1u128,
+            other => {
+                return Err(format!(
+                    "unsupported moonbeam multilocation current chain: {other}"
+                ))
+            }
+        };
+
+        let junction = match normalized_target_chain.as_str() {
+            "polkadot-relay" => None,
+            "polkadot-hub" => Some(1000u32),
+            "hydration" => Some(2034u32),
+            "bifrost" => Some(2030u32),
+            "moonbeam" => Some(2004u32),
+            other => {
+                return Err(format!(
+                    "unsupported moonbeam destination/reserve chain: {other}"
+                ))
+            }
+        };
+
+        let interior = match junction {
+            Some(parachain_id) => encode_abi_bytes_array(&[format!(
+                "0x00{}",
+                bytes_to_lower_hex(&parachain_id.to_le_bytes()),
+            )])?,
+            None => encode_abi_bytes_array(&[])?,
+        };
+
+        (parents, interior)
     };
-    let interior = encode_abi_bytes_array(&[format!("0x{parachain_id:08x}")])?;
     let tuple_tail = format!(
         "{}{}{}",
-        encode_u256_word(1),
+        encode_u256_word(parents),
         encode_u256_word(64),
         interior
     );
@@ -1954,6 +2256,14 @@ fn encode_u256_word(value: u128) -> String {
     format!("{value:0>64x}")
 }
 
+fn bytes_to_lower_hex(bytes: &[u8]) -> String {
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push_str(&format!("{byte:02x}"));
+    }
+    encoded
+}
+
 fn normalize_evm_address(value: &str, field: &str) -> Result<String, String> {
     let normalized = value.trim().to_ascii_lowercase();
     let hex = strip_hex_prefix(&normalized);
@@ -1986,12 +2296,89 @@ fn parse_u64_scalar(value: &str, field: &str) -> Result<u64, String> {
         .map_err(|error| format!("invalid {field}: {error}"))
 }
 
+fn parse_u128_scalar(value: &str, field: &str) -> Result<u128, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(0);
+    }
+    if let Some(hex) = trimmed.strip_prefix("0x") {
+        if hex.is_empty() {
+            return Ok(0);
+        }
+        return u128::from_str_radix(hex, 16)
+            .map_err(|error| format!("invalid {field}: {error}"));
+    }
+
+    trimmed
+        .parse::<u128>()
+        .map_err(|error| format!("invalid {field}: {error}"))
+}
+
+fn derive_evm_address_from_private_key(private_key: &str) -> Result<String, String> {
+    let output = Command::new("cast")
+        .arg("wallet")
+        .arg("address")
+        .arg("--private-key")
+        .arg(private_key)
+        .output()
+        .map_err(|error| format!("failed to derive EVM address from private key: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+    }
+
+    normalize_evm_address(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "derived executor address",
+    )
+}
+
+fn read_erc20_balance(rpc_url: &str, asset_address: &str, account_address: &str) -> Result<u128, String> {
+    let output = Command::new("cast")
+        .arg("call")
+        .arg(asset_address)
+        .arg("balanceOf(address)")
+        .arg(account_address)
+        .arg("--rpc-url")
+        .arg(rpc_url)
+        .output()
+        .map_err(|error| format!("failed to run cast call balanceOf: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+    }
+
+    parse_u128_scalar(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "moonbeam executor asset balance",
+    )
+}
+
+fn assert_moonbeam_executor_asset_balance(
+    rpc_url: &str,
+    asset_address: &str,
+    executor_address: &str,
+    required_amount: u128,
+) -> Result<(), String> {
+    if !contract_has_code(asset_address, rpc_url)? {
+        return Ok(());
+    }
+
+    let available_amount = read_erc20_balance(rpc_url, asset_address, executor_address)?;
+    if available_amount < required_amount {
+        return Err(format!(
+            "insufficient moonbeam executor asset balance: need {required_amount}, have {available_amount}, asset {asset_address}, executor {executor_address}"
+        ));
+    }
+
+    Ok(())
+}
+
 fn dispatch_substrate_source_intent(
     intent_id: &str,
     chain_key: &str,
     execution_context: &ExecutionContext,
     request: &xroute_service_shared::DispatchRequest,
     source_intent: Option<&xroute_service_shared::SourceIntentMetadata>,
+    settlement_balance_before: Option<u128>,
     node_bin: &str,
     substrate_dispatch_script: &Path,
 ) -> Result<Value, String> {
@@ -2078,6 +2465,7 @@ fn dispatch_substrate_source_intent(
         "sourceChain": chain_key,
         "txHash": tx_hash,
         "strategy": strategy,
+        "settlementBalanceBefore": settlement_balance_before.map(|value| value.to_string()),
         "request": request,
     }))
 }
@@ -2157,6 +2545,82 @@ fn send_raw_evm_transaction_with_helper(
             )
         })?;
     Ok(tx_hash.to_ascii_lowercase())
+}
+
+fn read_substrate_destination_balance(
+    node_bin: &str,
+    script_path: &Path,
+    rpc_url: &str,
+    chain_key: &str,
+    asset: &str,
+    recipient: &str,
+) -> Result<u128, String> {
+    let payload = json!({
+        "chainKey": chain_key,
+        "rpcUrl": rpc_url,
+        "asset": asset,
+        "recipient": recipient,
+    });
+
+    let mut child = Command::new(node_bin)
+        .arg(script_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| {
+            format!(
+                "failed to start substrate balance helper {} with {}: {error}",
+                script_path.display(),
+                node_bin
+            )
+        })?;
+
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(payload.to_string().as_bytes())
+            .map_err(|error| {
+                format!(
+                    "failed to write substrate balance payload to {}: {error}",
+                    script_path.display()
+                )
+            })?;
+    }
+
+    let output = child.wait_with_output().map_err(|error| {
+        format!(
+            "failed to read substrate balance helper output from {}: {error}",
+            script_path.display()
+        )
+    })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        let detail = if !stderr.is_empty() { stderr } else { stdout };
+        return Err(format!(
+            "substrate balance helper {} failed: {}",
+            script_path.display(),
+            detail
+        ));
+    }
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).map_err(|error| {
+        format!(
+            "failed to decode substrate balance helper output from {}: {error}",
+            script_path.display()
+        )
+    })?;
+    let balance = parsed
+        .get("balance")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            format!(
+                "substrate balance helper {} did not return balance",
+                script_path.display()
+            )
+        })?;
+
+    parse_stored_u128(balance, "destination balance")
 }
 
 fn extract_transaction_hash(value: &str) -> Result<String, String> {
@@ -2256,6 +2720,37 @@ fn append_status_event(path: &Path, event: Value) -> Result<(), String> {
         .map_err(|error| format!("failed to append event log {}: {error}", path.display()))
 }
 
+fn destination_execution_started_event(payload: &JobPayload, result: &Value) -> Option<Value> {
+    let JobPayload::Dispatch {
+        intent_id,
+        source_intent: Some(source_intent),
+        ..
+    } = payload
+    else {
+        return None;
+    };
+    let (Some(chain), Some(asset), Some(recipient)) = (
+        source_intent.settlement_chain.as_deref(),
+        source_intent.settlement_asset.as_deref(),
+        source_intent.settlement_recipient.as_deref(),
+    ) else {
+        return None;
+    };
+
+    Some(json!({
+        "type": "destination-execution-started",
+        "intentId": intent_id,
+        "at": now_millis(),
+        "result": {
+            "chain": chain,
+            "asset": asset,
+            "recipient": recipient,
+            "minimumAmount": source_intent.minimum_settlement_amount,
+            "dispatchTxHash": result.get("txHash").and_then(Value::as_str),
+        },
+    }))
+}
+
 fn status_event(job: &Job, result: &Value) -> Value {
     let event_type = match job.job_type {
         JobType::Dispatch => "intent-dispatched",
@@ -2279,6 +2774,30 @@ fn intent_id_from_payload(payload: &JobPayload) -> &str {
         | JobPayload::Fail { intent_id, .. }
         | JobPayload::Refund { intent_id, .. } => intent_id,
     }
+}
+
+fn settlement_outcome_reference(record: &SourceIntentRecord) -> String {
+    record
+        .dispatch_tx_hash
+        .clone()
+        .unwrap_or_else(|| padded_bytes32_from_text(&format!("settlement:{}", record.intent_id)))
+}
+
+fn settlement_result_asset_id(asset_symbol: &str) -> String {
+    let normalized = asset_symbol.trim().to_ascii_uppercase();
+    let mut bytes = [0u8; 32];
+    let asset_bytes = normalized.as_bytes();
+    let copy_len = asset_bytes.len().min(bytes.len());
+    bytes[..copy_len].copy_from_slice(&asset_bytes[..copy_len]);
+    format!("0x{}", bytes_to_lower_hex(&bytes))
+}
+
+fn padded_bytes32_from_text(value: &str) -> String {
+    let mut bytes = [0u8; 32];
+    let value_bytes = value.as_bytes();
+    let copy_len = value_bytes.len().min(bytes.len());
+    bytes[..copy_len].copy_from_slice(&value_bytes[..copy_len]);
+    format!("0x{}", bytes_to_lower_hex(&bytes))
 }
 
 fn deterministic_job_id(job_type: &JobType, payload: &JobPayload) -> Result<String, String> {
@@ -2401,7 +2920,9 @@ fn now_millis() -> u64 {
 mod tests {
     use super::{
         default_xcm_address_for_chain, encode_moonbeam_batch_all_calldata,
-        resolve_moonbeam_source_asset_address, ExecutionContext, MOONBEAM_BATCH_ALL_SELECTOR,
+        encode_moonbeam_multilocation_relative, encode_u256_word,
+        resolve_moonbeam_remote_reserve_chain, resolve_moonbeam_source_asset_address,
+        ExecutionContext, MOONBEAM_BATCH_ALL_SELECTOR,
     };
 
     fn test_context() -> ExecutionContext {
@@ -2437,11 +2958,79 @@ mod tests {
     }
 
     #[test]
+    fn moonbeam_multilocation_prefixes_parachain_selector() {
+        let encoded = encode_moonbeam_multilocation_relative("polkadot-hub", "moonbeam")
+            .expect("multilocation should encode");
+
+        let expected_prefix = format!(
+            "{}{}{}{}",
+            encode_u256_word(1),
+            encode_u256_word(64),
+            encode_u256_word(1),
+            encode_u256_word(32)
+        );
+        assert!(encoded.starts_with(&expected_prefix));
+        assert!(encoded.contains("00e8030000"));
+    }
+
+    #[test]
+    fn moonbeam_multilocation_supports_relay_chain_here() {
+        let encoded = encode_moonbeam_multilocation_relative("polkadot-relay", "moonbeam")
+            .expect("relay multilocation should encode");
+
+        let expected = format!(
+            "{}{}{}",
+            encode_u256_word(1),
+            encode_u256_word(64),
+            encode_u256_word(0)
+        );
+        assert_eq!(encoded, expected);
+    }
+
+    #[test]
     fn resolve_moonbeam_source_asset_address_supports_bnc() {
         let resolved = resolve_moonbeam_source_asset_address(&test_context(), "BNC")
             .expect("BNC address should resolve");
 
         assert_eq!(resolved, "0xffffffff7cc06abdf7201b350a1265c62c8601d2");
+    }
+
+    #[test]
+    fn resolve_moonbeam_remote_reserve_chain_overrides_dot_to_relay() {
+        let resolved = resolve_moonbeam_remote_reserve_chain("DOT", "polkadot-hub")
+            .expect("DOT reserve should resolve");
+
+        assert_eq!(resolved, "polkadot-relay");
+    }
+
+    #[test]
+    fn moonbeam_destination_multilocation_is_relative_to_relay_reserve() {
+        let encoded = encode_moonbeam_multilocation_relative("hydration", "polkadot-relay")
+            .expect("destination multilocation should encode");
+
+        let expected_prefix = format!(
+            "{}{}{}{}",
+            encode_u256_word(0),
+            encode_u256_word(64),
+            encode_u256_word(1),
+            encode_u256_word(32)
+        );
+        assert!(encoded.starts_with(&expected_prefix));
+        assert!(encoded.contains("00f2070000"));
+    }
+
+    #[test]
+    fn moonbeam_destination_multilocation_is_here_when_reserve_equals_destination() {
+        let encoded = encode_moonbeam_multilocation_relative("bifrost", "bifrost")
+            .expect("same-chain multilocation should encode");
+
+        let expected = format!(
+            "{}{}{}",
+            encode_u256_word(0),
+            encode_u256_word(64),
+            encode_u256_word(0)
+        );
+        assert_eq!(encoded, expected);
     }
 
     #[test]

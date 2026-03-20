@@ -753,7 +753,7 @@ test("createEvmWalletAdapter submits intents with approval and extracts intent i
 test("createWallet resolves hosted mainnet defaults for moonbeam evm wallets", async () => {
   const calls = [];
   const ownerAddress = "0x1111111111111111111111111111111111111111";
-  const routerAddress = "0x1cf06764e0d154347827ebe031efc96202375b65";
+  const routerAddress = "0xe90d4bf9155d6fd843844253a647f63ed9d57a54";
   const tokenAddress = "0xffffffff1fcacbd218edc0eba20fc2308c778080";
   const intentId = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
   const txHashes = {
@@ -2583,6 +2583,7 @@ test("createHttpExecutorRelayerClient builds and sends dispatch requests", async
     intentId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     intent,
     quote,
+    routerAddress: "0x1234567890123456789012345678901234567890",
   });
 
   assert.equal(response.job.id, "job-2");
@@ -2595,6 +2596,7 @@ test("createHttpExecutorRelayerClient builds and sends dispatch requests", async
   assert.equal(payload.sourceIntent.refundAsset, "DOT");
   assert.equal(payload.sourceIntent.refundableAmount, "13");
   assert.equal(payload.sourceIntent.minOutputAmount, "10");
+  assert.equal(payload.sourceIntent.routerAddress, "0x1234567890123456789012345678901234567890");
   assert.match(payload.request.message, /^0x[0-9a-f]+$/);
 });
 
@@ -2872,7 +2874,7 @@ test("createHttpExecutorRelayerClient sends moonbeam source metadata and destina
               {
                 type: "initiate-reserve-withdraw",
                 assetCount: 1,
-                reserve: "polkadot-hub",
+                reserve: "polkadot-relay",
                 remoteInstructions: [
                   {
                     type: "buy-execution",
@@ -2915,10 +2917,205 @@ test("createHttpExecutorRelayerClient sends moonbeam source metadata and destina
   assert.equal(payload.sourceIntent.kind, "router-evm");
   assert.equal(payload.sourceIntent.refundAsset, "DOT");
   assert.equal(payload.sourceIntent.refundableAmount, "18");
+  assert.equal(payload.sourceIntent.routerAddress, undefined);
   assert.equal(payload.moonbeamDispatch.asset, "DOT");
   assert.equal(payload.moonbeamDispatch.destinationChain, "hydration");
-  assert.equal(payload.moonbeamDispatch.remoteReserveChain, "polkadot-hub");
+  assert.equal(payload.moonbeamDispatch.remoteReserveChain, "polkadot-relay");
   assert.match(payload.moonbeamDispatch.customXcmOnDest, /^0x[0-9a-f]+$/);
+});
+
+test("hosted createXRouteClient forwards the connected moonbeam router address to the relayer", async () => {
+  const seen = [];
+  const walletAddress = "0x1111111111111111111111111111111111111111";
+  const routerAddress = "0x9999999999999999999999999999999999999999";
+  const intentId = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac";
+  const client = createXRouteClient({
+    apiKey: "public-test-key",
+    fetchImpl: async (url, request) => {
+      seen.push([url, request]);
+      if (url.endsWith("/status")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              intentId,
+              status: "dispatched",
+            };
+          },
+        };
+      }
+
+      if (url.endsWith("/jobs/dispatch")) {
+        return {
+          ok: true,
+          async json() {
+            return {
+              job: {
+                id: "job-moonbeam-router",
+                status: "queued",
+              },
+            };
+          },
+        };
+      }
+
+      if (url.endsWith("/quote")) {
+        return {
+          ok: true,
+          async json() {
+            return {
+              quote: {
+                quoteId: "ignored",
+                deploymentProfile: "mainnet",
+                route: ["moonbeam", "polkadot-hub", "hydration"],
+                segments: [
+                  {
+                    kind: "execution",
+                    route: ["moonbeam", "polkadot-hub", "hydration"],
+                    hops: [
+                      {
+                        source: "moonbeam",
+                        destination: "polkadot-hub",
+                        asset: "DOT",
+                        transportFee: { asset: "DOT", amount: "1" },
+                        buyExecutionFee: { asset: "DOT", amount: "2" },
+                      },
+                      {
+                        source: "polkadot-hub",
+                        destination: "hydration",
+                        asset: "DOT",
+                        transportFee: { asset: "DOT", amount: "3" },
+                        buyExecutionFee: { asset: "DOT", amount: "4" },
+                      },
+                    ],
+                    xcmFee: { asset: "DOT", amount: "4" },
+                    destinationFee: { asset: "DOT", amount: "4" },
+                  },
+                ],
+                fees: {
+                  xcmFee: { asset: "DOT", amount: "4" },
+                  destinationFee: { asset: "DOT", amount: "4" },
+                  platformFee: { asset: "DOT", amount: "1" },
+                  totalFee: { asset: "DOT", amount: "9" },
+                },
+                expectedOutput: { asset: "DOT", amount: "10" },
+                minOutput: { asset: "DOT", amount: "10" },
+                submission: {
+                  action: "transfer",
+                  asset: "DOT",
+                  amount: "10",
+                  xcmFee: "4",
+                  destinationFee: "4",
+                  minOutputAmount: "10",
+                },
+                executionPlan: {
+                  route: ["moonbeam", "polkadot-hub", "hydration"],
+                  steps: [
+                    {
+                      type: "send-xcm",
+                      origin: "moonbeam",
+                      destination: "polkadot-hub",
+                      instructions: [
+                        {
+                          type: "withdraw-asset",
+                          asset: "DOT",
+                          amount: "10",
+                        },
+                        {
+                          type: "initiate-reserve-withdraw",
+                          assetCount: 1,
+                          reserve: "polkadot-hub",
+                          remoteInstructions: [
+                            {
+                              type: "buy-execution",
+                              asset: "DOT",
+                              amount: "2",
+                            },
+                            {
+                              type: "deposit-reserve-asset",
+                              assetCount: 1,
+                              destination: "hydration",
+                              remoteInstructions: [
+                                {
+                                  type: "buy-execution",
+                                  asset: "DOT",
+                                  amount: "4",
+                                },
+                                {
+                                  type: "deposit-asset",
+                                  asset: "DOT",
+                                  recipient: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+                                  assetCount: 1,
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              },
+            };
+          },
+        };
+      }
+
+      throw new Error(`unexpected request to ${url}`);
+    },
+  });
+
+  client.connectWallet({
+    async getAddress() {
+      return walletAddress;
+    },
+    xcmEnvelopeBuilder() {
+      return {
+        mode: "execute",
+        messageHex: "0x1234",
+      };
+    },
+    submitRequestBuilder({ intent, quote }) {
+      return {
+        sourceKind: "router-evm",
+        refundAddress: intent.refundAddress,
+        asset: quote.submission.asset,
+        amount: quote.submission.amount,
+        xcmFee: quote.submission.xcmFee,
+        destinationFee: quote.submission.destinationFee,
+        minOutputAmount: quote.submission.minOutputAmount,
+        deadline: intent.deadline,
+        executionHash: "0x1111111111111111111111111111111111111111111111111111111111111111",
+      };
+    },
+    routerAdapter: {
+      routerAddress,
+      async submitIntent({ request }) {
+        return {
+          intentId,
+          request,
+        };
+      },
+      async dispatchIntent() {
+        throw new Error("moonbeam dispatch should be relayer-owned");
+      },
+    },
+  });
+
+  const execution = await client.transfer({
+    sourceChain: "moonbeam",
+    destinationChain: "hydration",
+    asset: "DOT",
+    amount: "10",
+    recipient: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+  });
+
+  assert.equal(execution.dispatched.relayerJob.id, "job-moonbeam-router");
+  const relayerBody = JSON.parse(
+    seen.find(([url]) => url.endsWith("/jobs/dispatch"))[1].body,
+  );
+  assert.equal(relayerBody.sourceIntent.routerAddress, routerAddress);
 });
 
 test("createHttpExecutorRelayerClient registers pre-broadcast bifrost dispatch metadata", async () => {

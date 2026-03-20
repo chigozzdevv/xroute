@@ -56,7 +56,7 @@ export function createHttpExecutorRelayerClient({
       });
     },
 
-    async dispatch({ intentId, intent, quote, envelope, request, dispatchResult } = {}) {
+    async dispatch({ intentId, intent, quote, envelope, request, dispatchResult, routerAddress } = {}) {
       if (!intent) {
         throw new Error("intent is required");
       }
@@ -88,7 +88,8 @@ export function createHttpExecutorRelayerClient({
       const sourceIntent = normalizedQuote
         ? buildSourceIntentMetadata({
             intent: normalizedIntent,
-          quote: normalizedQuote,
+            quote: normalizedQuote,
+            routerAddress,
         })
         : undefined;
       const moonbeamDispatch =
@@ -178,7 +179,11 @@ export function createHttpExecutorRelayerClient({
   };
 }
 
-function buildSourceIntentMetadata({ intent, quote }) {
+function buildSourceIntentMetadata({ intent, quote, routerAddress }) {
+  const settlementStep = quote?.executionPlan?.steps?.find(
+    (step) => step?.type === "expect-settlement",
+  );
+
   return {
     kind: inferSourceIntentKind(intent.sourceChain),
     refundAsset: quote.submission.asset,
@@ -186,6 +191,17 @@ function buildSourceIntentMetadata({ intent, quote }) {
       quote.submission.amount + quote.submission.xcmFee + quote.submission.destinationFee
     ).toString(),
     minOutputAmount: quote.submission.minOutputAmount.toString(),
+    settlementChain: settlementStep?.chain,
+    settlementAsset: settlementStep?.asset,
+    settlementRecipient: settlementStep?.recipient,
+    minimumSettlementAmount:
+      settlementStep?.minimumAmount == null
+        ? undefined
+        : settlementStep.minimumAmount.toString(),
+    routerAddress:
+      typeof routerAddress === "string" && routerAddress.trim() !== ""
+        ? routerAddress.trim()
+        : undefined,
   };
 }
 

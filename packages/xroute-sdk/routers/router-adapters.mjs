@@ -470,28 +470,43 @@ export function createCastRouterAdapter({
   }
 
   async function sendTransaction(contractAddress, signature, args = [], options = {}) {
-    const command = [
-      "send",
-      assertAddress("contractAddress", contractAddress),
-      signature,
-      ...args.map(String),
-      "--rpc-url",
-      normalizedRpcUrl,
-      "--private-key",
-      normalizedPrivateKey,
-      "--json",
-    ];
-    if (options.value !== undefined && options.value !== null) {
-      command.push("--value", toUintString(options.value));
-    }
-    if (gasLimit !== undefined && gasLimit !== null) {
-      command.push("--gas-limit", toUintString(gasLimit));
-    }
+    let lastError = null;
 
-    const output = await runCast(command);
-    assertTransactionDidNotRevert(output);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const command = [
+        "send",
+        assertAddress("contractAddress", contractAddress),
+        signature,
+        ...args.map(String),
+        "--rpc-url",
+        normalizedRpcUrl,
+        "--private-key",
+        normalizedPrivateKey,
+        "--json",
+      ];
+      if (options.value !== undefined && options.value !== null) {
+        command.push("--value", toUintString(options.value));
+      }
+      if (gasLimit !== undefined && gasLimit !== null) {
+        command.push("--gas-limit", toUintString(gasLimit));
+      }
 
-    return extractTransactionHash(output);
+      try {
+        const output = await runCast(command);
+        assertTransactionDidNotRevert(output);
+
+        return extractTransactionHash(output);
+      } catch (error) {
+        lastError = error;
+        const message = error instanceof Error ? error.message : String(error);
+        if (attempt === 0 && /nonce too low/i.test(message)) {
+          await new Promise((resolve) => setTimeout(resolve, 750));
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw lastError ?? new Error("failed to send transaction");
   }
 
   async function runCast(args) {
@@ -505,6 +520,7 @@ export function createCastRouterAdapter({
   }
 
   return {
+    routerAddress: normalizedRouterAddress,
     submitIntent,
     dispatchIntent,
     finalizeSuccess,

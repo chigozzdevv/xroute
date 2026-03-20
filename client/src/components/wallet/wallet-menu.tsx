@@ -68,6 +68,14 @@ export function WalletMenu() {
   }
 
   const connectedSessions = Object.values(sessions);
+  const evmProviderLabel =
+    evmSession?.kind === "evm" ? evmSession.providerLabel : null;
+  const evmProviderId =
+    evmSession?.kind === "evm" ? evmSession.providerId : null;
+  const substrateExtensionLabel =
+    sessions.substrate?.kind === "substrate" ? sessions.substrate.extensionLabel : null;
+  const substrateExtensionName =
+    sessions.substrate?.kind === "substrate" ? sessions.substrate.extensionName : null;
   const walletLabel = connectedSessions.length > 1
     ? `${connectedSessions.length} wallets connected`
     : account
@@ -151,7 +159,7 @@ export function WalletMenu() {
                 role="menuitem"
               >
                 {sessions.evm
-                  ? `Reconnect ${evmSession?.providerLabel ?? availableWallets.evm[0].label}`
+                  ? `Reconnect ${evmProviderLabel ?? availableWallets.evm[0].label}`
                   : `Connect ${availableWallets.evm[0].label}`}
               </button>
             ) : null}
@@ -165,7 +173,7 @@ export function WalletMenu() {
                     onClick={() => handleConnectEvmProvider(wallet.id)}
                     role="menuitem"
                   >
-                    {sessions.evm && evmSession?.providerId === wallet.id
+                    {sessions.evm && evmProviderId === wallet.id
                       ? `Reconnect ${wallet.label}`
                       : `Connect ${wallet.label}`}
                   </button>
@@ -180,7 +188,7 @@ export function WalletMenu() {
                 role="menuitem"
               >
                 {sessions.substrate
-                  ? `Reconnect ${sessions.substrate.extensionLabel || availableWallets.substrate[0].label}`
+                  ? `Reconnect ${substrateExtensionLabel || availableWallets.substrate[0].label}`
                   : `Connect ${availableWallets.substrate[0].label}`}
               </button>
             ) : null}
@@ -194,7 +202,7 @@ export function WalletMenu() {
                     onClick={() => handleConnectSubstrateExtension(wallet.id)}
                     role="menuitem"
                   >
-                    {sessions.substrate && sessions.substrate.extensionName === wallet.id
+                    {sessions.substrate && substrateExtensionName === wallet.id
                       ? `Reconnect ${wallet.label}`
                       : `Connect ${wallet.label}`}
                   </button>

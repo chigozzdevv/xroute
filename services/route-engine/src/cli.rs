@@ -115,6 +115,7 @@ fn required<'a>(options: &'a HashMap<String, String>, key: &str) -> Result<&'a s
 
 fn parse_chain(value: &str) -> Result<ChainKey, String> {
     match value {
+        "relay" | "polkadot-relay" => Ok(ChainKey::PolkadotRelay),
         "polkadot-hub" | "asset-hub" => Ok(ChainKey::PolkadotHub),
         "hydration" => Ok(ChainKey::Hydration),
         "moonbeam" => Ok(ChainKey::Moonbeam),

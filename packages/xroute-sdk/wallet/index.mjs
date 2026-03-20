@@ -19,7 +19,7 @@ export { WALLET_TYPES };
 const HOSTED_EVM_WALLET_DEFAULTS = Object.freeze({
   mainnet: Object.freeze({
     "polkadot-hub": Object.freeze({
-      routerAddress: "0xaa696e1929b0284f3a0bbc2cab2653cae6c8f7a8",
+      routerAddress: "0x2a9566d5ce6526797fb9be174b1b07db8bc30d2f",
       // Polkadot Hub route amounts use 10-decimal DOT in the route registry, while the
       // EVM execution layer exposes native gas/accounting in 18-decimal units.
       gasAssetMetadata: Object.freeze({
@@ -49,7 +49,7 @@ const HOSTED_EVM_WALLET_DEFAULTS = Object.freeze({
       }),
     }),
     moonbeam: Object.freeze({
-      routerAddress: "0x1cf06764e0d154347827ebe031efc96202375b65",
+      routerAddress: "0xe90d4bf9155d6fd843844253a647f63ed9d57a54",
       gasAssetMetadata: Object.freeze({
         asset: "GLMR",
         decimals: 18,

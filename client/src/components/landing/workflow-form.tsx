@@ -1,26 +1,25 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 
 import {
   type AssetKey,
   type ChainKey,
   type ExecuteType,
   EXAMPLE_ADAPTER_ADDRESS,
-  type FlowRequest,
-  type FlowResponse,
-  chainOptions,
+  type IntentExecutionResult,
+  type IntentStatus,
+  type IntentTimeline,
   coerceOptionValue,
   connectWalletSessionForChain,
-  createExecuteQuoteRequest,
-  createSwapQuoteRequest,
-  createTransferQuoteRequest,
+  getTransactionExplorerUrl,
+  getXRouteIntentStatus,
+  getXRouteIntentTimeline,
   getExecuteAssetOptions,
   getExecuteDestinationOptions,
   getExecuteSourceChainOptions,
   getExecuteTypeOptions,
   getSwapAssetInOptions,
-  requestXRouteFlow,
   getSwapAssetOutOptions,
   getSwapDestinationOptions,
   getSwapSettlementChainOptions,
@@ -29,7 +28,13 @@ import {
   recipientPlaceholderForChain,
   recipientLabelForChain,
   resolveWalletAccountForChain,
+  submitCallWithWallet,
+  submitSwapWithWallet,
+  submitTransferWithWallet,
   swapSourceChainOptions,
+  transferSourceChainOptions,
+  useXRouteExecution,
+  waitForXRouteIntent,
   walletMatchesChain,
 } from "@/lib/xroute";
 import {
@@ -42,8 +47,8 @@ import {
   labelClass,
   textareaClass,
 } from "./form-classes";
+import { IntentStatusCard } from "./intent-status-card";
 import { PoweredBy } from "./powered-by";
-import { TxHashLink } from "./tx-hash-link";
 import { usePersistedState } from "@/lib/persisted-state";
 import { Select } from "@/components/ui/select";
 import { useWallet } from "@/hooks/use-wallet";
@@ -96,6 +101,13 @@ type ExecuteWorkflowStep = {
 
 type WorkflowStep = TransferWorkflowStep | SwapWorkflowStep | ExecuteWorkflowStep;
 
+type WorkflowStepSnapshot = {
+  execution: IntentExecutionResult;
+  status: IntentStatus | null;
+  timeline: IntentTimeline;
+  error: string | null;
+};
+
 const WORKFLOW_ACTION_OPTIONS: readonly { value: WorkflowActionType; label: string }[] = [
   { value: "transfer", label: "Transfer" },
   { value: "swap", label: "Swap" },
@@ -114,7 +126,7 @@ function createTransferStep(): TransferWorkflowStep {
     id: createWorkflowStepId(),
     kind: "transfer",
     sourceChain: "moonbeam",
-    destinationChain: "hydration",
+    destinationChain: "polkadot-hub",
     asset: "DOT",
     amount: "25",
     recipient: "",
@@ -125,13 +137,13 @@ function createSwapStep(): SwapWorkflowStep {
   return {
     id: createWorkflowStepId(),
     kind: "swap",
-    sourceChain: "moonbeam",
+    sourceChain: "polkadot-hub",
     destinationChain: "hydration",
     assetIn: "DOT",
     assetOut: "USDT",
     amountIn: "10",
     minAmountOut: "49",
-    settlementChain: "polkadot-hub",
+    settlementChain: "hydration",
     recipient: "",
   };
 }
@@ -141,7 +153,7 @@ function createExecuteStep(): ExecuteWorkflowStep {
     id: createWorkflowStepId(),
     kind: "execute",
     executionType: "call",
-    sourceChain: "hydration",
+    sourceChain: "polkadot-hub",
     destinationChain: "moonbeam",
     maxPaymentAmount: "0.02",
     contractAddress: "0x2222222222222222222222222222222222222222",
@@ -219,31 +231,118 @@ function getWorkflowExecuteAsset(step: ExecuteWorkflowStep) {
   );
 }
 
-function buildWorkflowIntent(step: WorkflowStep, ownerAddress: string) {
-  switch (step.kind) {
-    case "transfer":
-      return createTransferQuoteRequest({
-        ...step,
-        ownerAddress,
-      });
-    case "swap":
-      return createSwapQuoteRequest({
-        ...step,
-        ownerAddress,
-      });
-    case "execute":
-      if (step.executionType !== "call") {
-        throw new Error("Only call workflow steps are currently supported.");
-      }
-
-      return createExecuteQuoteRequest({
-        ...step,
-        asset: getWorkflowExecuteAsset(step),
-        ownerAddress,
-      });
-    default:
-      throw new Error("unsupported workflow step type");
+function ExplorerArrow({
+  chainKey,
+  txHash,
+}: {
+  chainKey: ChainKey | null | undefined;
+  txHash: string | null | undefined;
+}) {
+  if (!chainKey || !txHash) {
+    return null;
   }
+
+  const href = getTransactionExplorerUrl(chainKey, txHash);
+  if (!href) {
+    return null;
+  }
+
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-line bg-white text-ink transition duration-150 hover:-translate-y-px hover:text-teal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/30 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
+      aria-label="Open in explorer"
+      title="Open in explorer"
+    >
+      <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4" fill="none">
+        <path
+          d="M6 4H12V10M11.5 4.5L4 12"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </a>
+  );
+}
+
+function workflowStepStateClasses(state: "completed" | "active" | "pending" | "failed") {
+  switch (state) {
+    case "completed":
+      return {
+        dot: "border-[#16a34a] bg-[#16a34a] text-white",
+        line: "bg-[#16a34a]/25",
+        row: "px-1 py-0.5",
+        title: "text-[#15803d]",
+        meta: "text-[#15803d]/80",
+      };
+    case "active":
+      return {
+        dot: "border-teal bg-white text-teal",
+        line: "bg-teal/18",
+        row: "rounded-[18px] border border-teal/20 bg-white px-4 py-3 shadow-[0_18px_36px_rgba(14,116,108,0.08)]",
+        title: "text-ink",
+        meta: "text-teal",
+      };
+    case "failed":
+      return {
+        dot: "border-danger bg-danger text-white",
+        line: "bg-danger/18",
+        row: "rounded-[18px] border border-danger/18 bg-[#fff6f6] px-4 py-3",
+        title: "text-ink",
+        meta: "text-danger",
+      };
+    default:
+      return {
+        dot: "border-line bg-white text-muted",
+        line: "bg-line/80",
+        row: "px-1 py-0.5",
+        title: "text-muted",
+        meta: "text-muted",
+      };
+  }
+}
+
+function WorkflowStepMarker({
+  state,
+}: {
+  state: "completed" | "active" | "pending" | "failed";
+}) {
+  const classes = workflowStepStateClasses(state);
+
+  return (
+    <span
+      className={`relative z-10 inline-flex h-6 w-6 items-center justify-center rounded-full border text-[0.7rem] font-semibold ${classes.dot}`}
+    >
+      {state === "completed" ? (
+        <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none">
+          <path
+            d="M3.5 8.5L6.5 11.5L12.5 4.5"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      ) : state === "failed" ? (
+        <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none">
+          <path
+            d="M5 5L11 11M11 5L5 11"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+          />
+        </svg>
+      ) : state === "active" ? (
+        <span className="h-2.5 w-2.5 rounded-full bg-teal" />
+      ) : (
+        <span className="h-2.5 w-2.5 rounded-full bg-line" />
+      )}
+    </span>
+  );
 }
 
 export function WorkflowForm() {
@@ -255,13 +354,129 @@ export function WorkflowForm() {
   const [openStepId, setOpenStepId] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [flowError, setFlowError] = useState<string | null>(null);
-  const [flowResult, setFlowResult] = useState<FlowResponse | null>(null);
+  const [completedSnapshots, setCompletedSnapshots] = useState<Record<string, WorkflowStepSnapshot>>({});
+  const [activeRunStepId, setActiveRunStepId] = useState<string | null>(null);
   const { sessions } = useWallet();
+  const activeExecution = useXRouteExecution();
   const isEditable = true;
   const workflowSourceChains = [...new Set(steps.map((step) => step.sourceChain))];
   const walletReady =
     workflowSourceChains.length > 0
     && workflowSourceChains.every((sourceChain) => walletMatchesChain(sessions, sourceChain));
+
+  useEffect(() => {
+    const normalizedSteps = steps.map((step) => {
+      if (step.kind === "transfer") {
+        const sourceChain =
+          coerceOptionValue(step.sourceChain, transferSourceChainOptions)
+          ?? transferSourceChainOptions[0]?.value;
+        if (!sourceChain) {
+          return step;
+        }
+        const destinationOptions = getTransferDestinationOptions(sourceChain);
+        const destinationChain =
+          coerceOptionValue(step.destinationChain, destinationOptions)
+          ?? destinationOptions[0]?.value;
+        if (!destinationChain) {
+          return step;
+        }
+        const assetOptions = getTransferAssetOptions(sourceChain, destinationChain);
+        const asset =
+          coerceOptionValue(step.asset, assetOptions)
+          ?? assetOptions[0]?.value;
+        if (!asset) {
+          return step;
+        }
+        return {
+          ...step,
+          sourceChain,
+          destinationChain,
+          asset,
+        };
+      }
+
+      if (step.kind === "swap") {
+        const sourceChain =
+          coerceOptionValue(step.sourceChain, swapSourceChainOptions)
+          ?? swapSourceChainOptions[0]?.value;
+        if (!sourceChain) {
+          return step;
+        }
+        const destinationOptions = getSwapDestinationOptions(sourceChain);
+        const destinationChain =
+          coerceOptionValue(step.destinationChain, destinationOptions)
+          ?? destinationOptions[0]?.value;
+        if (!destinationChain) {
+          return step;
+        }
+        const assetInOptions = getSwapAssetInOptions(sourceChain, destinationChain);
+        const assetIn =
+          coerceOptionValue(step.assetIn, assetInOptions)
+          ?? assetInOptions[0]?.value;
+        if (!assetIn) {
+          return step;
+        }
+        const assetOutOptions = getSwapAssetOutOptions(sourceChain, destinationChain, assetIn);
+        const assetOut =
+          coerceOptionValue(step.assetOut, assetOutOptions)
+          ?? assetOutOptions[0]?.value;
+        if (!assetOut) {
+          return step;
+        }
+        const settlementOptions = getSwapSettlementChainOptions(
+          sourceChain,
+          destinationChain,
+          assetIn,
+          assetOut,
+        );
+        const settlementChain =
+          coerceOptionValue(step.settlementChain, settlementOptions)
+          ?? settlementOptions[0]?.value;
+        if (!settlementChain) {
+          return step;
+        }
+        return {
+          ...step,
+          sourceChain,
+          destinationChain,
+          assetIn,
+          assetOut,
+          settlementChain,
+        };
+      }
+
+      const executionType =
+        coerceOptionValue(step.executionType, getExecuteTypeOptions(step.sourceChain, step.destinationChain))
+        ?? getExecuteTypeOptions(step.sourceChain, step.destinationChain)[0]?.value;
+      if (!executionType) {
+        return step;
+      }
+      const sourceChainOptions = getExecuteSourceChainOptions(executionType, step.destinationChain);
+      const sourceChain =
+        coerceOptionValue(step.sourceChain, sourceChainOptions)
+        ?? sourceChainOptions[0]?.value;
+      if (!sourceChain) {
+        return step;
+      }
+      const destinationOptions = getExecuteDestinationOptions(sourceChain, executionType);
+      const destinationChain =
+        coerceOptionValue(step.destinationChain, destinationOptions)
+        ?? destinationOptions[0]?.value;
+      if (!destinationChain) {
+        return step;
+      }
+      return {
+        ...step,
+        executionType,
+        sourceChain,
+        destinationChain,
+      };
+    });
+
+    if (JSON.stringify(normalizedSteps) !== JSON.stringify(steps)) {
+      setSteps(normalizedSteps);
+    }
+  }, [steps, setSteps]);
 
   const replaceStep = (stepId: string, nextStep: WorkflowStep) => {
     setSteps((current) =>
@@ -291,6 +506,68 @@ export function WorkflowForm() {
     setShowPicker((current) => !current);
   };
 
+  async function submitWorkflowStep(step: WorkflowStep) {
+    switch (step.kind) {
+      case "transfer": {
+        const recipient =
+          step.recipient.trim()
+          || resolveWalletAccountForChain(sessions, step.destinationChain)
+          || "";
+        if (!recipient) {
+          throw new Error(`Enter a recipient for ${workflowActionLabel(step).toLowerCase()}.`);
+        }
+
+        return submitTransferWithWallet(sessions, {
+          sourceChain: step.sourceChain,
+          destinationChain: step.destinationChain,
+          asset: step.asset,
+          amount: step.amount,
+          recipient,
+        });
+      }
+      case "swap": {
+        const recipient =
+          step.recipient.trim()
+          || resolveWalletAccountForChain(sessions, step.settlementChain)
+          || "";
+        if (!recipient) {
+          throw new Error(`Enter a recipient for ${workflowActionLabel(step).toLowerCase()}.`);
+        }
+
+        return submitSwapWithWallet(sessions, {
+          sourceChain: step.sourceChain,
+          destinationChain: step.destinationChain,
+          assetIn: step.assetIn,
+          assetOut: step.assetOut,
+          amountIn: step.amountIn,
+          minAmountOut: step.minAmountOut,
+          settlementChain: step.settlementChain,
+          recipient,
+        });
+      }
+      case "execute":
+        if (step.executionType !== "call") {
+          throw new Error("Only call workflow steps are currently supported.");
+        }
+
+        return submitCallWithWallet(sessions, {
+          sourceChain: step.sourceChain,
+          destinationChain: step.destinationChain,
+          asset: getWorkflowExecuteAsset(step),
+          executionType: step.executionType,
+          maxPaymentAmount: step.maxPaymentAmount,
+          contractAddress: step.contractAddress,
+          calldata: step.calldata,
+          value: step.value,
+          gasLimit: step.gasLimit,
+          fallbackRefTime: step.fallbackRefTime,
+          fallbackProofSize: step.fallbackProofSize,
+        });
+      default:
+        throw new Error("unsupported workflow step type");
+    }
+  }
+
   async function handleRunWorkflow() {
     if (!walletReady || workflowSourceChains.length === 0) {
       return;
@@ -298,27 +575,53 @@ export function WorkflowForm() {
 
     setIsRunning(true);
     setFlowError(null);
-    setFlowResult(null);
+    setCompletedSnapshots({});
+    setActiveRunStepId(null);
 
     try {
       for (const sourceChain of workflowSourceChains) {
         connectWalletSessionForChain(sessions, sourceChain);
       }
 
-      const result = await requestXRouteFlow({
-        steps: steps.map((step, index) => {
-          const ownerAddress = resolveWalletAccountForChain(sessions, step.sourceChain);
-          if (!ownerAddress) {
-            throw new Error(`Connect the required wallet for ${step.sourceChain} before running the workflow.`);
-          }
+      for (const [index, step] of steps.entries()) {
+        const ownerAddress = resolveWalletAccountForChain(sessions, step.sourceChain);
+        if (!ownerAddress) {
+          throw new Error(
+            `Connect the required wallet for ${step.sourceChain} before running the workflow.`,
+          );
+        }
 
-          return {
-            name: `${step.kind}-${index + 1}`,
-            intent: buildWorkflowIntent(step, ownerAddress),
-          };
-        }),
-      } as FlowRequest);
-      setFlowResult(result);
+        setActiveRunStepId(step.id);
+        const execution = await activeExecution.execute(() => submitWorkflowStep(step));
+        const finalStatus = await waitForXRouteIntent(execution.submitted.intentId);
+        const [statusSnapshot, timelineSnapshot] = await Promise.all([
+          getXRouteIntentStatus(execution.submitted.intentId),
+          getXRouteIntentTimeline(execution.submitted.intentId),
+        ]);
+        const snapshot: WorkflowStepSnapshot = {
+          execution,
+          status: statusSnapshot ?? finalStatus ?? null,
+          timeline: timelineSnapshot,
+          error: null,
+        };
+
+        setCompletedSnapshots((current) => ({
+          ...current,
+          [step.id]: snapshot,
+        }));
+
+        if (finalStatus?.status !== "settled") {
+          throw new Error(
+            `Workflow step ${index + 1} (${workflowActionLabel(step)}) ended with status ${
+              finalStatus?.status ?? "unknown"
+            }.`,
+          );
+        }
+
+        activeExecution.reset();
+      }
+
+      setActiveRunStepId(null);
     } catch (error) {
       setFlowError(error instanceof Error ? error.message : "Workflow execution failed.");
     } finally {
@@ -425,7 +728,7 @@ export function WorkflowForm() {
                               });
                             }}
                           >
-                            {chainOptions.map((option) => (
+                            {transferSourceChainOptions.map((option) => (
                               <option
                                 key={option.value}
                                 value={option.value}
@@ -1358,40 +1661,116 @@ export function WorkflowForm() {
             </div>
           ) : null}
 
-          {flowResult ? (
+          {(isRunning
+            || activeRunStepId !== null
+            || flowError !== null
+            || Object.keys(completedSnapshots).length > 0) ? (
             <div className="grid gap-3 rounded-[18px] border border-line bg-white/62 px-4 py-3.5 sm:px-5">
               <div>
                 <p className="text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-muted">
                   Workflow status
                 </p>
                 <p className="mt-1 text-lg font-extrabold tracking-[-0.04em] text-ink">
-                  {flowResult.finalStep?.finalStatus?.status ?? "Completed"}
+                  {isRunning
+                    ? "Running"
+                    : flowError
+                      ? "Failed"
+                      : steps.length > 0 && Object.keys(completedSnapshots).length === steps.length
+                        ? "Completed"
+                        : "Ready"}
                 </p>
               </div>
 
-              <div className="grid gap-2 border-t border-line/70 pt-3">
-                {flowResult.steps.map((step: FlowResponse["steps"][number]) => (
-                  <div
-                    key={`${step.name}-${step.intent.quoteId}`}
-                    className="grid gap-2 rounded-[16px] border border-line/70 bg-white/70 px-3 py-3 text-sm"
-                  >
-                    <div className="flex items-center justify-between gap-4">
-                      <span className="font-semibold capitalize tracking-tight text-ink">
-                        {step.name.replace(/-/g, " ")}
-                      </span>
-                      <span className="text-muted">{step.finalStatus.status}</span>
-                    </div>
+              <div className="grid gap-3 border-t border-line/70 pt-3">
+                {steps.map((step, index) => {
+                  const completedSnapshot = completedSnapshots[step.id] ?? null;
+                  const isActive = activeRunStepId === step.id;
+                  const state =
+                    completedSnapshot
+                      ? completedSnapshot.status?.status === "settled"
+                        ? "completed"
+                        : completedSnapshot.status?.status === "failed"
+                          ? "failed"
+                          : "completed"
+                      : isActive
+                        ? activeExecution.error || activeExecution.status?.status === "failed"
+                          ? "failed"
+                          : "active"
+                        : "pending";
+                  const classes = workflowStepStateClasses(state);
+                  const summaryStatus = completedSnapshot
+                    ? completedSnapshot.status?.status === "failed"
+                      ? "Failed"
+                      : "Completed"
+                    : isActive
+                      ? activeExecution.error
+                        ? "Failed"
+                        : activeExecution.isSubmitting
+                          ? "Submitting"
+                          : "Running"
+                      : "Pending";
+                  const summaryMeta = completedSnapshot
+                    ? null
+                    : isActive
+                      ? activeExecution.error ?? null
+                      : null;
+                  const explorerChain = completedSnapshot
+                    ? completedSnapshot.execution.intent?.sourceChain
+                    : activeExecution.execution?.intent?.sourceChain ?? null;
+                  const explorerTxHash = completedSnapshot
+                    ? completedSnapshot.execution.dispatched?.txHash
+                      ?? completedSnapshot.execution.submitted?.txHash
+                      ?? null
+                    : activeExecution.execution?.dispatched?.txHash
+                      ?? activeExecution.execution?.submitted?.txHash
+                      ?? null;
 
-                    {step.intent.sourceChain && step.dispatched?.txHash ? (
-                      <TxHashLink
-                        chainKey={step.intent.sourceChain}
-                        txHash={step.dispatched.txHash}
-                        label="Dispatch tx"
-                        compact
-                      />
-                    ) : null}
-                  </div>
-                ))}
+                  return (
+                    <div key={step.id} className="flex items-start gap-4">
+                      <div className="relative flex w-6 shrink-0 justify-center">
+                        <WorkflowStepMarker state={state} />
+                        {index < steps.length - 1 ? (
+                          <span className={`absolute left-1/2 top-6 bottom-[-1.1rem] w-px -translate-x-1/2 ${classes.line}`} />
+                        ) : null}
+                      </div>
+                      <div className={`min-w-0 flex-1 ${classes.row}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className={`m-0 text-sm font-semibold tracking-tight ${classes.title}`}>
+                              {workflowActionLabel(step)}
+                            </p>
+                            <p className={`mt-1 m-0 text-xs leading-5 ${classes.meta}`}>
+                              {summaryStatus}
+                            </p>
+                            {summaryMeta ? (
+                              <p className={`mt-1 m-0 break-words text-xs leading-5 ${classes.meta}`}>
+                                {summaryMeta}
+                              </p>
+                            ) : null}
+                          </div>
+                          <ExplorerArrow
+                            chainKey={explorerChain}
+                            txHash={explorerTxHash}
+                          />
+                        </div>
+
+                        {isActive ? (
+                          <IntentStatusCard
+                            execution={activeExecution.execution}
+                            status={activeExecution.status}
+                            timeline={activeExecution.timeline}
+                            error={activeExecution.error}
+                            isSubmitting={activeExecution.isSubmitting}
+                            isTracking={activeExecution.isTracking}
+                            showHeader={false}
+                            embedded
+                            className="mt-3"
+                          />
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ) : null}

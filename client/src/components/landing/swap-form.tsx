@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 
 import {
   actionButtonClass,
@@ -50,13 +50,13 @@ type SwapFormState = {
 
 function createInitialSwapForm(): SwapFormState {
   return {
-    sourceChain: "moonbeam",
+    sourceChain: "polkadot-hub",
     destinationChain: "hydration",
     assetIn: "DOT",
     assetOut: "USDT",
     amountIn: "10",
     slippagePercent: "1",
-    settlementChain: "polkadot-hub",
+    settlementChain: "hydration",
   };
 }
 
@@ -76,6 +76,70 @@ export function SwapForm() {
     createInitialSwapForm,
   );
   const { sessions } = useWallet();
+  useEffect(() => {
+    const sourceChain =
+      coerceOptionValue(form.sourceChain, swapSourceChainOptions)
+      ?? swapSourceChainOptions[0]?.value;
+    if (!sourceChain) {
+      return;
+    }
+    const destinationOptions = getSwapDestinationOptions(sourceChain);
+    const destinationChain =
+      coerceOptionValue(form.destinationChain, destinationOptions)
+      ?? destinationOptions[0]?.value;
+    if (!destinationChain) {
+      return;
+    }
+    const assetInOptions = getSwapAssetInOptions(sourceChain, destinationChain);
+    const assetIn =
+      coerceOptionValue(form.assetIn, assetInOptions)
+      ?? assetInOptions[0]?.value;
+    if (!assetIn) {
+      return;
+    }
+    const assetOutOptions = getSwapAssetOutOptions(sourceChain, destinationChain, assetIn);
+    const assetOut =
+      coerceOptionValue(form.assetOut, assetOutOptions)
+      ?? assetOutOptions[0]?.value;
+    if (!assetOut) {
+      return;
+    }
+    const settlementOptions = getSwapSettlementChainOptions(
+      sourceChain,
+      destinationChain,
+      assetIn,
+      assetOut,
+    );
+    const settlementChain =
+      coerceOptionValue(form.settlementChain, settlementOptions)
+      ?? settlementOptions[0]?.value;
+    if (!settlementChain) {
+      return;
+    }
+    if (
+      sourceChain !== form.sourceChain
+      || destinationChain !== form.destinationChain
+      || assetIn !== form.assetIn
+      || assetOut !== form.assetOut
+      || settlementChain !== form.settlementChain
+    ) {
+      setForm((current) => ({
+        ...current,
+        sourceChain,
+        destinationChain,
+        assetIn,
+        assetOut,
+        settlementChain,
+      }));
+    }
+  }, [
+    form.assetIn,
+    form.assetOut,
+    form.destinationChain,
+    form.settlementChain,
+    form.sourceChain,
+    setForm,
+  ]);
   const destinationOptions = useMemo(
     () => getSwapDestinationOptions(form.sourceChain),
     [form.sourceChain],
@@ -127,7 +191,22 @@ export function SwapForm() {
   const sourceWalletReady = walletMatchesChain(sessions, form.sourceChain);
   const recipientWalletReady = walletMatchesChain(sessions, form.settlementChain);
   const walletReady = sourceWalletReady && recipientWalletReady;
-  const inlineError = execution.execution ? null : execution.error ?? quoteError;
+  const hasActiveStatusCard = Boolean(
+    execution.execution
+    || execution.status
+    || execution.isSubmitting
+    || execution.isTracking,
+  );
+  const showReset =
+    Boolean(
+      hasActiveStatusCard
+      || execution.error,
+    );
+  const inlineError =
+    quoteError
+    ?? (!execution.execution && !execution.status && !execution.isTracking
+      ? execution.error
+      : null);
   const computedMinimumReceived = quote
     ? fromAssetUnits(
         form.assetOut,
@@ -419,24 +498,26 @@ export function SwapForm() {
         refreshMs={refreshMs}
       />
 
-      <div className="grid justify-items-center gap-2">
-        <button
-          type="button"
-          className={actionButtonClass}
-          onClick={handleSubmit}
-          disabled={!walletReady || !quote || execution.isSubmitting || execution.isTracking}
-        >
-          {execution.isSubmitting ? "Submitting..." : "Swap"}
-        </button>
-        {!sourceWalletReady ? (
-          <p className="m-0 text-center text-sm leading-6 text-muted">
-            {`Connect a ${walletRequirementLabel(form.sourceChain).toLowerCase()} to execute from ${chainLabel(form.sourceChain)}.`}
-          </p>
-        ) : null}
-        {inlineError ? (
-          <p className="m-0 text-center text-sm leading-6 text-danger">{inlineError}</p>
-        ) : null}
-      </div>
+      {!hasActiveStatusCard ? (
+        <div className="grid justify-items-center gap-2">
+          <button
+            type="button"
+            className={actionButtonClass}
+            onClick={handleSubmit}
+            disabled={!walletReady || !quote || execution.isSubmitting || execution.isTracking}
+          >
+            {execution.isSubmitting ? "Submitting..." : "Swap"}
+          </button>
+          {!sourceWalletReady ? (
+            <p className="m-0 text-center text-sm leading-6 text-muted">
+              {`Connect a ${walletRequirementLabel(form.sourceChain).toLowerCase()} to execute from ${chainLabel(form.sourceChain)}.`}
+            </p>
+          ) : null}
+          {inlineError ? (
+            <p className="m-0 text-center text-sm leading-6 text-danger">{inlineError}</p>
+          ) : null}
+        </div>
+      ) : null}
 
       <IntentStatusCard
         execution={execution.execution}
@@ -446,6 +527,18 @@ export function SwapForm() {
         isSubmitting={execution.isSubmitting}
         isTracking={execution.isTracking}
       />
+
+      {hasActiveStatusCard && showReset ? (
+        <div className="flex justify-center">
+          <button
+            type="button"
+            className={actionButtonClass}
+            onClick={execution.reset}
+          >
+            Run again
+          </button>
+        </div>
+      ) : null}
 
       <PoweredBy />
     </div>

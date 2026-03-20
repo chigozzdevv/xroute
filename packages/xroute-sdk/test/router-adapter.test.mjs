@@ -74,6 +74,7 @@ test("cast router adapter approves, submits, dispatches, and persists status eve
       throw new Error(`unexpected cast call: ${args.join(" ")}`);
     },
   });
+  assert.equal(adapter.routerAddress, routerAddress);
 
   const intent = createSwapIntent({
     sourceChain: "polkadot-hub",

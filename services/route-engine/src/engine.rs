@@ -685,7 +685,7 @@ fn build_multihop_transfer_instructions(
     let Some(first_hop) = path.hops.first() else {
         return Err(RouteError::ArithmeticOverflow);
     };
-    let reserve_chain = first_hop.asset.reserve_chain();
+    let reserve_chain = effective_source_reserve_chain(source_chain, first_hop.asset);
 
     if source_chain == reserve_chain {
         return Ok(vec![build_legacy_multihop_transfer_instruction(
@@ -696,9 +696,13 @@ fn build_multihop_transfer_instructions(
         )]);
     }
 
-    if path.route.get(1).copied() == Some(reserve_chain) && path.hops.len() <= 2 {
+    if path.hops.len() <= 2
+        && (path.route.get(1).copied() == Some(reserve_chain)
+            || reserve_chain == ChainKey::PolkadotRelay)
+    {
         return build_reserve_withdraw_transfer_instructions(
             &path.hops,
+            reserve_chain,
             amount,
             final_remote_instructions,
         );
@@ -714,13 +718,13 @@ fn build_multihop_transfer_instructions(
 
 fn build_reserve_withdraw_transfer_instructions(
     hops: &[crate::registry::TransferEdge],
+    reserve_chain: ChainKey,
     amount: u128,
     final_remote_instructions: Vec<XcmInstruction>,
 ) -> Result<Vec<XcmInstruction>, RouteError> {
     let Some(first_hop) = hops.first() else {
         return Err(RouteError::ArithmeticOverflow);
     };
-    let reserve_chain = first_hop.asset.reserve_chain();
     let mut reserve_remote_instructions = vec![XcmInstruction::BuyExecution {
         asset: first_hop.buy_execution_fee.asset,
         amount: first_hop.buy_execution_fee.amount,
@@ -809,6 +813,14 @@ fn build_legacy_multihop_transfer_instruction(
         destination: hop.destination,
         remote_instructions,
     }
+}
+
+fn effective_source_reserve_chain(source_chain: ChainKey, asset: AssetKey) -> ChainKey {
+    if source_chain == ChainKey::Moonbeam && asset == AssetKey::Dot {
+        return ChainKey::PolkadotRelay;
+    }
+
+    asset.reserve_chain()
 }
 
 fn quote_swap_output(route: &SwapRoute, amount_in: u128) -> Result<AssetAmount, RouteError> {

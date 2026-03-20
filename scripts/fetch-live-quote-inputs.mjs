@@ -29,10 +29,10 @@ const directTransferEdges = Object.freeze([
   { sourceChain: 'hydration', destinationChain: 'polkadot-hub', asset: 'USDT' },
   { sourceChain: 'polkadot-hub', destinationChain: 'moonbeam', asset: 'DOT' },
   { sourceChain: 'moonbeam', destinationChain: 'polkadot-hub', asset: 'DOT' },
-  { sourceChain: 'polkadot-hub', destinationChain: 'bifrost', asset: 'DOT' },
-  { sourceChain: 'bifrost', destinationChain: 'polkadot-hub', asset: 'DOT' },
-  { sourceChain: 'moonbeam', destinationChain: 'bifrost', asset: 'BNC' },
-  { sourceChain: 'bifrost', destinationChain: 'moonbeam', asset: 'BNC' },
+  { sourceChain: 'polkadot-hub', destinationChain: 'bifrost', asset: 'DOT', optionalLiveInputs: true },
+  { sourceChain: 'bifrost', destinationChain: 'polkadot-hub', asset: 'DOT', optionalLiveInputs: true },
+  { sourceChain: 'moonbeam', destinationChain: 'bifrost', asset: 'BNC', optionalLiveInputs: true },
+  { sourceChain: 'bifrost', destinationChain: 'moonbeam', asset: 'BNC', optionalLiveInputs: true },
 ]);
 const hydrationSwapSpecs = Object.freeze([
   { assetIn: 'DOT', assetOut: 'USDT', assetInId: 5, assetOutId: 10, dexFeeBps: 30 },
@@ -56,8 +56,12 @@ async function main() {
   try {
     const document = {
       generatedAt: new Date().toISOString(),
-      transferEdges: await Promise.all(directTransferEdges.map((edge) => estimateTransferEdge(edge))),
-      swapRoutes: await Promise.all(hydrationSwapSpecs.map((spec) => estimateHydrationSwapRoute(spec))),
+      transferEdges: await collectSequentially(directTransferEdges, estimateTransferEdge, (edge) =>
+        `${edge.sourceChain}->${edge.destinationChain} ${edge.asset}`,
+      ),
+      swapRoutes: await collectSequentially(hydrationSwapSpecs, estimateHydrationSwapRoute, (spec) =>
+        `${spec.assetIn}->${spec.assetOut} on hydration`,
+      ),
       executeRoutes: [],
       vdotOrders: [],
     };
@@ -89,6 +93,23 @@ async function main() {
   }
 
   process.exit(0);
+}
+
+async function collectSequentially(items, worker, label) {
+  const results = [];
+  for (const item of items) {
+    try {
+      results.push(await worker(item));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (item?.optionalLiveInputs) {
+        process.stderr.write(`skipping live quote input for ${label(item)}: ${message}\n`);
+        continue;
+      }
+      throw new Error(`${label(item)}: ${message}`);
+    }
+  }
+  return results;
 }
 
 async function estimateTransferEdge({ sourceChain, destinationChain, asset }) {

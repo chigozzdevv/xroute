@@ -34,6 +34,7 @@ test("executor relayer authenticates and dispatches a queued job", async () => {
       XROUTE_RELAYER_AUTH_TOKEN: "secret-token",
       XROUTE_HUB_RPC_URL: anvil.rpcUrl,
       XROUTE_HUB_PRIVATE_KEY: anvil.privateKey,
+      XROUTE_HYDRATION_RPC_URL: anvil.rpcUrl,
       XROUTE_ROUTER_ADDRESS: hubRouterAddress,
       XROUTE_RELAYER_JOB_STORE_PATH: join(tempDir, "jobs.json"),
       XROUTE_STATUS_EVENTS_PATH: join(tempDir, "events.ndjson"),
@@ -227,6 +228,7 @@ test("executor relayer routes moonbeam-origin dispatch and failure jobs through 
   const tempDir = mkdtempSync(join(tmpdir(), "xroute-relayer-moonbeam-"));
   const hubAnvil = await spawnAnvil();
   const moonbeamAnvil = await spawnAnvil();
+  const submittedMoonbeamRouterAddress = "0x4444444444444444444444444444444444444444";
   const service = await spawnRustService({
     packageName: "executor-relayer",
     cwd: workspaceRoot,
@@ -235,6 +237,7 @@ test("executor relayer routes moonbeam-origin dispatch and failure jobs through 
       XROUTE_RELAYER_AUTH_TOKEN: "secret-token",
       XROUTE_HUB_RPC_URL: hubAnvil.rpcUrl,
       XROUTE_HUB_PRIVATE_KEY: hubAnvil.privateKey,
+      XROUTE_HYDRATION_RPC_URL: hubAnvil.rpcUrl,
       XROUTE_ROUTER_ADDRESS: hubRouterAddress,
       XROUTE_MOONBEAM_RPC_URL: moonbeamAnvil.rpcUrl,
       XROUTE_MOONBEAM_PRIVATE_KEY: moonbeamAnvil.privateKey,
@@ -278,6 +281,7 @@ test("executor relayer routes moonbeam-origin dispatch and failure jobs through 
       intentId: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       intent,
       quote,
+      routerAddress: submittedMoonbeamRouterAddress,
     });
     const dispatched = await waitForJob({
       relayer,
@@ -285,10 +289,11 @@ test("executor relayer routes moonbeam-origin dispatch and failure jobs through 
     });
     assert.equal(dispatched.status, "completed");
     assert.equal(dispatched.result.sourceChain, "moonbeam");
+    assert.equal(dispatched.result.routerAddress, submittedMoonbeamRouterAddress);
     assert.equal(dispatched.result.targetAddress, moonbeamBatchPrecompileAddress);
     assert.equal(dispatched.result.xcmAddress, moonbeamXcmPrecompileAddress);
     assert.equal(dispatched.result.destinationChain, "hydration");
-    assert.equal(dispatched.result.remoteReserveChain, "polkadot-hub");
+    assert.equal(dispatched.result.remoteReserveChain, "polkadot-relay");
 
     const moonbeamDispatchTx = await getTransactionByHash(moonbeamAnvil.rpcUrl, dispatched.result.txHash);
     const hubDispatchTx = await getTransactionByHash(hubAnvil.rpcUrl, dispatched.result.txHash);
@@ -306,11 +311,11 @@ test("executor relayer routes moonbeam-origin dispatch and failure jobs through 
     });
     assert.equal(failedIntent.status, "completed");
     assert.equal(failedIntent.result.sourceChain, "moonbeam");
-    assert.equal(failedIntent.result.routerAddress, moonbeamRouterAddress);
+    assert.equal(failedIntent.result.routerAddress, submittedMoonbeamRouterAddress);
 
     const moonbeamFailureTx = await getTransactionByHash(moonbeamAnvil.rpcUrl, failedIntent.result.txHash);
     const hubFailureTx = await getTransactionByHash(hubAnvil.rpcUrl, failedIntent.result.txHash);
-    assert.equal(moonbeamFailureTx?.to?.toLowerCase(), moonbeamRouterAddress);
+    assert.equal(moonbeamFailureTx?.to?.toLowerCase(), submittedMoonbeamRouterAddress);
     assert.equal(hubFailureTx, null);
   } finally {
     await service.close();
@@ -324,6 +329,7 @@ test("executor relayer completes moonbeam-origin settle and refund lifecycles", 
   const tempDir = mkdtempSync(join(tmpdir(), "xroute-relayer-moonbeam-lifecycle-"));
   const hubAnvil = await spawnAnvil();
   const moonbeamAnvil = await spawnAnvil();
+  const submittedMoonbeamRouterAddress = "0x4444444444444444444444444444444444444444";
   const service = await spawnRustService({
     packageName: "executor-relayer",
     cwd: workspaceRoot,
@@ -332,6 +338,7 @@ test("executor relayer completes moonbeam-origin settle and refund lifecycles", 
       XROUTE_RELAYER_AUTH_TOKEN: "secret-token",
       XROUTE_HUB_RPC_URL: hubAnvil.rpcUrl,
       XROUTE_HUB_PRIVATE_KEY: hubAnvil.privateKey,
+      XROUTE_HYDRATION_RPC_URL: hubAnvil.rpcUrl,
       XROUTE_ROUTER_ADDRESS: hubRouterAddress,
       XROUTE_MOONBEAM_RPC_URL: moonbeamAnvil.rpcUrl,
       XROUTE_MOONBEAM_PRIVATE_KEY: moonbeamAnvil.privateKey,
@@ -377,6 +384,7 @@ test("executor relayer completes moonbeam-origin settle and refund lifecycles", 
       intentId: settledIntentId,
       intent,
       quote,
+      routerAddress: submittedMoonbeamRouterAddress,
     });
     const settledDispatch = await waitForJob({
       relayer,
@@ -384,6 +392,7 @@ test("executor relayer completes moonbeam-origin settle and refund lifecycles", 
     });
     assert.equal(settledDispatch.status, "completed");
     assert.equal(settledDispatch.result.sourceChain, "moonbeam");
+    assert.equal(settledDispatch.result.routerAddress, submittedMoonbeamRouterAddress);
     assert.equal(settledDispatch.result.targetAddress, moonbeamBatchPrecompileAddress);
     assert.equal(settledDispatch.result.xcmAddress, moonbeamXcmPrecompileAddress);
 
@@ -404,13 +413,15 @@ test("executor relayer completes moonbeam-origin settle and refund lifecycles", 
     });
     assert.equal(settled.status, "completed");
     assert.equal(settled.result.sourceChain, "moonbeam");
-    assert.equal(settled.result.routerAddress, moonbeamRouterAddress);
+    assert.equal(settled.result.routerAddress, submittedMoonbeamRouterAddress);
+    assert.equal(settled.result.settlementStrategy, "external-success");
 
     // dispatch + fail + refund lifecycle
     const queuedFailedDispatch = await relayer.dispatch({
       intentId: failedIntentId,
       intent,
       quote,
+      routerAddress: submittedMoonbeamRouterAddress,
     });
     const failedDispatch = await waitForJob({
       relayer,
@@ -432,7 +443,7 @@ test("executor relayer completes moonbeam-origin settle and refund lifecycles", 
     });
     assert.equal(failed.status, "completed");
     assert.equal(failed.result.sourceChain, "moonbeam");
-    assert.equal(failed.result.routerAddress, moonbeamRouterAddress);
+    assert.equal(failed.result.routerAddress, submittedMoonbeamRouterAddress);
 
     const queuedRefund = await relayer.refund({
       intentId: failedIntentId,
@@ -447,7 +458,7 @@ test("executor relayer completes moonbeam-origin settle and refund lifecycles", 
     });
     assert.equal(refunded.status, "completed");
     assert.equal(refunded.result.sourceChain, "moonbeam");
-    assert.equal(refunded.result.routerAddress, moonbeamRouterAddress);
+    assert.equal(refunded.result.routerAddress, submittedMoonbeamRouterAddress);
   } finally {
     await service.close();
     await moonbeamAnvil.close();
@@ -571,7 +582,7 @@ test("executor relayer rejects moonbeam dispatch requests without source metadat
         moonbeamDispatch: {
           asset: "DOT",
           destinationChain: "hydration",
-          remoteReserveChain: "polkadot-hub",
+          remoteReserveChain: "polkadot-relay",
           customXcmOnDest: "0x1234",
         },
       }),

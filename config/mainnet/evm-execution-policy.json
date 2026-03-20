@@ -1,7 +1,16 @@
 {
   "moonbeam": {
     "call": {
-      "allowedContracts": []
+      "allowedContracts": [
+        {
+          "address": "0xb80d44181941f6993ecb0378dd29b301dc3d85ca",
+          "selectors": ["0x4662d1dd"],
+          "maxValue": "0",
+          "maxGasLimit": 250000,
+          "maxPaymentAmount": "500000000",
+          "note": "XRoute Moonbeam guestbook demo"
+        }
+      ]
     }
   }
 }

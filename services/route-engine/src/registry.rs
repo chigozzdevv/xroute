@@ -407,7 +407,15 @@ fn transfer_path_from_hops(
 ) -> TransferPath {
     let xcm_fee = hops
         .iter()
-        .map(|hop| hop.transport_fee.amount)
+        .enumerate()
+        .map(|(index, hop)| {
+            hop.transport_fee.amount
+                + if index + 1 < hops.len() {
+                    hop.buy_execution_fee.amount
+                } else {
+                    0
+                }
+        })
         .sum::<u128>();
     let destination_fee = hops
         .last()

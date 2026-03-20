@@ -73,8 +73,8 @@ contract XRouteHubRouterTest is TestBase {
         intent = router.getIntent(intentId);
 
         assertEq(uint256(intent.status), uint256(XRouteHubRouter.IntentStatus.Dispatched));
-        assertEq(token.balanceOf(TREASURY), 1_000_000_000);
-        assertEq(token.balanceOf(address(router)), lockedAmount - 1_000_000_000);
+        assertEq(token.balanceOf(TREASURY), 0);
+        assertEq(token.balanceOf(address(router)), lockedAmount);
         assertEq(xcm.executeCount(), 1);
         assertEq(xcm.lastExecutedMessage(), message);
     }
@@ -107,8 +107,8 @@ contract XRouteHubRouterTest is TestBase {
 
         XRouteHubRouter.IntentRecord memory intent = router.getIntent(intentId);
         assertEq(uint256(intent.status), uint256(XRouteHubRouter.IntentStatus.Dispatched));
-        assertEq(TREASURY.balance, 250_000_000);
-        assertEq(address(router).balance, lockedAmount - 250_000_000);
+        assertEq(TREASURY.balance, 0);
+        assertEq(address(router).balance, lockedAmount);
     }
 
     function test_finalize_external_success_reimburses_executor_from_escrow() public {
@@ -140,6 +140,40 @@ contract XRouteHubRouterTest is TestBase {
         assertEq(intent.outcomeReference, keccak256("source-xcm"));
         assertEq(intent.resultAssetId, keccak256("DOT"));
         assertEq(intent.resultAmount, 25 * 10 ** 10);
+        assertEq(EXECUTOR.balance, 25 * 10 ** 10 + 100_000_000 + 20_000_000);
+        assertEq(TREASURY.balance, 250_000_000);
+        assertEq(address(router).balance, 0);
+    }
+
+    function test_finalize_external_success_reimburses_executor_after_dispatch_without_xcm() public {
+        bytes memory message = hex"050c000401000003";
+        bytes32 executionHash = _executionHash(XRouteHubRouter.DispatchMode.Execute, "", message);
+        XRouteHubRouter.IntentRequest memory request = XRouteHubRouter.IntentRequest({
+            actionType: XRouteHubRouter.ActionType.Transfer,
+            asset: address(0),
+            refundAddress: REFUND_RECIPIENT,
+            amount: 25 * 10 ** 10,
+            xcmFee: 100_000_000,
+            destinationFee: 20_000_000,
+            minOutputAmount: 25 * 10 ** 10,
+            deadline: uint64(block.timestamp + 1 days),
+            executionHash: executionHash
+        });
+
+        uint256 lockedAmount = router.previewLockedAmount(request);
+        vm.deal(ALICE, lockedAmount);
+
+        vm.prank(ALICE);
+        bytes32 intentId = router.submitIntent{value: lockedAmount}(request);
+
+        vm.prank(EXECUTOR);
+        router.dispatchIntentWithoutXcm(intentId, _dispatchRequest(XRouteHubRouter.DispatchMode.Execute, "", message), 500_000);
+
+        vm.prank(EXECUTOR);
+        router.finalizeExternalSuccess(intentId, keccak256("source-xcm"), keccak256("DOT"), 25 * 10 ** 10);
+
+        XRouteHubRouter.IntentRecord memory intent = router.getIntent(intentId);
+        assertEq(uint256(intent.status), uint256(XRouteHubRouter.IntentStatus.Settled));
         assertEq(EXECUTOR.balance, 25 * 10 ** 10 + 100_000_000 + 20_000_000);
         assertEq(TREASURY.balance, 250_000_000);
         assertEq(address(router).balance, 0);
@@ -177,7 +211,8 @@ contract XRouteHubRouterTest is TestBase {
 
         intent = router.getIntent(intentId);
         assertEq(uint256(intent.status), uint256(XRouteHubRouter.IntentStatus.Dispatched));
-        assertEq(token.balanceOf(TREASURY), 90_000);
+        assertEq(token.balanceOf(TREASURY), 0);
+        assertEq(token.balanceOf(address(router)), lockedAmount);
         assertEq(xcm.executeCount(), 1);
         assertEq(xcm.lastExecutedMessage(), message);
     }
@@ -368,6 +403,7 @@ contract XRouteHubRouterTest is TestBase {
         assertEq(intent.resultAmount, 493_515_000);
         assertEq(intent.failureReasonHash, bytes32(0));
         assertEq(router.previewRefundableAmount(intentId), 0);
+        assertEq(token.balanceOf(TREASURY), 1_000_000_000);
 
         vm.prank(EXECUTOR);
         vm.expectRevert(XRouteHubRouter.InvalidIntentStatus.selector);
@@ -387,18 +423,18 @@ contract XRouteHubRouterTest is TestBase {
         assertEq(uint256(failedIntent.status), uint256(XRouteHubRouter.IntentStatus.Failed));
         assertEq(failedIntent.outcomeReference, outcomeReference);
         assertEq(failedIntent.failureReasonHash, failureReasonHash);
-        assertEq(router.previewRefundableAmount(intentId), 1_000_250_000_000);
+        assertEq(router.previewRefundableAmount(intentId), 1_001_250_000_000);
 
         vm.prank(EXECUTOR);
-        router.refundFailedIntent(intentId, 1_000_250_000_000);
+        router.refundFailedIntent(intentId, 1_001_250_000_000);
 
         XRouteHubRouter.IntentRecord memory refundedIntent = router.getIntent(intentId);
         assertEq(uint256(refundedIntent.status), uint256(XRouteHubRouter.IntentStatus.Refunded));
-        assertEq(refundedIntent.refundAmount, 1_000_250_000_000);
+        assertEq(refundedIntent.refundAmount, 1_001_250_000_000);
         assertEq(token.balanceOf(ALICE), 20_000_000_000_000 - 1_001_250_000_000);
-        assertEq(token.balanceOf(REFUND_RECIPIENT), 1_000_250_000_000);
+        assertEq(token.balanceOf(REFUND_RECIPIENT), 1_001_250_000_000);
         assertEq(token.balanceOf(address(router)), 0);
-        assertEq(token.balanceOf(TREASURY), 1_000_000_000);
+        assertEq(token.balanceOf(TREASURY), 0);
     }
 
     function test_finalize_success_reverts_below_min_output() public {
@@ -419,7 +455,7 @@ contract XRouteHubRouterTest is TestBase {
 
         vm.prank(EXECUTOR);
         vm.expectRevert(XRouteHubRouter.InvalidRefundAmount.selector);
-        router.refundFailedIntent(intentId, 1_000_250_000_001);
+        router.refundFailedIntent(intentId, 1_001_250_000_001);
     }
 
     function test_refund_reverts_for_partial_refund_amount() public {
@@ -431,7 +467,7 @@ contract XRouteHubRouterTest is TestBase {
 
         vm.prank(EXECUTOR);
         vm.expectRevert(XRouteHubRouter.InvalidRefundAmount.selector);
-        router.refundFailedIntent(intentId, 1_000_249_999_999);
+        router.refundFailedIntent(intentId, 1_001_249_999_999);
     }
 
     function _submitAndDispatchSwap(bytes memory message) internal returns (bytes32 intentId) {

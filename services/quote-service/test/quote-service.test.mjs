@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -131,6 +131,22 @@ test("quote service enforces moonbeam evm execution policy", async () => {
     await service.close();
     fixture.cleanup();
   }
+});
+
+test("mainnet execution policy allowlists the Moonbeam execute demo contract", () => {
+  const policy = JSON.parse(
+    readFileSync(join(workspaceRoot, "config/mainnet/evm-execution-policy.json"), "utf8"),
+  );
+  const entry = policy.moonbeam.call.allowedContracts.find(
+    (contract) =>
+      contract.address.toLowerCase() === "0xb80d44181941f6993ecb0378dd29b301dc3d85ca",
+  );
+
+  assert.ok(entry, "demo contract must be present in the mainnet execution policy");
+  assert.ok(entry.selectors.includes("0x4662d1dd"));
+  assert.equal(entry.maxValue, "0");
+  assert.equal(entry.maxGasLimit, 250000);
+  assert.equal(entry.maxPaymentAmount, "500000000");
 });
 
 test("quote service accepts substrate refund identities for hydration-source quotes", async () => {

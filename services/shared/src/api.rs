@@ -49,6 +49,11 @@ pub struct SourceIntentMetadata {
     pub refund_asset: String,
     pub refundable_amount: String,
     pub min_output_amount: String,
+    pub settlement_chain: Option<String>,
+    pub settlement_asset: Option<String>,
+    pub settlement_recipient: Option<String>,
+    pub minimum_settlement_amount: Option<String>,
+    pub router_address: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -777,6 +782,7 @@ fn asset_amount_to_json_value(amount: &AssetAmount) -> Value {
 
 fn parse_chain(value: &str) -> Result<ChainKey, String> {
     match value.trim() {
+        "relay" | "polkadot-relay" => Ok(ChainKey::PolkadotRelay),
         "polkadot-hub" | "asset-hub" => Ok(ChainKey::PolkadotHub),
         "hydration" => Ok(ChainKey::Hydration),
         "bifrost" => Ok(ChainKey::Bifrost),
@@ -815,6 +821,30 @@ fn normalize_source_intent_metadata(
         .to_string(),
         min_output_amount: parse_u128(&metadata.min_output_amount, "sourceIntent.minOutputAmount")?
             .to_string(),
+        settlement_chain: metadata
+            .settlement_chain
+            .map(|value| parse_chain(&value).map(|chain| chain.as_str().to_owned()))
+            .transpose()?,
+        settlement_asset: metadata
+            .settlement_asset
+            .map(|value| parse_asset(&value).map(|asset| asset.symbol().to_owned()))
+            .transpose()?,
+        settlement_recipient: metadata
+            .settlement_recipient
+            .map(|value| require_non_empty(&value, "sourceIntent.settlementRecipient"))
+            .transpose()?,
+        minimum_settlement_amount: metadata
+            .minimum_settlement_amount
+            .map(|value| {
+                parse_u128(&value, "sourceIntent.minimumSettlementAmount")
+                    .map(|amount| amount.to_string())
+            })
+            .transpose()?,
+        router_address: metadata
+            .router_address
+            .as_deref()
+            .map(|value| normalize_address(value, "sourceIntent.routerAddress"))
+            .transpose()?,
     })
 }
 
@@ -902,7 +932,7 @@ fn normalize_refund_address(
 ) -> Result<String, String> {
     match source_chain {
         ChainKey::Moonbeam => normalize_address(value, name),
-        ChainKey::PolkadotHub | ChainKey::Hydration | ChainKey::Bifrost => {
+        ChainKey::PolkadotRelay | ChainKey::PolkadotHub | ChainKey::Hydration | ChainKey::Bifrost => {
             require_non_empty(value, name)
         }
     }

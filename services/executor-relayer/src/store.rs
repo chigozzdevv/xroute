@@ -9,7 +9,7 @@ use xroute_service_shared::{
     WireIntent,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum JobType {
     Dispatch,
@@ -27,7 +27,7 @@ pub enum JobStatus {
     Failed,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum SourceIntentStatus {
     Submitted,
@@ -93,6 +93,12 @@ pub struct SourceIntentRecord {
     pub refund_asset: String,
     pub refundable_amount: String,
     pub min_output_amount: String,
+    pub settlement_chain: Option<String>,
+    pub settlement_asset: Option<String>,
+    pub settlement_recipient: Option<String>,
+    pub minimum_settlement_amount: Option<String>,
+    pub settlement_balance_before: Option<String>,
+    pub router_address: Option<String>,
     pub status: SourceIntentStatus,
     pub dispatch_tx_hash: Option<String>,
     pub dispatch_strategy: Option<String>,
@@ -184,6 +190,28 @@ impl JobStore {
             .cloned()
     }
 
+    pub async fn list_source_intents(&self) -> Vec<SourceIntentRecord> {
+        self.snapshot
+            .lock()
+            .await
+            .source_intents
+            .values()
+            .cloned()
+            .collect()
+    }
+
+    pub async fn has_job_for_intent_type(&self, job_type: JobType, intent_id: &str) -> bool {
+        self.snapshot.lock().await.jobs.values().any(|job| {
+            job.job_type == job_type
+                && match &job.payload {
+                    JobPayload::Dispatch { intent_id: job_intent_id, .. }
+                    | JobPayload::Settle { intent_id: job_intent_id, .. }
+                    | JobPayload::Fail { intent_id: job_intent_id, .. }
+                    | JobPayload::Refund { intent_id: job_intent_id, .. } => job_intent_id == intent_id,
+                }
+        })
+    }
+
     pub async fn upsert(&self, job: Job) -> Result<Job, String> {
         let mut snapshot = self.snapshot.lock().await;
         snapshot.jobs.insert(job.id.clone(), job.clone());
@@ -208,6 +236,12 @@ impl JobStore {
                     record.refund_asset = metadata.refund_asset.clone();
                     record.refundable_amount = metadata.refundable_amount.clone();
                     record.min_output_amount = metadata.min_output_amount.clone();
+                    record.settlement_chain = metadata.settlement_chain.clone();
+                    record.settlement_asset = metadata.settlement_asset.clone();
+                    record.settlement_recipient = metadata.settlement_recipient.clone();
+                    record.minimum_settlement_amount = metadata.minimum_settlement_amount.clone();
+                    record.settlement_balance_before = None;
+                    record.router_address = metadata.router_address.clone();
                     record
                 }
                 None => SourceIntentRecord {
@@ -217,6 +251,12 @@ impl JobStore {
                     refund_asset: metadata.refund_asset.clone(),
                     refundable_amount: metadata.refundable_amount.clone(),
                     min_output_amount: metadata.min_output_amount.clone(),
+                    settlement_chain: metadata.settlement_chain.clone(),
+                    settlement_asset: metadata.settlement_asset.clone(),
+                    settlement_recipient: metadata.settlement_recipient.clone(),
+                    minimum_settlement_amount: metadata.minimum_settlement_amount.clone(),
+                    settlement_balance_before: None,
+                    router_address: metadata.router_address.clone(),
                     status: SourceIntentStatus::Submitted,
                     dispatch_tx_hash: None,
                     dispatch_strategy: None,
@@ -235,6 +275,7 @@ impl JobStore {
         &self,
         intent_id: &str,
         dispatch: Option<&SourceDispatchMetadata>,
+        settlement_balance_before: Option<&str>,
     ) -> Result<(), String> {
         let mut snapshot = self.snapshot.lock().await;
         let record = snapshot
@@ -244,6 +285,7 @@ impl JobStore {
         record.status = SourceIntentStatus::Dispatched;
         record.dispatch_tx_hash = dispatch.map(|value| value.tx_hash.clone());
         record.dispatch_strategy = dispatch.and_then(|value| value.strategy.clone());
+        record.settlement_balance_before = settlement_balance_before.map(str::to_owned);
         persist_snapshot(&self.path, &snapshot)
     }
 

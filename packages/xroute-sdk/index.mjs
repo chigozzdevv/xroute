@@ -457,6 +457,10 @@ function createRelayerAwareRouterAdapter({ walletConnector, relayer }) {
       trackedDispatches.set(assertNonEmptyString("intentId", submitted.intentId), {
         intent: input.intent,
         quote: input.quote,
+        routerAddress:
+          typeof walletRouterAdapter.routerAddress === "string"
+            ? walletRouterAdapter.routerAddress
+            : null,
         dispatchResult: null,
         registrationResult: null,
       });
@@ -478,6 +482,7 @@ function createRelayerAwareRouterAdapter({ walletConnector, relayer }) {
             intent: state.intent,
             quote: state.quote,
             request,
+            routerAddress: state.routerAddress ?? undefined,
           });
         }
 
@@ -502,6 +507,7 @@ function createRelayerAwareRouterAdapter({ walletConnector, relayer }) {
           quote: state.quote,
           request,
           dispatchResult,
+          routerAddress: state.routerAddress ?? undefined,
         });
       }
 

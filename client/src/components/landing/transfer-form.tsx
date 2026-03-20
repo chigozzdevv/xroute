@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 
 import {
   actionButtonClass,
@@ -20,7 +20,6 @@ import {
   canParseAssetUnits,
   chainLabel,
   type ChainKey,
-  chainOptions,
   coerceOptionValue,
   createTransferQuoteRequest,
   getTransferAssetOptions,
@@ -29,6 +28,7 @@ import {
   recipientLabelForChain,
   resolveWalletAccountForChain,
   submitTransferWithWallet,
+  transferSourceChainOptions,
   useXRouteQuote,
   useXRouteExecution,
   walletMatchesChain,
@@ -48,7 +48,7 @@ type TransferFormState = {
 function createInitialTransferForm(): TransferFormState {
   return {
     sourceChain: "moonbeam",
-    destinationChain: "hydration",
+    destinationChain: "polkadot-hub",
     asset: "DOT",
     amount: "25",
     recipient: "",
@@ -65,6 +65,40 @@ export function TransferForm() {
     createInitialTransferForm,
   );
   const { sessions } = useWallet();
+  useEffect(() => {
+    const sourceChain =
+      coerceOptionValue(form.sourceChain, transferSourceChainOptions)
+      ?? transferSourceChainOptions[0]?.value;
+    if (!sourceChain) {
+      return;
+    }
+    const destinationOptions = getTransferDestinationOptions(sourceChain);
+    const destinationChain =
+      coerceOptionValue(form.destinationChain, destinationOptions)
+      ?? destinationOptions[0]?.value;
+    if (!destinationChain) {
+      return;
+    }
+    const assetOptions = getTransferAssetOptions(sourceChain, destinationChain);
+    const asset =
+      coerceOptionValue(form.asset, assetOptions)
+      ?? assetOptions[0]?.value;
+    if (!asset) {
+      return;
+    }
+    if (
+      sourceChain !== form.sourceChain
+      || destinationChain !== form.destinationChain
+      || asset !== form.asset
+    ) {
+      setForm((current) => ({
+        ...current,
+        sourceChain,
+        destinationChain,
+        asset,
+      }));
+    }
+  }, [form.asset, form.destinationChain, form.sourceChain, setForm]);
   const destinationOptions = getTransferDestinationOptions(form.sourceChain);
   const assetOptions = getTransferAssetOptions(form.sourceChain, form.destinationChain);
   const ownerAddress = resolveWalletAccountForChain(sessions, form.sourceChain) ?? undefined;
@@ -96,7 +130,22 @@ export function TransferForm() {
   } = useXRouteQuote(quoteRequest);
   const execution = useXRouteExecution();
   const walletReady = walletMatchesChain(sessions, form.sourceChain);
-  const inlineError = execution.execution ? null : execution.error ?? quoteError;
+  const hasActiveStatusCard = Boolean(
+    execution.execution
+    || execution.status
+    || execution.isSubmitting
+    || execution.isTracking,
+  );
+  const showReset =
+    Boolean(
+      hasActiveStatusCard
+      || execution.error,
+    );
+  const inlineError =
+    quoteError
+    ?? (!execution.execution && !execution.status && !execution.isTracking
+      ? execution.error
+      : null);
 
   async function handleSubmit() {
     if (!walletReady) {
@@ -142,7 +191,7 @@ export function TransferForm() {
                   })
                 }
               >
-                {chainOptions.map((option) => (
+                {transferSourceChainOptions.map((option) => (
                   <option
                     key={option.value}
                     value={option.value}
@@ -253,30 +302,32 @@ export function TransferForm() {
         refreshMs={refreshMs}
       />
 
-      <div className="grid justify-items-center gap-2">
-        <button
-          type="button"
-          className={actionButtonClass}
-          onClick={handleSubmit}
-          disabled={
-            !walletReady
-            || !recipientReady
-            || !quote
-            || execution.isSubmitting
-            || execution.isTracking
-          }
-        >
-          {execution.isSubmitting ? "Submitting..." : "Transfer"}
-        </button>
-        {!walletReady ? (
-          <p className="m-0 text-center text-sm leading-6 text-muted">
-            {`Connect a ${walletRequirementLabel(form.sourceChain).toLowerCase()} to execute from ${chainLabel(form.sourceChain)}.`}
-          </p>
-        ) : null}
-        {inlineError ? (
-          <p className="m-0 text-center text-sm leading-6 text-danger">{inlineError}</p>
-        ) : null}
-      </div>
+      {!hasActiveStatusCard ? (
+        <div className="grid justify-items-center gap-2">
+          <button
+            type="button"
+            className={actionButtonClass}
+            onClick={handleSubmit}
+            disabled={
+              !walletReady
+              || !recipientReady
+              || !quote
+              || execution.isSubmitting
+              || execution.isTracking
+            }
+          >
+            {execution.isSubmitting ? "Submitting..." : "Transfer"}
+          </button>
+          {!walletReady ? (
+            <p className="m-0 text-center text-sm leading-6 text-muted">
+              {`Connect a ${walletRequirementLabel(form.sourceChain).toLowerCase()} to execute from ${chainLabel(form.sourceChain)}.`}
+            </p>
+          ) : null}
+          {inlineError ? (
+            <p className="m-0 text-center text-sm leading-6 text-danger">{inlineError}</p>
+          ) : null}
+        </div>
+      ) : null}
 
       <IntentStatusCard
         execution={execution.execution}
@@ -286,6 +337,18 @@ export function TransferForm() {
         isSubmitting={execution.isSubmitting}
         isTracking={execution.isTracking}
       />
+
+      {hasActiveStatusCard && showReset ? (
+        <div className="flex justify-center">
+          <button
+            type="button"
+            className={actionButtonClass}
+            onClick={execution.reset}
+          >
+            Run again
+          </button>
+        </div>
+      ) : null}
 
       <PoweredBy />
     </div>

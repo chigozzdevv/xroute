@@ -3,6 +3,7 @@ use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ChainKey {
+    PolkadotRelay,
     PolkadotHub,
     Hydration,
     Moonbeam,
@@ -12,6 +13,7 @@ pub enum ChainKey {
 impl ChainKey {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::PolkadotRelay => "polkadot-relay",
             Self::PolkadotHub => "polkadot-hub",
             Self::Hydration => "hydration",
             Self::Moonbeam => "moonbeam",
@@ -31,6 +33,7 @@ impl FromStr for ChainKey {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value.trim() {
+            "relay" | "polkadot-relay" => Ok(Self::PolkadotRelay),
             "polkadot-hub" | "asset-hub" => Ok(Self::PolkadotHub),
             "hydration" => Ok(Self::Hydration),
             "moonbeam" => Ok(Self::Moonbeam),

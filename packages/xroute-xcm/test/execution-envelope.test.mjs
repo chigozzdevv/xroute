@@ -69,9 +69,11 @@ test("buildExecutionEnvelope encodes a reserve-withdraw multihop transfer from m
 
   assert.equal(decoded.value[1].type, "WithdrawAsset");
   assert.equal(reserveWithdraw.type, "InitiateReserveWithdraw");
-  assert.equal(reserveWithdraw.value.reserve.interior.type, "X1");
+  assert.equal(reserveWithdraw.value.reserve.interior.type, "Here");
   assert.equal(reserveWithdraw.value.xcm[0].type, "BuyExecution");
   assert.equal(reserveDelivery.type, "DepositReserveAsset");
+  assert.equal(reserveDelivery.value.dest.parents, 0);
+  assert.equal(reserveDelivery.value.dest.interior.type, "X1");
   assert.equal(reserveDelivery.value.xcm[0].type, "BuyExecution");
   assert.equal(reserveDelivery.value.xcm[1].type, "DepositAsset");
 });
@@ -196,6 +198,7 @@ test("buildExecutionEnvelope encodes a reserve-withdraw multihop swap with hub s
   assert.equal(decoded.value[1].type, "WithdrawAsset");
   assert.equal(reserveWithdraw.type, "InitiateReserveWithdraw");
   assert.equal(reserveDelivery.type, "DepositReserveAsset");
+  assert.equal(reserveDelivery.value.dest.parents, 0);
   assert.equal(destinationInstructions[1].type, "ExchangeAsset");
   assert.equal(destinationInstructions[2].type, "InitiateReserveWithdraw");
   assert.equal(destinationInstructions[2].value.xcm[0].type, "BuyExecution");
@@ -323,7 +326,7 @@ function finalRemoteInstructions(decoded) {
   return nestedTransfer ? nestedTransfer.value.xcm : outerInstruction.value.xcm;
 }
 
-test("buildMoonbeamDispatchMetadata derives destination-side custom XCM for moonbeam to hydration transfers", async () => {
+test("buildMoonbeamDispatchMetadata derives reserve-side custom XCM for moonbeam to hydration transfers", async () => {
   const intent = createTransferIntent({
     sourceChain: "moonbeam",
     destinationChain: "hydration",
@@ -344,13 +347,13 @@ test("buildMoonbeamDispatchMetadata derives destination-side custom XCM for moon
 
   assert.equal(moonbeamDispatch.asset, "DOT");
   assert.equal(moonbeamDispatch.destinationChain, "hydration");
-  assert.equal(moonbeamDispatch.remoteReserveChain, "polkadot-hub");
+  assert.equal(moonbeamDispatch.remoteReserveChain, "polkadot-relay");
   assert.equal(decoded.type, "V5");
   assert.equal(decoded.value[0].type, "BuyExecution");
   assert.equal(decoded.value[1].type, "DepositAsset");
 });
 
-test("buildMoonbeamDispatchMetadata derives destination-side custom XCM for moonbeam swaps", async () => {
+test("buildMoonbeamDispatchMetadata derives reserve-side custom XCM for moonbeam swaps", async () => {
   const intent = createSwapIntent({
     sourceChain: "moonbeam",
     destinationChain: "hydration",
@@ -374,7 +377,7 @@ test("buildMoonbeamDispatchMetadata derives destination-side custom XCM for moon
 
   assert.equal(moonbeamDispatch.asset, "DOT");
   assert.equal(moonbeamDispatch.destinationChain, "hydration");
-  assert.equal(moonbeamDispatch.remoteReserveChain, "polkadot-hub");
+  assert.equal(moonbeamDispatch.remoteReserveChain, "polkadot-relay");
   assert.equal(decoded.value[0].type, "BuyExecution");
   assert.equal(decoded.value[1].type, "ExchangeAsset");
   assert.equal(decoded.value[2].type, "InitiateReserveWithdraw");
