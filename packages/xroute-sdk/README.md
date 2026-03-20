@@ -1,8 +1,8 @@
-# @xroute/sdk
+# @xcm-router/sdk
 
 XRoute is a multihop cross-chain execution router on Polkadot that gives apps one SDK to transfer assets, swap, and execute calls across Polkadot Hub, Hydration, Moonbeam, and other supported routes.
 
-`@xroute/sdk` is the integration package for XRoute.
+`@xcm-router/sdk` is the integration package for XRoute.
 
 ## Intent Surface
 
@@ -16,13 +16,13 @@ Supported intent surface:
 ## Install
 
 ```bash
-npm install @xroute/sdk
+npm install @xcm-router/sdk
 ```
 
 ## Main Setup
 
 ```js
-import { createXRouteClient } from "@xroute/sdk";
+import { createXRouteClient } from "@xcm-router/sdk";
 
 const client = createXRouteClient({
   apiKey: process.env.XROUTE_API_KEY,
@@ -233,12 +233,12 @@ import {
   getAssetDecimals,
   parseAssetAmount,
   formatAssetAmount,
-} from "@xroute/sdk/chains";
+} from "@xcm-router/sdk/chains";
 import {
   getTransferOptions,
   getSwapOptions,
   getExecuteOptions,
-} from "@xroute/sdk/routes";
+} from "@xcm-router/sdk/routes";
 ```
 
 These helpers are the intended source of truth for UI option state.
@@ -341,7 +341,7 @@ The wire format still uses base-unit integers. If your UI collects human decimal
 Example:
 
 ```js
-import { parseAssetAmount, formatAssetAmount } from "@xroute/sdk/chains";
+import { parseAssetAmount, formatAssetAmount } from "@xcm-router/sdk/chains";
 
 const amount = parseAssetAmount("DOT", "25");
 

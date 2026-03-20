@@ -46,8 +46,8 @@ export { createQuote } from "./quote/index.mjs";
 export { createStatusClient } from "./status/index.mjs";
 const DEFAULT_INTENT_DEADLINE_SECONDS = 60 * 60;
 
-export function createXRouteClient(options = {}) {
-  assertNoBaseUrlOverride("createXRouteClient", options);
+export function createXcmRouterClient(options = {}) {
+  assertNoBaseUrlOverride("createXcmRouterClient", options);
   return createHostedXRouteClient(options);
 }
 
@@ -542,19 +542,6 @@ function createRelayerAwareRouterAdapter({ walletConnector, relayer }) {
   return hostedRouterAdapter;
 }
 
-function requireWalletConnection(wallet) {
-  if (!wallet) {
-    throw new Error("connectWallet(wallet) is required for source-chain execution");
-  }
-  return wallet;
-}
-
-function requireConnectedClient(client) {
-  if (!client) {
-    throw new Error("connectWallet(wallet) is required for source-chain execution");
-  }
-  return client;
-}
 
 async function resolveConnectedWalletOwner(wallet) {
   if (typeof wallet.getAddress === "function") {

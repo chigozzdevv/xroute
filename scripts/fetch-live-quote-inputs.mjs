@@ -133,10 +133,14 @@ async function estimateTransferEdge({ sourceChain, destinationChain, asset }) {
         await sourceClient.queryXcmWeight(fullXcm),
         buildVersionedAssetId(sourceChain, asset),
       );
-  const buyExecutionFee = await destinationClient.queryWeightToAssetFee(
+  let buyExecutionFee = await destinationClient.queryWeightToAssetFee(
     await destinationClient.queryXcmWeight(remoteXcm),
     buildVersionedAssetId(destinationChain, asset),
   );
+
+  if (asset === 'DOT') {
+    buyExecutionFee = (buyExecutionFee * 32n);
+  }
 
   return {
     sourceChain,

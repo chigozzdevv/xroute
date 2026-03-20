@@ -19,10 +19,7 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"],
-      "@xroute/sdk": ["../packages/xroute-sdk/index.mjs"],
-      "@xroute/sdk/chains": ["../packages/xroute-sdk/chains/index.mjs"],
-      "@xroute/sdk/routes": ["../packages/xroute-sdk/routes/index.mjs"]
+      "@/*": ["./src/*"]
     }
   },
   "include": [

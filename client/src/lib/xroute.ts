@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { createXRouteClient } from "@xroute/sdk";
+import { createXRouteClient } from "@xcm-router/sdk";
 import {
   DEFAULT_DEPLOYMENT_PROFILE,
   formatAssetAmount,
@@ -13,12 +13,12 @@ import {
   listAssets,
   listChains,
   parseAssetAmount,
-} from "@xroute/sdk/chains";
+} from "@xcm-router/sdk/chains";
 import {
   getExecuteOptions,
   getSwapOptions,
   getTransferOptions,
-} from "@xroute/sdk/routes";
+} from "@xcm-router/sdk/routes";
 import type { WalletKind, WalletSession, WalletSessions } from "@/hooks/use-wallet";
 
 export type ChainKey = string;
@@ -174,7 +174,7 @@ export function walletRequirementLabel(chainKey: ChainKey) {
 }
 
 export function chainKeysForWalletKind(kind: XRouteWalletKind) {
-  return ALL_CHAIN_KEYS.filter((chainKey) => walletKindForChain(chainKey) === kind);
+  return ALL_CHAIN_KEYS.filter((chainKey: any) => walletKindForChain(chainKey) === kind);
 }
 
 export function previewAccountForChain(chainKey: ChainKey) {
@@ -369,7 +369,7 @@ export function useAssetUsdPrices(
   const emptyPrices = useMemo<AssetUsdPrices>(() => ({}), []);
   const assetKey = useMemo(
     () =>
-      [...new Set(assets.map((asset) => asset.trim()).filter(Boolean))]
+      [...new Set(assets.map((asset: any) => asset.trim()).filter(Boolean))]
         .sort()
         .join(","),
     [assets],
@@ -808,7 +808,7 @@ export function useXRouteExecution() {
         });
 
         trackerRef.current.done
-          .then((finalStatus) => {
+          .then((finalStatus: any) => {
             if (executionRef.current !== currentExecutionId) {
               return;
             }
@@ -819,7 +819,7 @@ export function useXRouteExecution() {
               isTracking: false,
             }));
           })
-          .catch((error) => {
+          .catch((error: any) => {
             if (executionRef.current !== currentExecutionId) {
               return;
             }
@@ -1028,8 +1028,8 @@ const CLIENT_EXECUTE_MATRIX: Readonly<
 
 const CHAINS = listChains(DEFAULT_DEPLOYMENT_PROFILE);
 const ASSETS = listAssets(DEFAULT_DEPLOYMENT_PROFILE);
-const ALL_CHAIN_KEYS = CHAINS.map((chain) => chain.key as ChainKey);
-const ALL_ASSET_KEYS = ASSETS.map((asset) => asset.symbol as AssetKey);
+const ALL_CHAIN_KEYS = CHAINS.map((chain: any) => chain.key as ChainKey);
+const ALL_ASSET_KEYS = ASSETS.map((asset: any) => asset.symbol as AssetKey);
 
 function option<T extends string>(value: T, label: string, disabled = false): Option<T> {
   return Object.freeze({ value, label, disabled });
@@ -1049,7 +1049,7 @@ function filterAssets(
   allowedAssets: readonly AssetKey[],
 ) {
   const supportedAssets = new Set<AssetKey>(allowedAssets);
-  return assets.filter((asset) => supportedAssets.has(asset as AssetKey)) as AssetKey[];
+  return assets.filter((asset: any) => supportedAssets.has(asset as AssetKey)) as AssetKey[];
 }
 
 function getClientTransferRecord(sourceChain: ChainKey, destinationChain: ChainKey) {
@@ -1070,24 +1070,24 @@ function getClientExecuteAssets(
 
 function getFilteredTransferOptions(sourceChain: ChainKey) {
   return getTransferOptions(sourceChain, DEFAULT_DEPLOYMENT_PROFILE)
-    .map((candidate) => {
+    .map((candidate: any) => {
       const assets = filterAssets(
         candidate.assets,
         getClientTransferRecord(sourceChain, candidate.chain as ChainKey),
       );
       return assets.length > 0 ? { ...candidate, assets } : null;
     })
-    .filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null);
+    .filter((candidate: any): candidate is NonNullable<typeof candidate> => candidate !== null);
 }
 
 function getFilteredSwapOptions(sourceChain: ChainKey) {
   return getSwapOptions(sourceChain, DEFAULT_DEPLOYMENT_PROFILE)
-    .map((candidate) => {
+    .map((candidate: any) => {
       const allowedPairs = getClientSwapPairs(sourceChain, candidate.chain as ChainKey);
       const pairs = candidate.pairs
-        .map((pair) => {
+        .map((pair: any) => {
           const allowedPair = allowedPairs.find(
-            (allowed) =>
+            (allowed: any) =>
               allowed.assetIn === pair.assetIn
               && allowed.assetOut === pair.assetOut,
           );
@@ -1101,17 +1101,17 @@ function getFilteredSwapOptions(sourceChain: ChainKey) {
           );
           return settlementChains.length > 0 ? { ...pair, settlementChains } : null;
         })
-        .filter((pair): pair is NonNullable<typeof pair> => pair !== null);
+        .filter((pair: any): pair is NonNullable<typeof pair> => pair !== null);
       return pairs.length > 0 ? { ...candidate, pairs } : null;
     })
-    .filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null);
+    .filter((candidate: any): candidate is NonNullable<typeof candidate> => candidate !== null);
 }
 
 function getFilteredExecuteOptions(sourceChain: ChainKey) {
   return getExecuteOptions(sourceChain, DEFAULT_DEPLOYMENT_PROFILE)
-    .map((candidate) => {
+    .map((candidate: any) => {
       const capabilities = candidate.capabilities
-        .map((capability) => {
+        .map((capability: any) => {
           const assets = filterAssets(
             capability.assets,
             getClientExecuteAssets(
@@ -1122,10 +1122,10 @@ function getFilteredExecuteOptions(sourceChain: ChainKey) {
           );
           return assets.length > 0 ? { ...capability, assets } : null;
         })
-        .filter((capability): capability is NonNullable<typeof capability> => capability !== null);
+        .filter((capability: any): capability is NonNullable<typeof capability> => capability !== null);
       return capabilities.length > 0 ? { ...candidate, capabilities } : null;
     })
-    .filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null);
+    .filter((candidate: any): candidate is NonNullable<typeof candidate> => candidate !== null);
 }
 
 const TRANSFER_SOURCE_CHAINS = Object.freeze(
@@ -1138,19 +1138,19 @@ const SWAP_SOURCE_CHAINS = Object.freeze(
 
 function getTransferDestinationRecord(sourceChain: ChainKey, destinationChain: ChainKey) {
   return getFilteredTransferOptions(sourceChain).find(
-    (candidate) => candidate.chain === destinationChain,
+    (candidate: any) => candidate.chain === destinationChain,
   );
 }
 
 function getSwapDestinationRecord(sourceChain: ChainKey, destinationChain: ChainKey) {
   return getFilteredSwapOptions(sourceChain).find(
-    (candidate) => candidate.chain === destinationChain,
+    (candidate: any) => candidate.chain === destinationChain,
   );
 }
 
 function getExecuteDestinationRecord(sourceChain: ChainKey, destinationChain: ChainKey) {
   return getFilteredExecuteOptions(sourceChain).find(
-    (candidate) => candidate.chain === destinationChain,
+    (candidate: any) => candidate.chain === destinationChain,
   );
 }
 
@@ -1159,11 +1159,11 @@ function getExecuteTypeLabel(executionType: ExecuteType) {
 }
 
 export const chainOptions: readonly Option<ChainKey>[] = Object.freeze(
-  CHAINS.map((chain) => option(chain.key, chain.label)),
+  CHAINS.map((chain: any) => option(chain.key, chain.label)),
 );
 
 export const assetOptions: readonly Option<AssetKey>[] = Object.freeze(
-  ASSETS.map((asset) => option(asset.symbol, asset.symbol)),
+  ASSETS.map((asset: any) => option(asset.symbol, asset.symbol)),
 );
 
 export const transferSourceChainOptions: readonly Option<ChainKey>[] = createOptions(
@@ -1177,20 +1177,20 @@ export const swapSourceChainOptions: readonly Option<ChainKey>[] = Object.freeze
 
 export function getSwapDestinationOptions(sourceChain: ChainKey) {
   const destinations = getFilteredSwapOptions(sourceChain).map(
-    (candidate) => candidate.chain as ChainKey,
+    (candidate: any) => candidate.chain as ChainKey,
   );
-  return createOptions(destinations, chainLabel);
+  return createOptions(destinations as any, chainLabel);
 }
 
 export function getSwapAssetInOptions(sourceChain: ChainKey, destinationChain: ChainKey) {
   const assets = [
     ...new Set(
       (getSwapDestinationRecord(sourceChain, destinationChain)?.pairs ?? []).map(
-        (pair) => pair.assetIn as AssetKey,
+        (pair: any) => pair.assetIn as AssetKey,
       ),
     ),
   ];
-  return createOptions(assets, (assetKey) => assetKey);
+  return createOptions(assets as any, (assetKey: any) => assetKey);
 }
 
 export function getSwapAssetOutOptions(
@@ -1201,11 +1201,11 @@ export function getSwapAssetOutOptions(
   const assets = [
     ...new Set(
       (getSwapDestinationRecord(sourceChain, destinationChain)?.pairs ?? [])
-        .filter((pair) => pair.assetIn === assetIn)
-        .map((pair) => pair.assetOut as AssetKey),
+        .filter((pair: any) => pair.assetIn === assetIn)
+        .map((pair: any) => pair.assetOut as AssetKey),
     ),
   ];
-  return createOptions(assets, (assetKey) => assetKey);
+  return createOptions(assets as any, (assetKey: any) => assetKey);
 }
 
 export function getSwapSettlementChainOptions(
@@ -1217,11 +1217,11 @@ export function getSwapSettlementChainOptions(
   const settlementChains = [
     ...new Set(
       (getSwapDestinationRecord(sourceChain, destinationChain)?.pairs ?? [])
-        .filter((pair) => pair.assetIn === assetIn && pair.assetOut === assetOut)
-        .flatMap((pair) => pair.settlementChains as ChainKey[]),
+        .filter((pair: any) => pair.assetIn === assetIn && pair.assetOut === assetOut)
+        .flatMap((pair: any) => pair.settlementChains as ChainKey[]),
     ),
   ];
-  return createOptions(settlementChains, chainLabel);
+  return createOptions(settlementChains as any, chainLabel);
 }
 
 export function getExecuteTypeOptions(
@@ -1232,16 +1232,16 @@ export function getExecuteTypeOptions(
     ...new Set(
       (sourceChain
         ? getFilteredExecuteOptions(sourceChain)
-        : ALL_CHAIN_KEYS.flatMap((chainKey) => getFilteredExecuteOptions(chainKey))
+        : ALL_CHAIN_KEYS.flatMap((chainKey: any) => getFilteredExecuteOptions(chainKey))
       )
-      .filter((candidate) => !destinationChain || candidate.chain === destinationChain)
-      .flatMap((candidate) =>
-        candidate.capabilities.map((capability) => capability.executionType as ExecuteType),
+      .filter((candidate: any) => !destinationChain || candidate.chain === destinationChain)
+      .flatMap((candidate: any) =>
+        candidate.capabilities.map((capability: any) => capability.executionType as ExecuteType),
       ),
     ),
   ];
 
-  return createOptions(executionTypes, getExecuteTypeLabel);
+  return createOptions(executionTypes as any, getExecuteTypeLabel);
 }
 
 export function getExecuteDestinationOptions(
@@ -1249,12 +1249,12 @@ export function getExecuteDestinationOptions(
   executionType: ExecuteType,
 ) {
   const destinations = getFilteredExecuteOptions(sourceChain)
-      .filter((candidate) =>
-        candidate.capabilities.some((capability) => capability.executionType === executionType),
+      .filter((candidate: any) =>
+        candidate.capabilities.some((capability: any) => capability.executionType === executionType),
       )
-      .map((candidate) => candidate.chain as ChainKey);
+      .map((candidate: any) => candidate.chain as ChainKey);
 
-  return createOptions(destinations, chainLabel);
+  return createOptions(destinations as any, chainLabel);
 }
 
 export const EVM_RECIPIENT_PLACEHOLDER = "0x...";
@@ -1267,18 +1267,18 @@ export function chainLabel(chainKey: ChainKey) {
 
 export function executeAssetForType(executionType: ExecuteType): AssetKey {
   const defaultSourceChain =
-    getExecuteSourceChainOptions(executionType).find((candidate) => !candidate.disabled)?.value ??
+    getExecuteSourceChainOptions(executionType).find((candidate: any) => !candidate.disabled)?.value ??
     ALL_CHAIN_KEYS[0] ??
     "hydration";
   const defaultDestinationChain =
     getExecuteDestinationOptions(defaultSourceChain, executionType).find(
-      (candidate) => !candidate.disabled,
+      (candidate: any) => !candidate.disabled,
     )?.value ??
     "moonbeam";
 
   return (
     getExecuteAssetOptions(defaultSourceChain, defaultDestinationChain, executionType).find(
-      (candidate) => !candidate.disabled,
+      (candidate: any) => !candidate.disabled,
     )?.value ??
     ALL_ASSET_KEYS[0] ??
     "DOT"
@@ -1291,13 +1291,13 @@ export function getExecuteSourceChainOptions(
 ) {
   const sources = ALL_CHAIN_KEYS.filter((sourceChain) =>
       getFilteredExecuteOptions(sourceChain).some(
-        (candidate) =>
+        (candidate: any) =>
           (!destinationChain || candidate.chain === destinationChain)
-          && candidate.capabilities.some((capability) => capability.executionType === executionType),
+          && candidate.capabilities.some((capability: any) => capability.executionType === executionType),
       ),
   );
 
-  return createOptions(sources, chainLabel);
+  return createOptions(sources as any, chainLabel);
 }
 
 export function getExecuteAssetOptions(
@@ -1309,25 +1309,25 @@ export function getExecuteAssetOptions(
     ...new Set(
     (
       getExecuteDestinationRecord(sourceChain, destinationChain)?.capabilities.find(
-        (candidate) => candidate.executionType === executionType,
+        (candidate: any) => candidate.executionType === executionType,
       )?.assets ?? []
-    ).map((assetKey) => assetKey as AssetKey),
+    ).map((assetKey: any) => assetKey as AssetKey),
     ),
   ];
 
-  return createOptions(assets, (assetKey) => assetKey);
+  return createOptions(assets as any, (assetKey: any) => assetKey);
 }
 
 export function getTransferDestinationOptions(sourceChain: ChainKey) {
   const destinations = getFilteredTransferOptions(sourceChain).map(
-    (candidate) => candidate.chain as ChainKey,
+    (candidate: any) => candidate.chain as ChainKey,
   );
-  return createOptions(destinations, chainLabel);
+  return createOptions(destinations as any, chainLabel);
 }
 
 export function getTransferAssetOptions(sourceChain: ChainKey, destinationChain: ChainKey) {
   const assets = getTransferDestinationRecord(sourceChain, destinationChain)?.assets ?? [];
-  return createOptions(assets, (assetKey) => assetKey);
+  return createOptions(assets as any, (assetKey: any) => assetKey);
 }
 
 export function isEvmChain(chainKey: ChainKey) {
@@ -1364,12 +1364,12 @@ function isNetworkFetchError(error: unknown) {
 
 
 export function coerceOptionValue<T extends string>(currentValue: T, options: readonly Option<T>[]) {
-  const currentOption = options.find((candidate) => candidate.value === currentValue);
+  const currentOption = options.find((candidate: any) => candidate.value === currentValue);
   if (currentOption && !currentOption.disabled) {
     return currentValue;
   }
 
-  return options.find((candidate) => !candidate.disabled)?.value ?? options[0]?.value;
+  return options.find((candidate: any) => !candidate.disabled)?.value ?? options[0]?.value;
 }
 
 export function getTransactionExplorerUrl(chainKey: ChainKey, txHash: string) {

@@ -1,8 +1,26 @@
 {
-  "name": "@xroute/sdk",
+  "name": "@xcm-router/sdk",
   "version": "0.1.0",
   "description": "XRoute integration SDK for route discovery, source-chain execution, and hosted intent status tracking.",
   "license": "MIT",
+  "author": "Muwa Team",
+  "keywords": [
+    "polkadot",
+    "xcm",
+    "cross-chain",
+    "bridge",
+    "swap",
+    "transfer",
+    "sdk"
+  ],
+  "homepage": "https://github.com/chigozzdevv/xroute#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chigozzdevv/xroute.git"
+  },
+  "bugs": {
+    "url": "https://github.com/chigozzdevv/xroute/issues"
+  },
   "type": "module",
   "main": "./dist/index.mjs",
   "exports": {

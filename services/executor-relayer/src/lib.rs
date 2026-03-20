@@ -1889,7 +1889,7 @@ fn resolve_moonbeam_remote_reserve_chain(
 }
 
 fn encode_moonbeam_transfer_assets_calldata(
-    destination_chain: &str,
+    _destination_chain: &str,
     asset_address: &str,
     refundable_amount: u128,
     custom_xcm_on_dest: &str,

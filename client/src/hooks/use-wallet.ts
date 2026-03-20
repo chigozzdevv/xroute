@@ -6,7 +6,7 @@ import {
   getBrowserWalletAvailability,
   listInjectedEvmProviders,
   listInjectedSubstrateExtensions,
-} from "@xroute/sdk";
+} from "@xcm-router/sdk";
 import {
   chainKeysForWalletKind,
   connectXRouteWallet,
