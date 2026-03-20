@@ -139,7 +139,7 @@ async function estimateTransferEdge({ sourceChain, destinationChain, asset }) {
   );
 
   if (asset === 'DOT') {
-    buyExecutionFee = (buyExecutionFee * 32n);
+    buyExecutionFee = (buyExecutionFee * 3n);
   }
 
   return {
@@ -589,7 +589,7 @@ async function getRuntimeClient(chainKey) {
 
 async function createRuntimeClient(chainKey) {
   const rpcUrl = resolveRuntimeRpcUrl(chainKey);
-  process.stderr.write(`    fetching metadata for ${chainKey} from ${rpcUrl}...\n`);
+  process.stderr.write(`    fetching metadata for ${chainKey} from ${maskUrl(rpcUrl)}...\n`);
   const metadataHex = await rpcRequest(rpcUrl, 'state_getMetadata', []);
   process.stderr.write(`    decoding metadata for ${chainKey}...\n`);
   const decodedMetadata = unifyMetadata(metadata.dec(metadataHex));
@@ -685,12 +685,12 @@ async function rpcRequest(url, method, params) {
   });
   clearTimeout(timeoutId);
   if (!response.ok) {
-    throw new Error(`${method} failed with status ${response.status} on ${url}`);
+    throw new Error(`${method} failed with status ${response.status} on ${maskUrl(url)}`);
   }
 
   const json = await response.json();
   if (json.error) {
-    throw new Error(`${method} failed on ${url}: ${json.error.message ?? JSON.stringify(json.error)}`);
+    throw new Error(`${method} failed on ${maskUrl(url)}: ${json.error.message ?? JSON.stringify(json.error)}`);
   }
 
   return json.result;
@@ -780,7 +780,7 @@ async function websocketRpcRequest(url, method, params) {
     transport.nextId += 1;
     const timeoutId = setTimeout(() => {
       transport.pending.delete(id);
-      reject(new Error(`${method} timed out on ${url}`));
+      reject(new Error(`${method} timed out on ${maskUrl(url)}`));
     }, rpcTimeoutMs);
     transport.pending.set(id, {
       resolve(value) {
@@ -826,7 +826,7 @@ async function getWebsocketTransport(url) {
     if (payload.error) {
       request.reject(
         new Error(
-          `${payload.error.message ?? 'websocket rpc failed'} on ${url}`,
+          `${payload.error.message ?? 'websocket rpc failed'} on ${maskUrl(url)}`,
         ),
       );
       return;
@@ -1032,4 +1032,8 @@ function loadDotEnv(path) {
       process.env[name] = value;
     }
   }
+}
+
+function maskUrl(url) {
+  return String(url ?? '').replace(/(api_?key=)[^&]+/ig, '$1***');
 }

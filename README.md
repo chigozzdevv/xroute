@@ -1,8 +1,8 @@
-# xcm-router
+# xroute
 
 **Cross-chain multihop intent execution router for the Polkadot ecosystem.**
 
-`xcm-router` is a cross-chain multihop intent execution router for the Polkadot ecosystem. It provides a single intent surface for moving assets, routing swaps, and executing destination-side actions across a selected Polkadot parachain graph. It combines on-chain router contracts, route planning and quote services, relayer infrastructure, and a JavaScript SDK so applications can work with `transfer`, `swap`, and `execute` flows through one consistent interface.
+`xroute` is a cross-chain multihop intent execution router for the Polkadot ecosystem. It provides a single intent surface (@xcm-router/sdk) for moving assets, routing swaps, and executing destination-side actions across a selected Polkadot parachain graph. It combines on-chain router contracts, route planning and quote services, relayer infrastructure, and a JavaScript SDK so applications can work with `transfer`, `swap`, and `execute` flows through one consistent interface.
 
 ---
 
@@ -74,7 +74,7 @@ This is an intentionally explicit route graph, not a generic any-chain-to-any-ch
 
 ## Multihop Routes
 
-`xcm-router` treats multihop delivery as a first-class path instead of a fallback. Current examples in the production graph include:
+`xroute` treats multihop delivery as a first-class path instead of a fallback. Current examples in the production graph include:
 
 - `moonbeam -> polkadot-hub -> hydration` for `DOT` transfer
 - `bifrost -> polkadot-hub -> moonbeam` for `DOT` transfer
@@ -113,22 +113,22 @@ From a product perspective:
 ## Project Structure
 
 ```text
-xcm-router/
+xroute/
 ├── contracts/
 │   └── polkadot-hub-router/          # Solidity router contracts and tests
 ├── services/
-│   ├── xcm-router-api/                   # Unified public API
+│   ├── xroute-api/                   # Unified public API
 │   ├── route-engine/                 # Route planning and XCM execution planning
 │   ├── quote-service/                # Quote HTTP surface
 │   ├── executor-relayer/             # Dispatch, settlement, and refund job execution
 │   └── shared/                       # Shared Rust types, API parsing, deployment loading
 ├── packages/
-│   ├── xcm-router-sdk/                   # High-level JS SDK
-│   ├── xcm-router-intents/               # Typed intent builders and validation
-│   ├── xcm-router-chain-registry/        # Supported chains, assets, and route graph
-│   ├── xcm-router-xcm/                   # XCM envelope construction
-│   ├── xcm-router-precompile-interfaces/ # Deployment profile and precompile metadata
-│   └── xcm-router-types/                 # Shared assertions, enums, and utilities
+│   ├── xroute-sdk/                   # High-level JS SDK
+│   ├── xroute-intents/               # Typed intent builders and validation
+│   ├── xroute-chain-registry/        # Supported chains, assets, and route graph
+│   ├── xroute-xcm/                   # XCM envelope construction
+│   ├── xroute-precompile-interfaces/ # Deployment profile and precompile metadata
+│   └── xroute-types/                 # Shared assertions, enums, and utilities
 └── scripts/                          # Deployment, proof, and local service helpers
 ```
 
@@ -141,7 +141,7 @@ xcm-router/
 
 | Service | Responsibility |
 |--------|-----------------|
-| `xcm-router-api` | Unified `/v1` API surface for quote, status, timeline, and relayer-backed execution flows |
+| `xroute-api` | Unified `/v1` API surface for quote, status, timeline, and relayer-backed execution flows |
 | `route-engine` | Canonical route planning, fee construction, and destination call planning |
 | `quote-service` | Quote API built on top of the route engine |
 | `executor-relayer` | Dispatch, settlement, failure, and refund job execution |
@@ -152,11 +152,11 @@ xcm-router/
 | Package | Responsibility |
 |--------|-----------------|
 | `@xcm-router/sdk` | High-level client for quoting, wallet connection, execution, and status tracking |
-| `xcm-router-intents` | Public intent constructors such as `createTransferIntent`, `createSwapIntent`, and `createExecuteIntent` |
-| `xcm-router-chain-registry` | Supported chains, assets, and route assertions |
-| `xcm-router-xcm` | Source-chain envelope construction and Moonbeam dispatch metadata derivation |
-| `xcm-router-precompile-interfaces` | Deployment profile helpers and precompile metadata |
-| `xcm-router-types` | Shared constants, validators, and deterministic ID helpers |
+| `xroute-intents` | Public intent constructors such as `createTransferIntent`, `createSwapIntent`, and `createExecuteIntent` |
+| `xroute-chain-registry` | Supported chains, assets, and route assertions |
+| `xroute-xcm` | Source-chain envelope construction and Moonbeam dispatch metadata derivation |
+| `xroute-precompile-interfaces` | Deployment profile helpers and precompile metadata |
+| `xroute-types` | Shared constants, validators, and deterministic ID helpers |
 
 ---
 
@@ -191,7 +191,7 @@ const client = createXRouteClient({
 });
 ```
 
-For higher-rate or production access details, contact [xcm-router@muwa.io](mailto:xcm-router@muwa.io).
+For higher-rate or production access details, contact [xroute@muwa.io](mailto:xroute@muwa.io).
 
 ### 2. Connect a Wallet
 
