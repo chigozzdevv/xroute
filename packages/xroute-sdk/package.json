@@ -1,6 +1,6 @@
 {
   "name": "@xcm-router/sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "XRoute integration SDK for route discovery, source-chain execution, and hosted intent status tracking.",
   "license": "MIT",
   "author": "Muwa Team",

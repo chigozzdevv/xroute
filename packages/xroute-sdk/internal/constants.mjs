@@ -1,4 +1,4 @@
-const HOSTED_XROUTE_API_BASE_URL = "https://xroute-api.onrender.com/v1";
+const HOSTED_XROUTE_API_BASE_URL = "https://xroute.onrender.com/v1";
 const LOCAL_XROUTE_API_BASE_URL = "http://127.0.0.1:8788/v1";
 
 export const DEFAULT_XROUTE_API_BASE_URL = HOSTED_XROUTE_API_BASE_URL;
